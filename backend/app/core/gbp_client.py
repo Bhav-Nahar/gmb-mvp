@@ -129,7 +129,7 @@ class GBPClient:
         return response.json()
 
     def fetch_locations(self) -> List[Dict[str, Any]]:
-        """Fetch list of GBP locations."""
+        """Fetch list of GBP locations from all accounts with ratings and reviews."""
         # Sandbox logic if using mock tokens
         if "mock_access_token" in self.access_token:
             return [
@@ -139,7 +139,9 @@ class GBPClient:
                     "categories": {"primaryCategory": {"displayName": "Coffee Shop"}},
                     "storefrontAddress": {"addressLines": ["123 Espresso Way"], "locality": "Seattle", "administrativeArea": "WA"},
                     "phoneNumbers": {"primaryPhone": "+1 206 555 0199"},
-                    "websiteUri": "https://sleekcoffeeroasters.com"
+                    "websiteUri": "https://sleekcoffeeroasters.com",
+                    "rating": 4.8,
+                    "reviewCount": 124
                 },
                 {
                     "name": "locations/mock-loc-2",
@@ -147,7 +149,9 @@ class GBPClient:
                     "categories": {"primaryCategory": {"displayName": "Gym"}},
                     "storefrontAddress": {"addressLines": ["456 Pilates Blvd"], "locality": "Austin", "administrativeArea": "TX"},
                     "phoneNumbers": {"primaryPhone": "+1 512 555 0288"},
-                    "websiteUri": "https://zenithfitness.com"
+                    "websiteUri": "https://zenithfitness.com",
+                    "rating": 4.5,
+                    "reviewCount": 89
                 }
             ]
 
@@ -159,19 +163,60 @@ class GBPClient:
             
         accounts_data = acc_resp.json()
         accounts = accounts_data.get("accounts", [])
+        print(f"DEBUG: Found {len(accounts)} accounts: {[a.get('name') for a in accounts]}")
         if not accounts:
             return []
 
-        # Find first PERSONAL or LOCATION_GROUP account
-        account_name = accounts[0]["name"]
+        all_locations = []
 
-        # 2. Fetch locations under this account
-        locations_url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_name}/locations"
-        params = {
-            "readMask": "name,title,categories,storefrontAddress,phoneNumbers,websiteUri"
-        }
-        loc_resp = http_request_with_retry("GET", locations_url, params=params, client=self.client)
-        if loc_resp.status_code != 200:
-            raise Exception(f"Failed to fetch locations: {loc_resp.text}")
+        # Iterate through all accounts (Personal, Location Group, etc.)
+        for account in accounts:
+            account_name = account["name"]  # Format: "accounts/12345"
+            account_type = account.get("type")
+            print(f"DEBUG: Fetching locations for account: {account_name} ({account_type})")
             
-        return loc_resp.json().get("locations", [])
+            # 2. Fetch locations under this account with pagination
+            next_page_token = None
+            while True:
+                locations_url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_name}/locations"
+                params = {
+                    "readMask": "name,title,categories,storefrontAddress,phoneNumbers,websiteUri,metadata",
+                    "pageSize": 100
+                }
+                if next_page_token:
+                    params["pageToken"] = next_page_token
+                    
+                loc_resp = http_request_with_retry("GET", locations_url, params=params, client=self.client)
+                if loc_resp.status_code != 200:
+                    print(f"Error fetching locations for {account_name}: {loc_resp.text}")
+                    break
+                    
+                data = loc_resp.json()
+                batch = data.get("locations", [])
+                print(f"DEBUG: Found {len(batch)} locations in account {account_name}")
+                
+                for loc in batch:
+                    # 3. Fetch Aggregate Ratings & Review Count
+                    # Endpoint: https://mybusiness.googleapis.com/v4/{account_name}/{location_name}/reviews
+                    loc_id_path = loc["name"]  # Format: "locations/67890"
+                    reviews_url = f"https://mybusiness.googleapis.com/v4/{account_name}/{loc_id_path}/reviews"
+                    
+                    try:
+                        # We only need the top-level summary, no need to paginate reviews here
+                        rev_resp = http_request_with_retry("GET", reviews_url, client=self.client)
+                        if rev_resp.status_code == 200:
+                            rev_data = rev_resp.json()
+                            loc["rating"] = rev_data.get("averageRating")
+                            loc["reviewCount"] = rev_data.get("totalReviewCount")
+                        else:
+                            print(f"Could not fetch reviews for {loc_id_path}: {rev_resp.text}")
+                    except Exception as e:
+                        print(f"Exception fetching reviews for {loc_id_path}: {str(e)}")
+                    
+                    all_locations.append(loc)
+                
+                next_page_token = data.get("nextPageToken")
+                if not next_page_token:
+                    break
+                    
+        return all_locations

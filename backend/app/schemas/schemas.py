@@ -56,6 +56,8 @@ class LocationOut(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     website: Optional[str] = None
+    average_rating: Optional[float] = None
+    total_reviews: Optional[int] = None
     sync_status: str
     last_synced_at: Optional[datetime] = None
     created_at: datetime

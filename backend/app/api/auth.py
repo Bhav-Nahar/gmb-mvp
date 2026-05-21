@@ -1,5 +1,5 @@
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -80,7 +80,7 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
             invite = db.query(Invite).filter(
                 Invite.email == email.strip().lower(),
                 Invite.status == "pending",
-                Invite.expires_at > datetime.utcnow()
+                Invite.expires_at > datetime.now(timezone.utc)
             ).first()
 
             if invite:
@@ -108,7 +108,7 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                     provider_account_id=google_id,
                     access_token=encrypt_token(access_token),
                     refresh_token=encrypt_token(refresh_token) if refresh_token else None,
-                    expires_at=datetime.utcnow() + timedelta(seconds=expires_in)
+                    expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 )
                 db.add(oauth_account)
                 db.commit()
@@ -150,7 +150,7 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                     provider_account_id=google_id,
                     access_token=encrypt_token(access_token),
                     refresh_token=encrypt_token(refresh_token) if refresh_token else None,
-                    expires_at=datetime.utcnow() + timedelta(seconds=expires_in)
+                    expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 )
                 db.add(oauth_account)
                 db.commit()
@@ -179,14 +179,14 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                     provider_account_id=google_id,
                     access_token=encrypt_token(access_token),
                     refresh_token=encrypt_token(refresh_token) if refresh_token else None,
-                    expires_at=datetime.utcnow() + timedelta(seconds=expires_in)
+                    expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 )
                 db.add(oauth_account)
             else:
                 oauth_account.access_token = encrypt_token(access_token)
                 if refresh_token:
                     oauth_account.refresh_token = encrypt_token(refresh_token)
-                oauth_account.expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+                oauth_account.expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
             
             db.commit()
 

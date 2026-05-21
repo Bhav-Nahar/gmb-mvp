@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -33,8 +33,10 @@ def get_token_status(
     if not oauth_account:
         return {"status": "disconnected", "message": "No Google Account connected"}
         
-    now = datetime.utcnow()
-    token_expiry = oauth_account.expires_at.replace(tzinfo=None) if oauth_account.expires_at else None
+    now = datetime.now(timezone.utc)
+    token_expiry = oauth_account.expires_at
+    if token_expiry and token_expiry.tzinfo is None:
+        token_expiry = token_expiry.replace(tzinfo=timezone.utc)
     
     if not token_expiry or token_expiry <= now:
         # Check if we have a refresh token to perform automatic sync recovery

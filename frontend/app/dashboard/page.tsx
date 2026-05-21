@@ -30,6 +30,8 @@ interface Location {
   address?: string
   phone?: string
   website?: string
+  total_reviews?: number
+  average_rating?: number
   sync_status: string
   last_synced_at?: string
   created_at: string
@@ -413,7 +415,18 @@ export default function DashboardPage() {
                       <div className="flex items-start justify-between gap-4">
                         <div>
                           <h4 className="text-base font-bold text-white leading-tight">{loc.location_name}</h4>
-                          <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400 mt-0.5 block">{loc.primary_category || 'Storefront'}</span>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">{loc.primary_category || 'Storefront'}</span>
+                            {loc.average_rating !== undefined && loc.average_rating !== null && (
+                              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 text-[10px] font-bold">
+                                <Sparkles className="h-2.5 w-2.5 fill-current" />
+                                <span>{Number(loc.average_rating).toFixed(1)}</span>
+                                {loc.total_reviews !== undefined && loc.total_reviews !== null && (
+                                  <span className="text-muted-foreground/70 ml-0.5">({loc.total_reviews})</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                           loc.sync_status === 'Synced' 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, Float
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 
@@ -13,6 +13,8 @@ class Location(Base):
     address = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     website = Column(String, nullable=True)
+    average_rating = Column(Float, nullable=True) # Average rating out of 5 (e.g. 4.5)
+    total_reviews = Column(Integer, nullable=True)
     
     sync_status = Column(String, default="Pending", nullable=False)  # Pending, Synced, Failed
     last_synced_at = Column(DateTime(timezone=True), nullable=True)

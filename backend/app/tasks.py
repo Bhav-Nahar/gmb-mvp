@@ -1,4 +1,5 @@
 import datetime
+from datetime import timezone
 from celery import shared_task
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
@@ -41,42 +42,79 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         return f"Sync aborted: No Google OAuth Account found for user {user_id}."
 
     # 3. Expiry check and refresh
-    now = datetime.datetime.utcnow()
-    token_expiry = oauth_account.expires_at.replace(tzinfo=None) if oauth_account.expires_at else None
+    now = datetime.datetime.now(timezone.utc)
+    # Ensure token_expiry is aware for comparison
+    token_expiry = oauth_account.expires_at
+    if token_expiry and token_expiry.tzinfo is None:
+        token_expiry = token_expiry.replace(tzinfo=timezone.utc)
     
     # Decrypt credentials
-    access_token = decrypt_token(oauth_account.access_token)
-    refresh_token = decrypt_token(oauth_account.refresh_token)
+    try:
+        access_token = decrypt_token(oauth_account.access_token)
+        if not access_token:
+            raise Exception("Failed to decrypt access token.")
+    except Exception:
+        db.close()
+        return f"Sync aborted: Could not decrypt access token for user {user_id}."
 
     try:
-        # If token has expired or is expiring within 5 minutes, refresh it
+        refresh_token = decrypt_token(oauth_account.refresh_token)
+    except Exception:
+        refresh_token = None
+
+    def perform_refresh():
+        if not refresh_token:
+            raise Exception("Google credentials expired or invalid. Refresh token missing. Re-authentication required.")
+            
+        print(f"Refreshing Google access token for user {user.email}...")
+        
+        # Request fresh access token
+        new_token_data = GBPClient.refresh_access_token(refresh_token)
+        
+        # Save new encrypted token and expiry
+        new_access_token = new_token_data["access_token"]
+        oauth_account.access_token = encrypt_token(new_access_token)
+        
+        # Google sometimes rotates refresh tokens
+        new_refresh_token = new_token_data.get("refresh_token")
+        if new_refresh_token:
+            oauth_account.refresh_token = encrypt_token(new_refresh_token)
+        
+        # Update expiry
+        expires_in = new_token_data.get("expires_in", 3600)
+        oauth_account.expires_at = datetime.datetime.now(timezone.utc) + datetime.timedelta(seconds=expires_in)
+        
+        db.commit()
+        print("Access token refreshed successfully.")
+        return new_access_token
+
+    try:
+        # 1. Proactive Refresh: If token has expired or is expiring within 5 minutes
         if not token_expiry or token_expiry <= now + datetime.timedelta(minutes=5):
-            if not refresh_token:
-                raise Exception("Google credentials expired. Refresh token missing. Re-authentication required.")
-                
-            print(f"Refreshing Google access token for user {user.email}...")
-            
-            # Request fresh access token
-            new_token_data = GBPClient.refresh_access_token(refresh_token)
-            
-            # Save new encrypted token and expiry
-            access_token = new_token_data["access_token"]
-            oauth_account.access_token = encrypt_token(access_token)
-            
-            # Update expiry
-            expires_in = new_token_data.get("expires_in", 3600)
-            oauth_account.expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=expires_in)
-            
-            db.commit()
-            print("Access token refreshed successfully.")
+            access_token = perform_refresh()
 
         # 4. Instantiate GBP Client and fetch locations
         client = GBPClient(access_token=access_token, refresh_token=refresh_token)
-        google_locations = client.fetch_locations()
+        
+        try:
+            google_locations = client.fetch_locations()
+        except Exception as e:
+            # 2. Reactive Refresh: If we get an error that looks like a 401/expired token, try to refresh once
+            if "401" in str(e) or "unauthorized" in str(e).lower() or "expired" in str(e).lower():
+                print(f"Token rejected by Google (401). Attempting reactive refresh for {user.email}...")
+                access_token = perform_refresh()
+                # Retry with new token
+                client = GBPClient(access_token=access_token, refresh_token=refresh_token)
+                google_locations = client.fetch_locations()
+            else:
+                raise e
         
         # 5. Sync locations into database
         synced_count = 0
         for g_loc in google_locations:
+            print(f"DEBUG: Processing location: {g_loc.get('title')}")
+            print(f"DEBUG: Full location data: {g_loc}")
+            
             g_id = g_loc.get("name") # Format: "locations/123456"
             if not g_id:
                 continue
@@ -92,6 +130,8 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             
             phone = g_loc.get("phoneNumbers", {}).get("primaryPhone")
             website = g_loc.get("websiteUri")
+            rating = g_loc.get("rating")
+            reviews = g_loc.get("reviewCount")
             
             # Check if location already exists in db
             existing_loc = db.query(Location).filter(
@@ -106,6 +146,8 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 existing_loc.address = full_address
                 existing_loc.phone = phone
                 existing_loc.website = website
+                existing_loc.average_rating = rating
+                existing_loc.total_reviews = reviews
                 existing_loc.sync_status = "Synced"
                 existing_loc.last_synced_at = datetime.datetime.utcnow()
             else:
@@ -118,6 +160,8 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     address=full_address,
                     phone=phone,
                     website=website,
+                    average_rating=rating,
+                    total_reviews=reviews,
                     sync_status="Synced",
                     last_synced_at=datetime.datetime.utcnow()
                 )
