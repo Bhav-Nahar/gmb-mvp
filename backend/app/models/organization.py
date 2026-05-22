@@ -13,3 +13,4 @@ class Organization(Base):
     locations = relationship("Location", back_populates="organization", cascade="all, delete-orphan")
     sync_logs = relationship("SyncLog", back_populates="organization", cascade="all, delete-orphan")
     invites = relationship("Invite", back_populates="organization", cascade="all, delete-orphan")
+    reviews = relationship("Review", back_populates="organization", cascade="all, delete-orphan")

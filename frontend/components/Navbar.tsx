@@ -58,6 +58,12 @@ export default function Navbar() {
             >
               Team
             </Link>
+            <Link
+              href="/dashboard/reviews"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+            >
+              Reviews
+            </Link>
           </nav>
         </div>
 

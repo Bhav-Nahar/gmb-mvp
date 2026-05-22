@@ -9,7 +9,22 @@ from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
 from app.models.sync_log import SyncLog
 from app.core.security import decrypt_token, encrypt_token
-from app.core.gbp_client import GBPClient
+from app.providers.factory import ProviderFactory
+from app.providers.base.exceptions import ProviderAuthError
+from app.services.review_sync_service import ReviewSyncService
+import asyncio
+
+@shared_task(name="app.tasks.sync_reviews_task")
+def sync_reviews_task(location_id: int, run_type: str = "Scheduled") -> str:
+    """
+    Synchronizes reviews for a specific location via the ReviewSyncService.
+    """
+    db: Session = SessionLocal()
+    try:
+        # Run the async sync_location_reviews inside a synchronous celery task wrapper
+        return asyncio.run(ReviewSyncService.sync_location_reviews(db, location_id, run_type))
+    finally:
+        db.close()
 
 @shared_task(name="app.tasks.sync_locations_task")
 def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Scheduled") -> str:
@@ -20,148 +35,43 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
     """
     db: Session = SessionLocal()
     
-    # 1. Fetch User
-    user = db.query(User).filter(User.id == user_id, User.organization_id == organization_id).first()
-    if not user:
-        db.close()
-        return f"User {user_id} not found."
-
-    # 2. Fetch OAuth Credentials
-    oauth_account = db.query(OAuthAccount).filter(OAuthAccount.user_id == user_id).first()
-    if not oauth_account:
-        # Create log failure
-        sync_log = SyncLog(
-            organization_id=organization_id,
-            status="Failed",
-            run_type=run_type,
-            error_message="Sync Failed: Google account is disconnected. Please re-authenticate."
-        )
-        db.add(sync_log)
-        db.commit()
-        db.close()
-        return f"Sync aborted: No Google OAuth Account found for user {user_id}."
-
-    # 3. Expiry check and refresh
-    now = datetime.datetime.now(timezone.utc)
-    # Ensure token_expiry is aware for comparison
-    token_expiry = oauth_account.expires_at
-    if token_expiry and token_expiry.tzinfo is None:
-        token_expiry = token_expiry.replace(tzinfo=timezone.utc)
-    
-    # Decrypt credentials
     try:
-        access_token = decrypt_token(oauth_account.access_token)
-        if not access_token:
-            raise Exception("Failed to decrypt access token.")
-    except Exception:
-        db.close()
-        return f"Sync aborted: Could not decrypt access token for user {user_id}."
-
-    try:
-        refresh_token = decrypt_token(oauth_account.refresh_token)
-    except Exception:
-        refresh_token = None
-
-    def perform_refresh():
-        if not refresh_token:
-            raise Exception("Google credentials expired or invalid. Refresh token missing. Re-authentication required.")
-            
-        print(f"Refreshing Google access token for user {user.email}...")
+        provider = ProviderFactory.get_provider("gbp", organization_id, db)
+        provider_locations = asyncio.run(provider.get_locations())
         
-        # Request fresh access token
-        new_token_data = GBPClient.refresh_access_token(refresh_token)
-        
-        # Save new encrypted token and expiry
-        new_access_token = new_token_data["access_token"]
-        oauth_account.access_token = encrypt_token(new_access_token)
-        
-        # Google sometimes rotates refresh tokens
-        new_refresh_token = new_token_data.get("refresh_token")
-        if new_refresh_token:
-            oauth_account.refresh_token = encrypt_token(new_refresh_token)
-        
-        # Update expiry
-        expires_in = new_token_data.get("expires_in", 3600)
-        oauth_account.expires_at = datetime.datetime.now(timezone.utc) + datetime.timedelta(seconds=expires_in)
-        
-        db.commit()
-        print("Access token refreshed successfully.")
-        return new_access_token
-
-    try:
-        # 1. Proactive Refresh: If token has expired or is expiring within 5 minutes
-        if not token_expiry or token_expiry <= now + datetime.timedelta(minutes=5):
-            access_token = perform_refresh()
-
-        # 4. Instantiate GBP Client and fetch locations
-        client = GBPClient(access_token=access_token, refresh_token=refresh_token)
-        
-        try:
-            google_locations = client.fetch_locations()
-        except Exception as e:
-            # 2. Reactive Refresh: If we get an error that looks like a 401/expired token, try to refresh once
-            if "401" in str(e) or "unauthorized" in str(e).lower() or "expired" in str(e).lower():
-                print(f"Token rejected by Google (401). Attempting reactive refresh for {user.email}...")
-                access_token = perform_refresh()
-                # Retry with new token
-                client = GBPClient(access_token=access_token, refresh_token=refresh_token)
-                google_locations = client.fetch_locations()
-            else:
-                raise e
-        
-        # 5. Sync locations into database
         synced_count = 0
-        for g_loc in google_locations:
-            print(f"DEBUG: Processing location: {g_loc.get('title')}")
-            print(f"DEBUG: Full location data: {g_loc}")
-            
-            g_id = g_loc.get("name") # Format: "locations/123456"
-            if not g_id:
-                continue
-                
-            title = g_loc.get("title", "Unnamed Location")
-            category = g_loc.get("categories", {}).get("primaryCategory", {}).get("displayName")
-            
-            addr_info = g_loc.get("storefrontAddress", {})
-            lines = addr_info.get("addressLines", [])
-            locality = addr_info.get("locality", "")
-            region = addr_info.get("administrativeArea", "")
-            full_address = ", ".join(lines + [locality, region]).strip(", ")
-            
-            phone = g_loc.get("phoneNumbers", {}).get("primaryPhone")
-            website = g_loc.get("websiteUri")
-            rating = g_loc.get("rating")
-            reviews = g_loc.get("reviewCount")
+        for p_loc in provider_locations:
+            print(f"DEBUG: Processing location: {p_loc.name}")
             
             # Check if location already exists in db
             existing_loc = db.query(Location).filter(
                 Location.organization_id == organization_id,
-                Location.google_location_id == g_id
+                Location.google_location_id == p_loc.provider_location_id
             ).first()
             
             if existing_loc:
                 # Update
-                existing_loc.location_name = title
-                existing_loc.primary_category = category
-                existing_loc.address = full_address
-                existing_loc.phone = phone
-                existing_loc.website = website
-                existing_loc.average_rating = rating
-                existing_loc.total_reviews = reviews
+                existing_loc.location_name = p_loc.name
+                existing_loc.primary_category = p_loc.category
+                existing_loc.address = p_loc.address
+                existing_loc.phone = p_loc.phone
+                existing_loc.website = p_loc.website
+                existing_loc.average_rating = p_loc.average_rating
+                existing_loc.total_reviews = p_loc.total_reviews
                 existing_loc.sync_status = "Synced"
                 existing_loc.last_synced_at = datetime.datetime.utcnow()
             else:
                 # Insert new
                 new_loc = Location(
                     organization_id=organization_id,
-                    google_location_id=g_id,
-                    location_name=title,
-                    primary_category=category,
-                    address=full_address,
-                    phone=phone,
-                    website=website,
-                    average_rating=rating,
-                    total_reviews=reviews,
+                    google_location_id=p_loc.provider_location_id,
+                    location_name=p_loc.name,
+                    primary_category=p_loc.category,
+                    address=p_loc.address,
+                    phone=p_loc.phone,
+                    website=p_loc.website,
+                    average_rating=p_loc.average_rating,
+                    total_reviews=p_loc.total_reviews,
                     sync_status="Synced",
                     last_synced_at=datetime.datetime.utcnow()
                 )
@@ -171,7 +81,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             
         db.commit()
         
-        # 6. Log successful sync operation
+        # Log successful sync operation
         log_message = f"Synchronized {synced_count} locations successfully."
         sync_log = SyncLog(
             organization_id=organization_id,
@@ -186,10 +96,14 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
 
     except Exception as e:
         db.rollback()
-        # If refreshing has failed catastrophically, delete the oauth_account to force re-auth
-        if "re-authentication required" in str(e).lower() or "invalid_grant" in str(e).lower():
-            db.delete(oauth_account)
-            db.commit()
+        
+        # If refreshing has failed catastrophically
+        if isinstance(e, ProviderAuthError) or "re-authentication required" in str(e).lower() or "invalid_grant" in str(e).lower():
+            # Find and delete oauth account
+            oauth_account = db.query(OAuthAccount).join(User).filter(User.organization_id == organization_id).first()
+            if oauth_account:
+                db.delete(oauth_account)
+                db.commit()
             
         # Log failure
         error_msg = f"Sync Failed: {str(e)}"

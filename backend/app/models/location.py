@@ -22,3 +22,4 @@ class Location(Base):
 
     organization = relationship("Organization", back_populates="locations")
     sync_logs = relationship("SyncLog", back_populates="location", cascade="all, delete-orphan")
+    reviews = relationship("Review", back_populates="location", cascade="all, delete-orphan")

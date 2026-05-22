@@ -1,0 +1,36 @@
+from abc import ABC, abstractmethod
+from typing import List, ClassVar, Dict, Any
+from .models import LocationModel, ReviewModel, ReviewReplyModel, PostModel
+
+class BaseProvider(ABC):
+    provider_name: ClassVar[str]
+
+    @classmethod
+    def get_oauth_url(cls, state: str) -> str:
+        """Generate the OAuth login URL for the provider."""
+        raise NotImplementedError()
+
+    @classmethod
+    def exchange_code_for_tokens(cls, code: str) -> Dict[str, Any]:
+        """Exchange auth code for access tokens."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def get_locations(self) -> List[LocationModel]:
+        """Fetch all locations for the authenticated context."""
+        ...
+
+    @abstractmethod
+    async def get_reviews(self, location_id: str) -> List[ReviewModel]:
+        """Fetch all reviews for a specific location."""
+        ...
+
+    @abstractmethod
+    async def reply_review(self, review_id: str, reply_text: str) -> ReviewReplyModel:
+        """Reply to a specific review."""
+        ...
+
+    @abstractmethod
+    async def create_post(self, location_id: str, payload: Dict[str, Any]) -> PostModel:
+        """Create a new post for a specific location."""
+        ...

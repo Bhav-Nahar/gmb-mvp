@@ -13,7 +13,7 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.oauth_account import OAuthAccount
 from app.models.sync_log import SyncLog
-from app.core.gbp_client import GBPClient
+from app.providers.factory import ProviderFactory
 from app.worker import celery
 
 router = APIRouter()
@@ -25,7 +25,7 @@ def google_login():
     Generates a secure random state for CSRF protection and returns the redirect URL.
     """
     state = secrets.token_urlsafe(32)
-    oauth_url = GBPClient.get_oauth_url(state=state)
+    oauth_url = ProviderFactory.get_oauth_url("gbp", state=state)
     return {"url": oauth_url}
 
 @router.get("/google/callback")
@@ -40,7 +40,7 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
     """
     try:
         # 1. Exchange authorization code for tokens
-        token_data = GBPClient.exchange_code_for_tokens(code)
+        token_data = ProviderFactory.exchange_code_for_tokens("gbp", code)
         
         # Determine the user info using mock or real client
         access_token = token_data["access_token"]

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
-from app.api import auth, locations, users
+from app.api import auth, locations, users, reviews
 
 app = FastAPI(
     title="Google Business Profile Sync Service",
@@ -33,6 +33,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(locations.router, prefix="/api/v1/locations", tags=["Locations"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
+app.include_router(reviews.router, prefix="/api/v1/reviews", tags=["Reviews"])
 
 @app.get("/")
 def health_check(db: Session = Depends(get_db)):

@@ -5,6 +5,7 @@ from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
 from app.models.sync_log import SyncLog
 from app.models.invite import Invite
+from app.models.review import Review
 
-__all__ = ["Base", "Organization", "User", "OAuthAccount", "Location", "SyncLog", "Invite"]
+__all__ = ["Base", "Organization", "User", "OAuthAccount", "Location", "SyncLog", "Invite", "Review"]
 
