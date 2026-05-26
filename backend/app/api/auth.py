@@ -1,6 +1,6 @@
 import secrets
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -13,23 +13,36 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.oauth_account import OAuthAccount
 from app.models.sync_log import SyncLog
+from app.models.audit_log import AuditLog
 from app.providers.factory import ProviderFactory
 from app.worker import celery
 
 router = APIRouter()
 
 @router.get("/google/login")
-def google_login():
+def google_login(response: Response, invite_token: str | None = None):
     """
     Initiate Google-first OAuth login.
     Generates a secure random state for CSRF protection and returns the redirect URL.
     """
-    state = secrets.token_urlsafe(32)
+    csrf_token = secrets.token_urlsafe(32)
+    state = f"{csrf_token}:{invite_token or ''}"
     oauth_url = ProviderFactory.get_oauth_url("gbp", state=state)
+    # Secure cookie only over HTTPS (production/proxy) to avoid local development CSRF block
+    secure_cookie = settings.FRONTEND_URL.startswith("https://")
+    
+    response.set_cookie(
+        key="oauth_state",
+        value=csrf_token,
+        httponly=True,
+        secure=secure_cookie,
+        samesite="lax",
+        max_age=3600
+    )
     return {"url": oauth_url}
 
 @router.get("/google/callback")
-def google_callback(code: str, state: str, db: Session = Depends(get_db)):
+def google_callback(request: Request, code: str, state: str, db: Session = Depends(get_db)):
     """
     Google OAuth Callback.
     1. Exchanges auth code for credentials.
@@ -39,6 +52,14 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
     5. Generates local JWT and redirects to frontend success hook.
     """
     try:
+        parts = state.split(":", 1)
+        csrf_token = parts[0]
+        invite_token = parts[1] if len(parts) > 1 and parts[1] else None
+        
+        cookie_state = request.cookies.get("oauth_state")
+        if not cookie_state or not secrets.compare_digest(csrf_token, cookie_state):
+            raise ValueError("Invalid CSRF state token. Please try logging in again.")
+            
         # 1. Exchange authorization code for tokens
         token_data = ProviderFactory.exchange_code_for_tokens("gbp", code)
         
@@ -70,6 +91,8 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
             name = email.split("@")[0].title().replace("-", " ")
             google_id = f"google_id_{email.split('@')[0]}"
 
+        email = email.strip().lower()
+
         # 3. Check if user already exists in our system
         user = db.query(User).filter(User.google_id == google_id).first()
         is_new_user = False
@@ -77,13 +100,32 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
         if not user:
             # Check if there is a pending, non-expired invite for this email (case-insensitive)
             from app.models.invite import Invite
-            invite = db.query(Invite).filter(
-                Invite.email == email.strip().lower(),
-                Invite.status == "pending",
-                Invite.expires_at > datetime.now(timezone.utc)
-            ).first()
+            from app.models.user_location_access import UserLocationAccess
+            
+            invite = None
+            if invite_token:
+                invite = db.query(Invite).filter(
+                    Invite.token == invite_token,
+                    Invite.email == email,
+                    Invite.status.in_(["pending", "in_progress"]),
+                    Invite.expires_at > datetime.now(timezone.utc)
+                ).first()
+                if not invite:
+                    raise ValueError("The provided invitation is invalid, expired, or the Google account email does not match the invited email.")
+            else:
+                pending_invite = db.query(Invite).filter(
+                    Invite.email == email,
+                    Invite.status.in_(["pending", "in_progress"]),
+                    Invite.expires_at > datetime.now(timezone.utc)
+                ).first()
+                if pending_invite:
+                    raise ValueError("You have a pending invitation. Please use the invite link sent to your email to join the workspace.")
 
             if invite:
+                if invite.role == "Store Manager":
+                    if not invite.location_ids or len(invite.location_ids) != 1:
+                        raise ValueError(f"Corrupt invite: Store Manager must have exactly 1 location, got {invite.location_ids}")
+
                 # User has a valid invite: join the existing organization with correct role
                 user = User(
                     email=email,
@@ -91,27 +133,39 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                     avatar=avatar,
                     google_id=google_id,
                     role=invite.role,
-                    organization_id=invite.organization_id
+                    organization_id=invite.organization_id,
+                    viewer_scope=invite.viewer_scope
                 )
                 db.add(user)
-                db.commit()
-                db.refresh(user)
+                db.flush()
 
+                # Assign locations if provided
+                if invite.location_ids:
+                    for loc_id in invite.location_ids:
+                        db.add(UserLocationAccess(user_id=user.id, location_id=loc_id))
+                    
                 # Mark invite as accepted
                 invite.status = "accepted"
-                db.commit()
 
                 # Create OAuth Account record
                 oauth_account = OAuthAccount(
                     user_id=user.id,
-                    provider="google",
+                    provider="gbp",
                     provider_account_id=google_id,
                     access_token=encrypt_token(access_token),
                     refresh_token=encrypt_token(refresh_token) if refresh_token else None,
                     expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 )
                 db.add(oauth_account)
-                db.commit()
+                
+                db.add(AuditLog(
+                    organization_id=invite.organization_id,
+                    user_id=user.id,
+                    actor_user_id=user.id,
+                    target_user_id=user.id,
+                    action="invite_accepted",
+                    details=f"User joined via invite. Role: {invite.role}"
+                ))
                 
                 # Log connection
                 log = SyncLog(
@@ -122,13 +176,13 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                 )
                 db.add(log)
                 db.commit()
+                db.refresh(user)
             else:
                 is_new_user = True
                 # Create a brand new workspace Organization
                 org = Organization(name=f"{name}'s Workspace")
                 db.add(org)
-                db.commit()
-                db.refresh(org)
+                db.flush()
 
                 # Auto-create User record
                 user = User(
@@ -136,24 +190,32 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                     name=name,
                     avatar=avatar,
                     google_id=google_id,
-                    role="Admin",  # First owner is Admin
+                    role="Owner",  # First owner is Owner
+                    viewer_scope="assigned",
                     organization_id=org.id
                 )
                 db.add(user)
-                db.commit()
-                db.refresh(user)
+                db.flush()
 
                 # Create OAuth Account record
                 oauth_account = OAuthAccount(
                     user_id=user.id,
-                    provider="google",
+                    provider="gbp",
                     provider_account_id=google_id,
                     access_token=encrypt_token(access_token),
                     refresh_token=encrypt_token(refresh_token) if refresh_token else None,
                     expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 )
                 db.add(oauth_account)
-                db.commit()
+                
+                db.add(AuditLog(
+                    organization_id=org.id,
+                    user_id=user.id,
+                    actor_user_id=user.id,
+                    target_user_id=user.id,
+                    action="google_connected",
+                    details=f"Connected Google Business Profile integration for Owner: {email}"
+                ))
                 
                 # Log connection
                 log = SyncLog(
@@ -164,6 +226,7 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                 )
                 db.add(log)
                 db.commit()
+                db.refresh(user)
         else:
             # Existing user - Update profile details
             user.name = name
@@ -175,7 +238,7 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
             if not oauth_account:
                 oauth_account = OAuthAccount(
                     user_id=user.id,
-                    provider="google",
+                    provider="gbp",
                     provider_account_id=google_id,
                     access_token=encrypt_token(access_token),
                     refresh_token=encrypt_token(refresh_token) if refresh_token else None,
@@ -183,11 +246,22 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                 )
                 db.add(oauth_account)
             else:
+                oauth_account.provider = "gbp"  # Ensure it is migrated/standardized to "gbp"
                 oauth_account.access_token = encrypt_token(access_token)
                 if refresh_token:
                     oauth_account.refresh_token = encrypt_token(refresh_token)
                 oauth_account.expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
             
+            db.commit()
+
+            db.add(AuditLog(
+                organization_id=user.organization_id,
+                user_id=user.id,
+                actor_user_id=user.id,
+                target_user_id=user.id,
+                action="google_connected",
+                details=f"Connected Google Business Profile integration for existing user: {email}"
+            ))
             db.commit()
 
             # Log login
@@ -200,17 +274,23 @@ def google_callback(code: str, state: str, db: Session = Depends(get_db)):
             db.add(log)
             db.commit()
 
-        # 4. Trigger Celery Task to sync locations immediately!
+        # 4. Trigger Celery Task to sync locations immediately for both new and existing users
         celery.send_task("app.tasks.sync_locations_task", args=[user.organization_id, user.id, "Manual"])
 
         # 5. Generate local JWT access token
-        local_token = create_access_token(subject=user.email)
+        local_token = create_access_token(subject=user.email, token_version=user.token_version)
         
         # Redirect to frontend success page that will save credentials
         redirect_url = f"{settings.FRONTEND_URL}/login/success?token={local_token}&onboarding={'true' if is_new_user else 'false'}"
         return RedirectResponse(url=redirect_url)
         
+    except ValueError as e:
+        db.rollback()
+        import logging
+        logging.exception("Validation/CSRF error during Google OAuth callback")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=oauth_validation_failed")
     except Exception as e:
         db.rollback()
-        # Redirect back to login page with error
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=google_auth_failed&detail={str(e)}")
+        import logging
+        logging.exception("Unhandled exception during Google OAuth callback")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=oauth_failed")

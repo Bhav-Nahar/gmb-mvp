@@ -1,16 +1,20 @@
 import math
+import asyncio
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.api.deps import get_current_user, staff_required
+from app.api.deps import get_current_user, staff_required, get_user_location_ids
 from app.models.user import User
 from app.models.location import Location
 from app.models.review import Review
-from app.schemas.review import ReviewResponse, ReviewListResponse, ReviewReplyRequest
+from app.schemas.review import ReviewResponse, ReviewListResponse, ReviewReplyRequest, GenerateReplyResponse
 from app.providers.factory import ProviderFactory
 from app.worker import celery
+from app.services.ai_reply_service import generate_reply
+from app.llm.exceptions import LLMProviderError
+from app.constants.review_sentiment import ALLOWED_SENTIMENTS, ALLOWED_ISSUE_CATEGORIES
 
 router = APIRouter()
 
@@ -19,6 +23,8 @@ def get_reviews(
     location_id: Optional[int] = None,
     is_replied: Optional[bool] = None,
     rating: Optional[int] = None,
+    sentiment: Optional[str] = None,
+    issue_category: Optional[str] = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -29,12 +35,33 @@ def get_reviews(
         Review.is_deleted == False
     )
 
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    
     if location_id:
+        if allowed_location_ids is not None and location_id not in allowed_location_ids:
+            raise HTTPException(status_code=403, detail="You do not have access to this location")
         query = query.filter(Review.location_id == location_id)
+    elif allowed_location_ids is not None:
+        query = query.filter(Review.location_id.in_(allowed_location_ids))
+
     if is_replied is not None:
         query = query.filter(Review.is_replied == is_replied)
     if rating:
         query = query.filter(Review.rating == rating)
+    if sentiment is not None:
+        if sentiment not in ALLOWED_SENTIMENTS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid sentiment value. Allowed: {sorted(ALLOWED_SENTIMENTS)}"
+            )
+        query = query.filter(Review.sentiment == sentiment)
+    if issue_category is not None:
+        if issue_category not in ALLOWED_ISSUE_CATEGORIES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid issue_category value. Allowed: {sorted(ALLOWED_ISSUE_CATEGORIES)}"
+            )
+        query = query.filter(Review.issue_category == issue_category)
 
     total = query.count()
     pages = math.ceil(total / size) if total > 0 else 1
@@ -54,7 +81,12 @@ def trigger_reviews_sync(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    allowed_location_ids = get_user_location_ids(current_user, db)
+
     if location_id:
+        if allowed_location_ids is not None and location_id not in allowed_location_ids:
+            raise HTTPException(status_code=403, detail="You do not have access to this location")
+            
         loc = db.query(Location).filter(
             Location.id == location_id,
             Location.organization_id == current_user.organization_id
@@ -62,37 +94,48 @@ def trigger_reviews_sync(
         if not loc:
             raise HTTPException(status_code=404, detail="Location not found")
             
-        task = celery.send_task("app.tasks.sync_reviews_task", args=[location_id, "Manual"])
+        task = celery.send_task("app.tasks.sync_reviews_task", args=[location_id, "Manual", current_user.id])
         return {"message": "Sync task has been queued for the location.", "task_id": task.id}
     else:
+        if current_user.role not in ["Owner", "Admin"]:
+            raise HTTPException(status_code=403, detail="Only Owners and Admins can trigger organization-wide sync")
+            
         locations = db.query(Location).filter(
             Location.organization_id == current_user.organization_id
         ).all()
         task_ids = []
         for loc in locations:
-            task = celery.send_task("app.tasks.sync_reviews_task", args=[loc.id, "Manual"])
+            task = celery.send_task("app.tasks.sync_reviews_task", args=[loc.id, "Manual", current_user.id])
             task_ids.append(task.id)
         return {"message": f"Sync tasks have been queued for {len(locations)} locations.", "task_ids": task_ids}
 
 @router.post("/{id}/reply", response_model=ReviewResponse)
-async def reply_to_review(
+def reply_to_review(
     id: int,
     payload: ReviewReplyRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    if current_user.role == "Viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot reply to reviews")
+
     review = db.query(Review).filter(
         Review.id == id,
         Review.organization_id == current_user.organization_id,
         Review.is_deleted == False
     ).first()
+    
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
+        
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    if allowed_location_ids is not None and review.location_id not in allowed_location_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to this location")
         
     provider = ProviderFactory.get_provider(review.provider, current_user.organization_id, db)
     
     try:
-        await provider.reply_review(review.provider_review_id, payload.reply_text)
+        asyncio.run(provider.reply_review(review.provider_review_id, payload.reply_text))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to post reply to provider: {str(e)}")
         
@@ -103,3 +146,75 @@ async def reply_to_review(
     db.refresh(review)
     
     return review
+
+@router.post("/{review_id}/generate-reply", response_model=GenerateReplyResponse)
+async def generate_review_reply(
+    review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    review = db.query(Review).filter(
+        Review.id == review_id,
+        Review.is_deleted == False
+    ).first()
+    
+    if not review or review.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Review not found")
+        
+    location = db.query(Location).filter(
+        Location.id == review.location_id,
+        Location.organization_id == current_user.organization_id
+    ).first()
+    
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found")
+        
+    try:
+        result = await generate_reply(review, location)
+    except LLMProviderError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI service temporarily unavailable. Please write a manual reply."
+        )
+        
+    return GenerateReplyResponse(
+        review_id=review.id,
+        generated_reply=result["generated_reply"],
+        tone=result["tone"]
+    )
+
+
+@router.post("/locations/{location_id}/retag-sentiment", status_code=status.HTTP_200_OK)
+def retag_sentiment(
+    location_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """
+    Reset sentiment_tagged_at for all non-deleted reviews of a location to NULL,
+    then enqueue the sentiment tagging task.
+    """
+    from app.tasks import tag_reviews_sentiment_task
+
+    location = db.query(Location).filter(
+        Location.id == location_id,
+        Location.organization_id == current_user.organization_id
+    ).first()
+
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    # Reset all non-deleted reviews so they get re-tagged
+    db.query(Review).filter(
+        Review.location_id == location_id,
+        Review.organization_id == current_user.organization_id,
+        Review.is_deleted == False
+    ).update({Review.sentiment_tagged_at: None}, synchronize_session=False)
+    db.commit()
+
+    tag_reviews_sentiment_task.delay(
+        location_id=location_id,
+        organization_id=current_user.organization_id
+    )
+
+    return {"status": "queued", "message": "Sentiment retagging queued for this location"}

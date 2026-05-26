@@ -19,9 +19,16 @@ export default function LoginPage() {
     
     // Check if error callback from Google auth redirect
     const errorParam = searchParams.get('error')
-    const detailParam = searchParams.get('detail')
     if (errorParam) {
-      setError(`Google login failed: ${detailParam || errorParam}`)
+      let friendlyMessage = 'An unexpected authentication error occurred. Please try again.'
+      if (errorParam === 'oauth_failed') {
+        friendlyMessage = 'Google Authentication failed. Please verify your Google account permissions.'
+      } else if (errorParam === 'oauth_validation_failed') {
+        friendlyMessage = 'Security state validation failed. Please try logging in again.'
+      } else if (errorParam === 'session_expired') {
+        friendlyMessage = 'Your session has expired. Please sign in again.'
+      }
+      setError(friendlyMessage)
     }
   }, [searchParams])
 

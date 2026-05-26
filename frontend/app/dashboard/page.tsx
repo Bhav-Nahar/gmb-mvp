@@ -60,6 +60,8 @@ export default function DashboardPage() {
   const [locations, setLocations] = useState<Location[]>([])
   const [syncLogs, setSyncLogs] = useState<SyncLog[]>([])
   const [tokenStatus, setTokenStatus] = useState<TokenStatus | null>(null)
+  const [syncStatuses, setSyncStatuses] = useState<Record<number, { status: string, error_message: string | null, last_synced_at: string | null }>>({})
+  const [pollingLocationIds, setPollingLocationIds] = useState<number[]>([])
   
   // Loaders
   const [loadingLocations, setLoadingLocations] = useState(true)
@@ -73,6 +75,8 @@ export default function DashboardPage() {
   // Feedbacks
   const [errorAlert, setErrorAlert] = useState('')
   const [successAlert, setSuccessAlert] = useState('')
+
+  const [userRole, setUserRole] = useState('Viewer')
 
   useEffect(() => {
     const onboardingParam = searchParams.get('onboarding')
@@ -88,6 +92,14 @@ export default function DashboardPage() {
       setSuccessAlert('Google Business Profile successfully synced!')
     } else if (errorParam) {
       setErrorAlert(`Google authentication failed: ${detailParam || errorParam}`)
+    }
+
+    const userStr = localStorage.getItem('gmb_user')
+    if (userStr) {
+      try {
+        const u = JSON.parse(userStr)
+        setUserRole(u.role || 'Viewer')
+      } catch (e) {}
     }
 
     // Load initial data
@@ -136,6 +148,146 @@ export default function DashboardPage() {
     return () => clearInterval(pollInterval)
   }, [isOnboarding, router])
 
+  useEffect(() => {
+    if (pollingLocationIds.length === 0) return;
+
+    const activeIntervals: Record<number, NodeJS.Timeout> = {};
+
+    pollingLocationIds.forEach((id) => {
+      const pollStatus = async () => {
+        try {
+          const res = await api.get<{
+            location_id: number;
+            status: string;
+            last_synced_at: string | null;
+            error_message: string | null;
+            run_type: string;
+          }>(`/locations/${id}/sync-status`);
+          
+          setSyncStatuses(prev => ({
+            ...prev,
+            [id]: {
+              status: res.status,
+              last_synced_at: res.last_synced_at,
+              error_message: res.error_message
+            }
+          }));
+
+          if (res.status === 'Success' || res.status === 'Failed') {
+            setPollingLocationIds(prev => prev.filter(pId => pId !== id));
+            loadLocations();
+            loadSyncLogs();
+          }
+        } catch (err) {
+          console.error(`Error polling status for location ${id}:`, err);
+        }
+      };
+
+      activeIntervals[id] = setInterval(pollStatus, 3000);
+    });
+
+    return () => {
+      Object.values(activeIntervals).forEach(clearInterval);
+    };
+  }, [pollingLocationIds]);
+
+  const handleLocationSync = async (locationId: number) => {
+    try {
+      await api.post(`/reviews/sync?location_id=${locationId}`);
+      setSyncStatuses(prev => ({
+        ...prev,
+        [locationId]: {
+          status: 'Pending',
+          last_synced_at: prev[locationId]?.last_synced_at || null,
+          error_message: null
+        }
+      }));
+      setPollingLocationIds(prev => prev.includes(locationId) ? prev : [...prev, locationId]);
+    } catch (err: any) {
+      setErrorAlert(err.message || 'Failed to trigger location review sync.');
+    }
+  }
+
+  const formatTimeAgo = (dateStr: string | null | undefined) => {
+    if (!dateStr) return 'never';
+    const now = new Date();
+    const date = new Date(dateStr);
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins} min ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours} hr${diffHours > 1 ? 's' : ''} ago`;
+    return date.toLocaleDateString();
+  }
+
+  const renderSyncStatus = (loc: Location) => {
+    const syncState = syncStatuses[loc.id];
+    
+    if (!syncState) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-muted/40 text-muted-foreground border border-border/50">
+          <HelpCircle className="h-3 w-3 animate-pulse" />
+          Checking...
+        </span>
+      );
+    }
+
+    if (syncState.status === 'Pending') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
+          <RefreshCw className="h-3 w-3 animate-spin" />
+          Syncing...
+        </span>
+      );
+    }
+
+    if (syncState.status === 'Failed') {
+      return (
+        <div className="flex flex-col items-end gap-1.5">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20 max-w-xs break-words">
+            <XCircle className="h-3 w-3 shrink-0" />
+            <span>Last sync failed: {syncState.error_message || 'Unknown error'}</span>
+          </span>
+          {userRole !== 'Viewer' && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLocationSync(loc.id);
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 text-[10px] font-bold border border-red-500/30 transition-colors cursor-pointer"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // Success
+    return (
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <CheckCircle2 className="h-3 w-3" />
+          Last synced {formatTimeAgo(syncState.last_synced_at)}
+        </span>
+        {userRole !== 'Viewer' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleLocationSync(loc.id);
+            }}
+            className="inline-flex items-center justify-center p-1 rounded bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 hover:text-indigo-300 border border-indigo-600/30 hover:border-indigo-600/50 transition-all cursor-pointer"
+            title="Sync Reviews"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  }
+
   const loadDashboardData = async () => {
     try {
       loadTokenStatus()
@@ -160,6 +312,33 @@ export default function DashboardPage() {
     try {
       const data = await api.get<Location[]>('/locations/')
       setLocations(data)
+      // Fetch sync status for each location
+      data.forEach(async (loc) => {
+        try {
+          const res = await api.get<{
+            location_id: number;
+            status: string;
+            last_synced_at: string | null;
+            error_message: string | null;
+            run_type: string;
+          }>(`/locations/${loc.id}/sync-status`);
+          
+          setSyncStatuses(prev => ({
+            ...prev,
+            [loc.id]: {
+              status: res.status,
+              last_synced_at: res.last_synced_at,
+              error_message: res.error_message
+            }
+          }));
+
+          if (res.status === 'Pending') {
+            setPollingLocationIds(prev => prev.includes(loc.id) ? prev : [...prev, loc.id]);
+          }
+        } catch (err) {
+          console.error(`Failed to load sync status for location ${loc.id}`, err);
+        }
+      });
     } catch (e: any) {
       console.error(e)
     } finally {
@@ -297,6 +476,7 @@ export default function DashboardPage() {
           )}
 
           {/* Connection Status widget & Alert Lifecycles */}
+          {userRole !== 'Viewer' && (
           <section className="glass-panel border border-border rounded-2xl p-6 relative overflow-hidden">
             <div className="absolute -top-12 -right-12 w-32 h-32 rounded-full bg-indigo-500/5 blur-2xl"></div>
             
@@ -379,6 +559,7 @@ export default function DashboardPage() {
               </div>
             )}
           </section>
+          )}
 
           {/* Synced Locations */}
           <section className="space-y-4">
@@ -428,14 +609,7 @@ export default function DashboardPage() {
                             )}
                           </div>
                         </div>
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          loc.sync_status === 'Synced' 
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                        }`}>
-                          <CheckCircle2 className="h-3 w-3" />
-                          {loc.sync_status}
-                        </span>
+                        {renderSyncStatus(loc)}
                       </div>
 
                       {loc.address && (

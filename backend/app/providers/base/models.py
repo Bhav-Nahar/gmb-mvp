@@ -11,6 +11,7 @@ class AddressModel(BaseModel):
 
 class LocationModel(BaseModel):
     id: Optional[str] = None
+    google_account_id: Optional[str] = None
     provider_location_id: str
     name: str
     category: Optional[str] = None

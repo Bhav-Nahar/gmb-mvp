@@ -48,7 +48,7 @@ export default function InviteLandingPage() {
     setError('')
     setLoginLoading(true)
     try {
-      const response: any = await api.get('/auth/google/login')
+      const response: any = await api.get(`/auth/google/login?invite_token=${token}`)
       if (response && response.url) {
         window.location.href = response.url
       } else {

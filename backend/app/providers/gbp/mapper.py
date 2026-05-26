@@ -1,10 +1,11 @@
 from datetime import datetime
+from typing import Optional
 from app.providers.base.models import LocationModel, ReviewModel
 from .schemas import GBPLocationRaw, GBPReviewRaw
 
 class GBPLocationMapper:
     @staticmethod
-    def to_model(raw: GBPLocationRaw) -> LocationModel:
+    def to_model(raw: GBPLocationRaw, account_name: Optional[str] = None) -> LocationModel:
         addr = raw.storefrontAddress or {}
         lines = addr.get("addressLines", [])
         locality = addr.get("locality", "")
@@ -21,6 +22,7 @@ class GBPLocationMapper:
             
         return LocationModel(
             provider_location_id=raw.name,
+            google_account_id=account_name,
             name=raw.title or "Unnamed Location",
             category=category,
             address=full_address,

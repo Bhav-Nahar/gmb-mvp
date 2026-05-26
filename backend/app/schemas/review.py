@@ -20,6 +20,9 @@ class ReviewResponse(BaseModel):
     updated_at: datetime
     is_deleted: bool
     deleted_at: Optional[datetime] = None
+    sentiment: Optional[str] = None
+    issue_category: Optional[str] = None
+    sentiment_tagged_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -32,3 +35,8 @@ class ReviewListResponse(BaseModel):
 
 class ReviewReplyRequest(BaseModel):
     reply_text: str = Field(..., min_length=1, max_length=4000)
+
+class GenerateReplyResponse(BaseModel):
+    review_id: int
+    generated_reply: str
+    tone: str

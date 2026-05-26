@@ -9,7 +9,7 @@ from app.providers.factory import ProviderFactory
 
 class ReviewSyncService:
     @staticmethod
-    async def sync_location_reviews(db: Session, location_id: int, run_type: str = "Scheduled") -> str:
+    async def sync_location_reviews(db: Session, location_id: int, run_type: str = "Scheduled", sync_log_id: int = None) -> str:
         """
         Sync reviews for a specific local location.
         """
@@ -18,6 +18,10 @@ class ReviewSyncService:
             raise Exception(f"Location with ID {location_id} not found.")
 
         organization_id = location.organization_id
+        
+        sync_log = None
+        if sync_log_id:
+            sync_log = db.query(SyncLog).filter(SyncLog.id == sync_log_id).first()
         
         try:
             # We assume Google Business Profile for MVP, but can read provider from location if implemented
@@ -28,16 +32,21 @@ class ReviewSyncService:
             provider_reviews = await provider.get_reviews(location.google_location_id)
             
             if not provider_reviews:
-                sync_log = SyncLog(
-                    organization_id=organization_id,
-                    location_id=location_id,
-                    status="Success",
-                    run_type=run_type,
-                    error_message="Successfully synced 0 reviews."
-                )
-                db.add(sync_log)
+                log_msg = "Successfully synced 0 reviews."
+                if sync_log:
+                    sync_log.status = "Success"
+                    sync_log.error_message = log_msg
+                else:
+                    new_log = SyncLog(
+                        organization_id=organization_id,
+                        location_id=location_id,
+                        status="Success",
+                        run_type=run_type,
+                        error_message=log_msg
+                    )
+                    db.add(new_log)
                 db.commit()
-                return "SUCCESS: Successfully synced 0 reviews."
+                return f"SUCCESS: {log_msg}"
             
             # Batch upsert using ON CONFLICT DO UPDATE
             chunk_size = 500
@@ -89,16 +98,34 @@ class ReviewSyncService:
 
             db.commit()
 
+            # Update location summary stats from the newly synced reviews
+            # This handles cases where the initial V4 summary fetch in location sync might have failed
+            stats = db.query(
+                func.count(Review.id).label("count"),
+                func.avg(Review.rating).label("avg")
+            ).filter(
+                Review.location_id == location_id,
+                Review.is_deleted == False
+            ).one()
+            
+            location.total_reviews = stats.count
+            location.average_rating = float(stats.avg) if stats.avg else 0.0
+            db.commit()
+
             # Log successful sync
             log_message = f"Successfully synced {synced_count} reviews."
-            sync_log = SyncLog(
-                organization_id=organization_id,
-                location_id=location_id,
-                status="Success",
-                run_type=run_type,
-                error_message=log_message
-            )
-            db.add(sync_log)
+            if sync_log:
+                sync_log.status = "Success"
+                sync_log.error_message = log_message
+            else:
+                new_log = SyncLog(
+                    organization_id=organization_id,
+                    location_id=location_id,
+                    status="Success",
+                    run_type=run_type,
+                    error_message=log_message
+                )
+                db.add(new_log)
             db.commit()
 
             return f"SUCCESS: {log_message}"
@@ -106,15 +133,19 @@ class ReviewSyncService:
         except Exception as e:
             db.rollback()
             error_msg = f"Review Sync Failed: {str(e)}"
-            sync_log = SyncLog(
-                organization_id=organization_id,
-                location_id=location_id,
-                status="Failed",
-                run_type=run_type,
-                error_message=error_msg
-            )
-            db.add(sync_log)
+            if sync_log:
+                sync_log.status = "Failed"
+                sync_log.error_message = error_msg
+            else:
+                new_log = SyncLog(
+                    organization_id=organization_id,
+                    location_id=location_id,
+                    status="Failed",
+                    run_type=run_type,
+                    error_message=error_msg
+                )
+                db.add(new_log)
             db.commit()
-            return f"FAILED: {error_msg}"
+            raise e
 
 review_sync_service = ReviewSyncService()

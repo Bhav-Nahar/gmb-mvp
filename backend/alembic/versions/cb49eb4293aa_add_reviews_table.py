@@ -32,7 +32,7 @@ def upgrade() -> None:
     sa.Column('reply_text', sa.Text(), nullable=True),
     sa.Column('review_created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('review_updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('raw_payload', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('raw_payload', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('is_deleted', sa.Boolean(), nullable=False),

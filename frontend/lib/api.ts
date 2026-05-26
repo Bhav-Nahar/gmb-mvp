@@ -25,6 +25,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   }
 
   const config: RequestInit = {
+    credentials: 'include',
     ...options,
     headers,
   }
@@ -65,6 +66,13 @@ export const api = {
   post: <T>(endpoint: string, body?: any, options?: RequestInit) => 
     request<T>(endpoint, { 
       method: 'POST', 
+      body: body instanceof FormData ? body : JSON.stringify(body), 
+      ...options 
+    }),
+    
+  put: <T>(endpoint: string, body?: any, options?: RequestInit) => 
+    request<T>(endpoint, { 
+      method: 'PUT', 
       body: body instanceof FormData ? body : JSON.stringify(body), 
       ...options 
     }),

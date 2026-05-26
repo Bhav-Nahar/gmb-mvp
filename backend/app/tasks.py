@@ -15,27 +15,105 @@ from app.services.review_sync_service import ReviewSyncService
 import asyncio
 
 @shared_task(name="app.tasks.sync_reviews_task")
-def sync_reviews_task(location_id: int, run_type: str = "Scheduled") -> str:
+def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: int = None) -> dict:
     """
     Synchronizes reviews for a specific location via the ReviewSyncService.
     """
+    import redis
+    from app.core.config import settings
+    
     db: Session = SessionLocal()
     try:
-        # Run the async sync_location_reviews inside a synchronous celery task wrapper
-        return asyncio.run(ReviewSyncService.sync_location_reviews(db, location_id, run_type))
+        location = db.query(Location).filter(Location.id == location_id).first()
+        if not location:
+            return {"status": "error", "reason": f"Location {location_id} not found"}
+            
+        if user_id:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                from app.api.deps import get_user_location_ids
+                allowed_location_ids = get_user_location_ids(user, db)
+                if allowed_location_ids is not None and location_id not in allowed_location_ids:
+                    return {"status": "error", "reason": "User does not have permission for this location"}
+        
+        organization_id = location.organization_id
+        
+        r = redis.Redis.from_url(settings.REDIS_URL)
+        lock_key = f"lock:sync_reviews:{organization_id}:{location_id}"
+        lock = r.lock(lock_key, timeout=300)
+        
+        if not lock.acquire(blocking=False):
+            return {"status": "skipped", "reason": "sync already in progress"}
+            
+        try:
+            sync_log = SyncLog(
+                organization_id=organization_id,
+                location_id=location_id,
+                status="Pending",
+                run_type=run_type,
+                error_message=None
+            )
+            db.add(sync_log)
+            db.commit()
+            db.refresh(sync_log)
+            
+            result = asyncio.run(ReviewSyncService.sync_location_reviews(db, location_id, run_type, sync_log_id=sync_log.id))
+
+            # Fire-and-forget: enqueue sentiment tagging after a successful sync.
+            # Only fires on success — never on failure.
+            tag_reviews_sentiment_task.delay(
+                location_id=location_id,
+                organization_id=organization_id
+            )
+
+            return {"status": "success", "result": result}
+        except Exception as e:
+            db.rollback()
+            db.query(SyncLog).filter(SyncLog.id == sync_log.id).update({
+                SyncLog.status: "Failed",
+                SyncLog.error_message: f"Sync Failed: {str(e)}"
+            })
+            db.commit()
+            raise e
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
     finally:
         db.close()
 
 @shared_task(name="app.tasks.sync_locations_task")
-def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Scheduled") -> str:
+def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Scheduled") -> dict:
     """
     Synchronizes Google Business Profile locations for an organization
     using the user's encrypted tokens fetched from the oauth_accounts table.
     Gracefully handles token refreshing and encryption/decryption cycles.
     """
+    import redis
+    from app.core.config import settings
+    
     db: Session = SessionLocal()
     
+    r = redis.Redis.from_url(settings.REDIS_URL)
+    lock_key = f"lock:sync_all:{organization_id}"
+    lock = r.lock(lock_key, timeout=300)
+    
+    if not lock.acquire(blocking=False):
+        db.close()
+        return {"status": "skipped", "reason": "sync already in progress"}
+    
     try:
+        sync_log = SyncLog(
+            organization_id=organization_id,
+            status="Pending",
+            run_type=run_type,
+            error_message=None
+        )
+        db.add(sync_log)
+        db.commit()
+        db.refresh(sync_log)
+        
         provider = ProviderFactory.get_provider("gbp", organization_id, db)
         provider_locations = asyncio.run(provider.get_locations())
         
@@ -51,6 +129,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             
             if existing_loc:
                 # Update
+                existing_loc.google_account_id = p_loc.google_account_id
                 existing_loc.location_name = p_loc.name
                 existing_loc.primary_category = p_loc.category
                 existing_loc.address = p_loc.address
@@ -60,10 +139,13 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 existing_loc.total_reviews = p_loc.total_reviews
                 existing_loc.sync_status = "Synced"
                 existing_loc.last_synced_at = datetime.datetime.utcnow()
+                db.commit()
+                loc_id = existing_loc.id
             else:
                 # Insert new
                 new_loc = Location(
                     organization_id=organization_id,
+                    google_account_id=p_loc.google_account_id,
                     google_location_id=p_loc.provider_location_id,
                     location_name=p_loc.name,
                     primary_category=p_loc.category,
@@ -76,45 +158,43 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     last_synced_at=datetime.datetime.utcnow()
                 )
                 db.add(new_loc)
+                db.commit()
+                db.refresh(new_loc)
+                loc_id = new_loc.id
                 
+            # Trigger review sync for this location
+            sync_reviews_task.delay(loc_id, run_type, user_id)
             synced_count += 1
             
-        db.commit()
-        
         # Log successful sync operation
         log_message = f"Synchronized {synced_count} locations successfully."
-        sync_log = SyncLog(
-            organization_id=organization_id,
-            status="Success",
-            run_type=run_type,
-            error_message=log_message
-        )
-        db.add(sync_log)
+        sync_log.status = "Success"
+        sync_log.error_message = log_message
         db.commit()
         
-        return f"SUCCESS: {log_message}"
+        return {"status": "success", "result": log_message}
 
     except Exception as e:
         db.rollback()
         
         # If refreshing has failed catastrophically
         if isinstance(e, ProviderAuthError) or "re-authentication required" in str(e).lower() or "invalid_grant" in str(e).lower():
-            # Find and delete oauth account
-            oauth_account = db.query(OAuthAccount).join(User).filter(User.organization_id == organization_id).first()
+            # Find and delete oauth account securely
+            oauth_account = db.query(OAuthAccount).join(User).filter(
+                User.organization_id == organization_id,
+                User.role.in_(["Owner", "Admin"]),
+                OAuthAccount.provider.in_(["gbp", "google"])
+            ).first()
             if oauth_account:
                 db.delete(oauth_account)
                 db.commit()
             
-        # Log failure
+        # Log failure securely
         error_msg = f"Sync Failed: {str(e)}"
-        sync_log = SyncLog(
-            organization_id=organization_id,
-            status="Failed",
-            run_type=run_type,
-            error_message=error_msg
-        )
-        db.add(sync_log)
-        db.commit()
+        db.query(SyncLog).filter(SyncLog.id == sync_log.id).update({
+            SyncLog.status: "Failed",
+            SyncLog.error_message: error_msg
+        })
         
         # Flag existing locations as failed
         db.query(Location).filter(Location.organization_id == organization_id).update({
@@ -122,9 +202,13 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         })
         db.commit()
         
-        return f"FAILED: {error_msg}"
+        raise e
         
     finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
         db.close()
 
 @shared_task(name="app.tasks.sync_all_organizations_task")
@@ -135,7 +219,7 @@ def sync_all_organizations_task() -> str:
     """
     db: Session = SessionLocal()
     try:
-        users_with_google = db.query(User).join(OAuthAccount).filter(User.role == "Admin").all()
+        users_with_google = db.query(User).join(OAuthAccount).filter(User.role.in_(["Owner", "Admin"])).all()
         triggered_count = 0
         
         for admin in users_with_google:
@@ -144,4 +228,59 @@ def sync_all_organizations_task() -> str:
                 
         return f"Triggered synchronization for {triggered_count} organizations."
     finally:
+        db.close()
+
+
+@shared_task(bind=True, name="app.tasks.tag_reviews_sentiment_task", max_retries=2)
+def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> dict:
+    """
+    Background task that classifies untagged reviews for a location using the LLM sentiment service.
+    Acquires a Redis lock to prevent overlapping runs.
+    Does NOT write to sync_logs — sentiment tagging is background enrichment, not a sync event.
+    """
+    import redis
+    from app.core.config import settings
+    from app.models.review import Review
+    from app.services.sentiment_service import tag_reviews_sentiment
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    r = redis.Redis.from_url(settings.REDIS_URL)
+    lock_key = f"lock:sentiment_tag:{organization_id}:{location_id}"
+    lock = r.lock(lock_key, timeout=600)
+
+    if not lock.acquire(blocking=False):
+        return {"status": "skipped", "reason": "already running"}
+
+    db: Session = SessionLocal()
+    try:
+        # Query reviews where:
+        # - location and org match
+        # - sentiment_tagged_at IS NULL (not yet processed)
+        # - not soft deleted
+        # TODO (future): also include reviews where review_updated_at > sentiment_tagged_at
+        # to automatically re-classify reviews whose text changed after initial tagging.
+        untagged_reviews = db.query(Review).filter(
+            Review.location_id == location_id,
+            Review.organization_id == organization_id,
+            Review.sentiment_tagged_at == None,  # noqa: E711
+            Review.is_deleted == False
+        ).all()
+
+        if not untagged_reviews:
+            return {"status": "skipped", "reason": "no untagged reviews"}
+
+        asyncio.run(tag_reviews_sentiment(untagged_reviews, db))
+
+        return {"status": "completed", "tagged": len(untagged_reviews)}
+
+    except Exception as e:
+        logger.error("Sentiment tagging task failed for location %s: %s", location_id, str(e))
+        raise
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
         db.close()

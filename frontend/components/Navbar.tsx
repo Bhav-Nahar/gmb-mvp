@@ -52,17 +52,25 @@ export default function Navbar() {
             >
               Dashboard
             </Link>
-            <Link
-              href="/dashboard/team"
-              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
-            >
-              Team
-            </Link>
+            {['Owner', 'Admin', 'Regional Manager'].includes(userRole) && (
+              <Link
+                href="/dashboard/team"
+                className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+              >
+                Team
+              </Link>
+            )}
             <Link
               href="/dashboard/reviews"
               className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
             >
               Reviews
+            </Link>
+            <Link
+              href="/dashboard/settings"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+            >
+              Settings
             </Link>
           </nav>
         </div>

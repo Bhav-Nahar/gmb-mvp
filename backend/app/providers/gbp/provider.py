@@ -21,7 +21,7 @@ class GBPProvider(BaseProvider):
             "client_id": settings.GOOGLE_CLIENT_ID,
             "redirect_uri": settings.GOOGLE_REDIRECT_URI,
             "response_type": "code",
-            "scope": "https://www.googleapis.com/auth/business.manage",
+            "scope": "https://www.googleapis.com/auth/business.manage openid email profile",
             "access_type": "offline",
             "prompt": "consent",
             "state": state
@@ -144,16 +144,22 @@ class GBPProvider(BaseProvider):
                             reviews_url = f"https://mybusiness.googleapis.com/v4/{account_name}/{loc_name}/reviews"
                             try:
                                 rev_resp = await client.request("GET", reviews_url, headers=headers)
-                                rev_data = rev_resp.json()
-                                loc_dict["rating"] = rev_data.get("averageRating")
-                                loc_dict["reviewCount"] = rev_data.get("totalReviewCount")
+                                if rev_resp.status_code == 200:
+                                    rev_data = rev_resp.json()
+                                    loc_dict["rating"] = rev_data.get("averageRating")
+                                    loc_dict["reviewCount"] = rev_data.get("totalReviewCount")
                             except Exception as e:
                                 import logging
-                                logging.error(f"Failed to fetch reviews for {loc_name}. Error: {str(e)}")
-                                continue  # Log the error but continue syncing other locations
+                                logging.error(f"Failed to fetch reviews summary for {loc_name} via V4 API. Error: {str(e)}")
+                                # Do NOT continue; we still want to sync the location itself even if rating fetch fails
                             
-                        raw_model = GBPLocationRaw(**loc_dict)
-                        all_locations.append(GBPLocationMapper.to_model(raw_model))
+                        try:
+                            raw_model = GBPLocationRaw(**loc_dict)
+                            all_locations.append(GBPLocationMapper.to_model(raw_model, account_name=account_name))
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Failed to map location {loc_name}: {str(e)}")
+                            continue
                     
                     next_page_token = data.get("nextPageToken")
                     if not next_page_token:
@@ -194,38 +200,67 @@ class GBPProvider(BaseProvider):
             
         all_reviews = []
         async with GBPAsyncClient(self.auth_context.organization_id) as client:
-            accounts_url = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
-            acc_resp = await client.request("GET", accounts_url, headers=headers)
-            accounts = acc_resp.json().get("accounts", [])
+            # 1. Try to find the account_name from the database first
+            from app.models.location import Location
+            loc_record = self.db.query(Location).filter(
+                Location.google_location_id == google_location_id,
+                Location.organization_id == self.auth_context.organization_id
+            ).first()
             
-            for account in accounts:
-                account_name = account["name"]
-                next_page_token = None
+            target_account_name = loc_record.google_account_id if loc_record else None
+            
+            # 2. If not in DB or if google_account_id is null, perform discovery
+            if not target_account_name:
+                accounts_url = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
+                acc_resp = await client.request("GET", accounts_url, headers=headers)
+                accounts = acc_resp.json().get("accounts", [])
                 
-                while True:
-                    url = f"https://mybusiness.googleapis.com/v4/{account_name}/{google_location_id}/reviews"
-                    params = {"pageSize": 50}
-                    if next_page_token:
-                        params["pageToken"] = next_page_token
-                        
+                for account in accounts:
+                    locations_url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{account['name']}/locations"
                     try:
-                        resp = await client.request("GET", url, headers=headers, params=params)
-                        data = resp.json()
-                        batch = data.get("reviews", [])
-                        
-                        for rev_dict in batch:
-                            raw = GBPReviewRaw(**rev_dict)
-                            model = GBPReviewMapper.to_model(raw, google_location_id)
-                            model.provider_metadata = rev_dict
-                            all_reviews.append(model)
-                            
-                        next_page_token = data.get("nextPageToken")
-                        if not next_page_token:
+                        # We request with readMask=name and a larger pageSize to find it efficiently
+                        loc_resp = await client.request("GET", locations_url, headers=headers, params={"readMask": "name", "pageSize": 100})
+                        data = loc_resp.json()
+                        batch = data.get("locations", [])
+                        if any(loc.get("name") == google_location_id for loc in batch):
+                            target_account_name = account["name"]
+                            # Cache the discovered account name back to the database to bypass discovery in the future
+                            if loc_record:
+                                loc_record.google_account_id = target_account_name
+                                self.db.commit()
                             break
-                    except Exception as e:
-                        import logging
-                        logging.error(f"Failed to fetch reviews for {google_location_id} in account {account_name}. Error: {str(e)}")
+                    except Exception:
+                        continue
+            
+            if not target_account_name:
+                raise Exception(f"Location {google_location_id} could not be found in any connected Google accounts. Please re-sync locations.")
+
+            # 3. Fetch reviews from the target account
+            next_page_token = None
+            while True:
+                url = f"https://mybusiness.googleapis.com/v4/{target_account_name}/{google_location_id}/reviews"
+                params = {"pageSize": 50}
+                if next_page_token:
+                    params["pageToken"] = next_page_token
+                    
+                try:
+                    resp = await client.request("GET", url, headers=headers, params=params)
+                    data = resp.json()
+                    batch = data.get("reviews", [])
+                    
+                    for rev_dict in batch:
+                        raw = GBPReviewRaw(**rev_dict)
+                        model = GBPReviewMapper.to_model(raw, google_location_id)
+                        model.provider_metadata = rev_dict
+                        all_reviews.append(model)
+                        
+                    next_page_token = data.get("nextPageToken")
+                    if not next_page_token:
                         break
+                except Exception as e:
+                    import logging
+                    logging.error(f"Failed to fetch reviews for {google_location_id} in account {target_account_name}. Error: {str(e)}")
+                    raise e
                         
         return all_reviews
 

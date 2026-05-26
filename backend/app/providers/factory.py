@@ -29,12 +29,20 @@ class ProviderFactory:
         Looks up the OAuth credentials for the organization, decrypts them,
         constructs the AuthContext, and returns the instantiated provider.
         """
-        # We need the OAuth account for this organization.
-        # Assuming one connected account per organization for simplicity (e.g., via the Admin).
-        oauth_account = db.query(OAuthAccount).join(User).filter(User.organization_id == organization_id).first()
+        # Ensure we get a token for the correct provider from an Owner or Admin
+        # Support both 'gbp' and 'google' for backward compatibility
+        provider_names = [provider_name]
+        if provider_name == "gbp":
+            provider_names.append("google")
+            
+        oauth_account = db.query(OAuthAccount).join(User).filter(
+            User.organization_id == organization_id,
+            User.role.in_(["Owner", "Admin"]),
+            OAuthAccount.provider.in_(provider_names)
+        ).first()
         
         if not oauth_account:
-            raise Exception(f"No connected OAuth account found for organization {organization_id}")
+            raise Exception(f"No connected {provider_name} account found for organization {organization_id}")
             
         try:
             access_token = decrypt_token(oauth_account.access_token)

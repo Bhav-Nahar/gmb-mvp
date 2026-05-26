@@ -7,6 +7,7 @@ class Location(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    google_account_id = Column(String, nullable=True) # Example: "accounts/12345"
     google_location_id = Column(String, index=True, nullable=False)  # Example: "locations/12345"
     location_name = Column(String, nullable=False)
     primary_category = Column(String, nullable=True)

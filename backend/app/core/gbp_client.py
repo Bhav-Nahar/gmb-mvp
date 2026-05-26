@@ -53,7 +53,7 @@ class GBPClient:
             "client_id": settings.GOOGLE_CLIENT_ID,
             "redirect_uri": settings.GOOGLE_REDIRECT_URI,
             "response_type": "code",
-            "scope": "https://www.googleapis.com/auth/business.manage",
+            "scope": "https://www.googleapis.com/auth/business.manage openid email profile",
             "access_type": "offline",
             "prompt": "consent",
             "state": state

@@ -32,6 +32,8 @@ class UserOut(BaseModel):
     avatar: Optional[str] = None
     google_id: str
     role: str
+    is_active: bool
+    viewer_scope: Optional[str] = None
     organization_id: int
     created_at: datetime
     
@@ -40,6 +42,16 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class RoleUpdate(BaseModel):
+    role: str
+    viewer_scope: Optional[str] = None
+
+class LocationsUpdate(BaseModel):
+    location_ids: List[int]
+
+class TransferOwnershipRequest(BaseModel):
+    new_owner_id: int
 
 # Token schemas
 class Token(BaseModel):

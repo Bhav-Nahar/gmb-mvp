@@ -26,7 +26,9 @@ export default function LoginSuccessPage() {
     const fetchAndRedirect = async () => {
       try {
         setStatusMessage('Establishing workspace...')
-        const userProfile = await api.get('/users/me')
+        const userProfile = await api.get('/users/me', undefined, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
         localStorage.setItem('gmb_user', JSON.stringify(userProfile))
         
         setStatusMessage('Onboarding workspace...')

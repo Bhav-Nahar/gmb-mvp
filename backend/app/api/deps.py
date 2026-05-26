@@ -1,10 +1,11 @@
-from typing import Generator
-from fastapi import Depends, HTTPException, status
+from typing import Generator, Optional, List
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token_payload
 from app.models.user import User
+from app.models.user_location_access import UserLocationAccess
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
@@ -18,12 +19,21 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     
-    email = decode_access_token(token)
-    if email is None:
+    payload = decode_access_token_payload(token)
+    if payload is None or payload.get("sub") is None:
         raise credentials_exception
+        
+    email = payload.get("sub")
+    token_version = payload.get("ver", 1)
         
     user = db.query(User).filter(User.email == email).first()
     if user is None:
+        raise credentials_exception
+        
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+        
+    if user.token_version != token_version:
         raise credentials_exception
         
     return user
@@ -41,5 +51,43 @@ class RoleChecker:
         return current_user
 
 # Predefined role dependencies
-admin_required = RoleChecker(["Admin"])
-staff_required = RoleChecker(["Admin", "Staff"])
+admin_required = RoleChecker(["Owner", "Admin"])
+staff_required = RoleChecker(["Owner", "Admin", "Regional Manager", "Store Manager"])
+
+def get_user_location_ids(user: User, db: Session) -> Optional[List[int]]:
+    if user.role in ["Owner", "Admin"]:
+        return None
+    if user.role == "Viewer" and user.viewer_scope == "organization":
+        return None
+    
+    # Fetch assigned locations
+    mappings = db.query(UserLocationAccess).filter(UserLocationAccess.user_id == user.id).all()
+    return [mapping.location_id for mapping in mappings]
+
+def verify_location_access(location_id: int):
+    def _verify(
+        request: Request,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+    ):
+        if current_user.role in ["Owner", "Admin"]:
+            # Optionally check if location belongs to org here, but usually done at query level
+            return location_id
+            
+        if current_user.role == "Viewer":
+            if request.method not in ["GET", "OPTIONS", "HEAD"]:
+                raise HTTPException(status_code=403, detail="Viewers cannot perform mutations")
+            if current_user.viewer_scope == "organization":
+                return location_id
+        
+        # Check mapping
+        mapping = db.query(UserLocationAccess).filter(
+            UserLocationAccess.user_id == current_user.id,
+            UserLocationAccess.location_id == location_id
+        ).first()
+        
+        if not mapping:
+            raise HTTPException(status_code=403, detail="You do not have access to this location")
+            
+        return location_id
+    return _verify
