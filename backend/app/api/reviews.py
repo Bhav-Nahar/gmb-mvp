@@ -15,6 +15,8 @@ from app.worker import celery
 from app.services.ai_reply_service import generate_reply
 from app.llm.exceptions import LLMProviderError
 from app.constants.review_sentiment import ALLOWED_SENTIMENTS, ALLOWED_ISSUE_CATEGORIES
+from app.constants.sla import SLA_TIER_LIST
+from sqlalchemy import func, extract
 
 router = APIRouter()
 
@@ -25,6 +27,8 @@ def get_reviews(
     rating: Optional[int] = None,
     sentiment: Optional[str] = None,
     issue_category: Optional[str] = None,
+    sla_tier: Optional[str] = None,
+    overdue_only: bool = False,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -62,6 +66,34 @@ def get_reviews(
                 detail=f"Invalid issue_category value. Allowed: {sorted(ALLOWED_ISSUE_CATEGORIES)}"
             )
         query = query.filter(Review.issue_category == issue_category)
+
+    if sla_tier is not None or overdue_only:
+        query = query.join(Location, Review.location_id == Location.id)
+        query = query.filter(
+            Location.sla_tracking_started_at != None,
+            Review.review_created_at >= Location.sla_tracking_started_at
+        )
+
+    if sla_tier is not None:
+        if sla_tier not in SLA_TIER_LIST:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid sla_tier value. Allowed: {SLA_TIER_LIST}"
+            )
+        response_hours = extract('epoch', Review.reply_created_at - Review.review_created_at) / 3600.0
+        query = query.filter(Review.is_replied == True, Review.reply_created_at != None)
+        if sla_tier == "Best":
+            query = query.filter(response_hours <= 12)
+        elif sla_tier == "Good":
+            query = query.filter(response_hours > 12, response_hours <= 24)
+        elif sla_tier == "Average":
+            query = query.filter(response_hours > 24, response_hours <= 72)
+        elif sla_tier == "Poor":
+            query = query.filter(response_hours > 72)
+
+    if overdue_only:
+        age_hours = extract('epoch', func.now() - Review.review_created_at) / 3600.0
+        query = query.filter(Review.is_replied == False, age_hours > 72)
 
     total = query.count()
     pages = math.ceil(total / size) if total > 0 else 1
@@ -139,9 +171,11 @@ def reply_to_review(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to post reply to provider: {str(e)}")
         
+    if review.reply_created_at is None:
+        review.reply_created_at = func.now()
     review.is_replied = True
     review.reply_text = payload.reply_text
-    review.review_updated_at = datetime.utcnow()
+    review.review_updated_at = func.now()
     db.commit()
     db.refresh(review)
     
@@ -153,6 +187,9 @@ async def generate_review_reply(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    if current_user.role == "Viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot generate replies")
+
     review = db.query(Review).filter(
         Review.id == review_id,
         Review.is_deleted == False
@@ -160,6 +197,10 @@ async def generate_review_reply(
     
     if not review or review.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Review not found")
+
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    if allowed_location_ids is not None and review.location_id not in allowed_location_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to this location")
         
     location = db.query(Location).filter(
         Location.id == review.location_id,
@@ -195,6 +236,10 @@ def retag_sentiment(
     then enqueue the sentiment tagging task.
     """
     from app.tasks import tag_reviews_sentiment_task
+
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    if allowed_location_ids is not None and location_id not in allowed_location_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to this location")
 
     location = db.query(Location).filter(
         Location.id == location_id,

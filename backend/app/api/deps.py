@@ -10,14 +10,25 @@ from app.models.user_location_access import UserLocationAccess
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 def get_current_user(
-    db: Session = Depends(get_db),
-    token: str = Depends(oauth2_scheme)
+    request: Request,
+    db: Session = Depends(get_db)
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    # Try reading from httpOnly cookie first
+    token = request.cookies.get("gmb_auth_token")
+    if not token:
+        # Fallback to Authorization header for API clients
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            
+    if not token:
+        raise credentials_exception
     
     payload = decode_access_token_payload(token)
     if payload is None or payload.get("sub") is None:

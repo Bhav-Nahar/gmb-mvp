@@ -29,17 +29,28 @@ interface Review {
   comment?: string
   is_replied: boolean
   reply_text?: string
+  reply_created_at?: string | null
   review_created_at: string
   sentiment?: string | null
   issue_category?: string | null
   sentiment_tagged_at?: string | null
 }
 
+interface SLAMetrics {
+  sla_enabled: boolean
+  sla_tracking_started_at: string | null
+  total_replied: number
+  avg_response_hours: number | null
+  avg_sla_tier: string | null
+  pending_count: number
+  overdue_count: number
+}
+
 interface ReviewListResponse {
   reviews: Review[]
-  total: int
-  page: int
-  pages: int
+  total: number
+  page: number
+  pages: number
 }
 
 export default function ReviewsPage() {
@@ -48,12 +59,23 @@ export default function ReviewsPage() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  
   // Filters
   const [filterRating, setFilterRating] = useState<number | ''>('')
   const [filterReplied, setFilterReplied] = useState<'all' | 'replied' | 'unreplied'>('all')
   const [filterLocation, setFilterLocation] = useState<number | ''>('')
   const [filterSentiment, setFilterSentiment] = useState<string>('')
   const [filterCategory, setFilterCategory] = useState<string>('')
+  const [filterSlaTier, setFilterSlaTier] = useState<string>('')
+  const [filterOverdue, setFilterOverdue] = useState<boolean>(false)
+
+  // SLA State
+  const [slaMetrics, setSlaMetrics] = useState<SLAMetrics | null>(null)
+  const [showSlaModal, setShowSlaModal] = useState(false)
+  const [enablingSla, setEnablingSla] = useState(false)
 
   // Reply state
   const [replyingTo, setReplyingTo] = useState<number | null>(null)
@@ -87,8 +109,29 @@ export default function ReviewsPage() {
   }, [])
 
   useEffect(() => {
+    if (filterLocation !== '') {
+      loadSlaMetrics(filterLocation)
+    } else {
+      setSlaMetrics(null)
+    }
+  }, [filterLocation])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filterRating, filterReplied, filterLocation, filterSentiment, filterCategory, filterSlaTier, filterOverdue])
+
+  useEffect(() => {
     loadReviews()
-  }, [filterRating, filterReplied, filterLocation, filterSentiment, filterCategory])
+  }, [currentPage, filterRating, filterReplied, filterLocation, filterSentiment, filterCategory, filterSlaTier, filterOverdue])
+
+  const loadSlaMetrics = async (locId: number) => {
+    try {
+      const data = await api.get<SLAMetrics>(`/locations/${locId}/sla`)
+      setSlaMetrics(data)
+    } catch (e: any) {
+      console.error('Failed to load SLA metrics', e)
+    }
+  }
 
   const loadLocations = async () => {
     try {
@@ -103,15 +146,19 @@ export default function ReviewsPage() {
     setLoading(true)
     try {
       const params = new URLSearchParams()
+      params.append('page', currentPage.toString())
       if (filterRating !== '') params.append('rating', filterRating.toString())
       if (filterReplied === 'replied') params.append('is_replied', 'true')
       if (filterReplied === 'unreplied') params.append('is_replied', 'false')
       if (filterLocation !== '') params.append('location_id', filterLocation.toString())
       if (filterSentiment !== '') params.append('sentiment', filterSentiment)
       if (filterCategory !== '') params.append('issue_category', filterCategory)
+      if (filterSlaTier !== '') params.append('sla_tier', filterSlaTier)
+      if (filterOverdue) params.append('overdue_only', 'true')
 
       const data = await api.get<ReviewListResponse>(`/reviews/?${params.toString()}`)
       setReviews(data.reviews || [])
+      setTotalPages(data.pages || 1)
     } catch (e: any) {
       console.error(e)
       setErrorAlert(e.message || 'Failed to load reviews.')
@@ -152,6 +199,41 @@ export default function ReviewsPage() {
       // Disable the button for 5 seconds to prevent spam
       setTimeout(() => setRetagDisabled(false), 5000)
     }
+  }
+
+  const handleEnableSla = async () => {
+    if (!filterLocation) return
+    setEnablingSla(true)
+    setErrorAlert('')
+    try {
+      await api.post(`/locations/${filterLocation}/sla/enable`)
+      setSuccessAlert('SLA Tracking enabled successfully!')
+      setShowSlaModal(false)
+      loadSlaMetrics(filterLocation)
+    } catch (err: any) {
+      setErrorAlert(err.message || 'Failed to enable SLA tracking.')
+    } finally {
+      setEnablingSla(false)
+    }
+  }
+
+  const renderSlaBadge = (review: Review) => {
+    if (!slaMetrics?.sla_enabled || !slaMetrics.sla_tracking_started_at) return null
+    if (new Date(review.review_created_at) < new Date(slaMetrics.sla_tracking_started_at)) return null
+
+    if (review.is_replied && review.reply_created_at) {
+      const hours = (new Date(review.reply_created_at).getTime() - new Date(review.review_created_at).getTime()) / 3600000
+      if (hours <= 12) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">⚡ Best</span>
+      if (hours <= 24) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30">✓ Good</span>
+      if (hours <= 72) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">~ Avg</span>
+      return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30">✗ Poor</span>
+    } else if (!review.is_replied) {
+      const hours = (new Date().getTime() - new Date(review.review_created_at).getTime()) / 3600000
+      if (hours > 72) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30">Overdue</span>
+      if (hours > 24) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">Pending</span>
+      return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-muted/20 text-muted-foreground border border-border">Awaiting</span>
+    }
+    return null
   }
 
   const handlePostReply = async (reviewId: number) => {
@@ -351,7 +433,7 @@ export default function ReviewsPage() {
               <select
                 className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
                 value={filterCategory}
-                onChange={e => setFilterCategory(e.target.value)}
+                onChange={e => { setFilterCategory(e.target.value); setCurrentPage(1); }}
               >
                 <option value="">All Categories</option>
                 <option value="Staff Praise">Staff Praise</option>
@@ -364,7 +446,66 @@ export default function ReviewsPage() {
                 <option value="General Feedback">General Feedback</option>
               </select>
             </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">SLA Tier</label>
+              <select
+                className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                value={filterSlaTier}
+                onChange={e => { setFilterSlaTier(e.target.value); setCurrentPage(1); }}
+              >
+                <option value="">All Tiers</option>
+                <option value="Best">Best</option>
+                <option value="Good">Good</option>
+                <option value="Average">Average</option>
+                <option value="Poor">Poor</option>
+              </select>
+            </div>
+            
+            <div className="flex items-center gap-2 pt-5">
+              <label className="text-sm font-bold text-white flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded bg-muted/30 border-border text-indigo-500 focus:ring-indigo-500"
+                  checked={filterOverdue}
+                  onChange={e => { setFilterOverdue(e.target.checked); setCurrentPage(1); }}
+                />
+                Overdue Only
+              </label>
+            </div>
           </div>
+
+          {filterLocation !== '' && slaMetrics && (
+            <div className="glass-panel border border-border p-4 rounded-xl flex items-center justify-between">
+              {!slaMetrics.sla_enabled ? (
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-sm text-muted-foreground">SLA Tracking is not enabled for this location.</span>
+                  <button onClick={() => setShowSlaModal(true)} className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors">Enable SLA Tracking</button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-6">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Avg Response</span>
+                    <span className="text-sm font-semibold text-white">
+                      {slaMetrics.avg_response_hours !== null ? `${slaMetrics.avg_response_hours}h — ${slaMetrics.avg_sla_tier}` : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Replied</span>
+                    <span className="text-sm font-semibold text-white">{slaMetrics.total_replied}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Overdue</span>
+                    <span className="text-sm font-semibold text-red-400">{slaMetrics.overdue_count}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Pending</span>
+                    <span className="text-sm font-semibold text-amber-400">{slaMetrics.pending_count}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Reviews List */}
           {loading ? (
@@ -402,33 +543,32 @@ export default function ReviewsPage() {
                       </div>
                     </div>
                     
-                    <div className="flex flex-col items-end gap-2">
+                        <div className="flex flex-col items-end gap-2">
                       <div className="flex items-center gap-1">
                         {Array.from({ length: 5 }).map((_, i) => (
                           <Star key={i} className={`h-4 w-4 ${i < (review.rating || 0) ? 'text-yellow-500 fill-yellow-500' : 'text-muted-foreground/30'}`} />
                         ))}
                       </div>
-                      {/* Sentiment badge + category tag */}
-                      {(review.sentiment || review.issue_category) && (
-                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                          {review.sentiment && (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                              review.sentiment === 'Positive' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' :
-                              review.sentiment === 'Neutral'  ? 'bg-slate-500/15 text-slate-400 border border-slate-500/30' :
-                              review.sentiment === 'Negative' ? 'bg-red-500/15 text-red-400 border border-red-500/30' :
-                              review.sentiment === 'Angry'    ? 'bg-rose-700/20 text-rose-300 border border-rose-700/40' :
-                              'bg-muted/20 text-muted-foreground border border-border'
-                            }`}>
-                              {review.sentiment}
-                            </span>
-                          )}
-                          {review.issue_category && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-700/40 text-blue-300 border border-slate-600/50">
-                              {review.issue_category}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                      {/* Sentiment badge + category tag + SLA badge */}
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                        {renderSlaBadge(review)}
+                        {review.sentiment && (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                            review.sentiment === 'Positive' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' :
+                            review.sentiment === 'Neutral'  ? 'bg-slate-500/15 text-slate-400 border border-slate-500/30' :
+                            review.sentiment === 'Negative' ? 'bg-red-500/15 text-red-400 border border-red-500/30' :
+                            review.sentiment === 'Angry'    ? 'bg-rose-700/20 text-rose-300 border border-rose-700/40' :
+                            'bg-muted/20 text-muted-foreground border border-border'
+                          }`}>
+                            {review.sentiment}
+                          </span>
+                        )}
+                        {review.issue_category && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-700/40 text-blue-300 border border-slate-600/50">
+                            {review.issue_category}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -568,6 +708,54 @@ export default function ReviewsPage() {
                   
                 </div>
               ))}
+
+              {totalPages > 1 && (
+                <div className="flex justify-between items-center mt-6">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1 || loading}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-muted/30 text-white disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages || loading}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-muted/30 text-white disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {showSlaModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+              <div className="bg-background border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
+                <h3 className="text-xl font-bold text-white mb-2">Enable SLA Tracking</h3>
+                <p className="text-sm text-muted-foreground mb-6">
+                  Start tracking response times from today? Historical reviews will remain visible but will not affect SLA metrics or rankings.
+                </p>
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={() => setShowSlaModal(false)}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold text-muted-foreground hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleEnableSla}
+                    disabled={enablingSla}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                  >
+                    {enablingSla ? 'Enabling...' : 'Enable from Today'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

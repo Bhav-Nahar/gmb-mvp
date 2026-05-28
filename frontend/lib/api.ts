@@ -5,17 +5,11 @@ interface RequestOptions extends RequestInit {
 }
 
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('gmb_auth_token') : null
-  
   const headers = new Headers(options.headers || {})
   headers.set('Accept', 'application/json')
   
   if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
-  }
-  
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
   }
 
   let url = `${API_BASE_URL}${endpoint}`
@@ -35,7 +29,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     
     if (response.status === 401) {
       if (typeof window !== 'undefined') {
-        localStorage.removeItem('gmb_auth_token')
+        localStorage.removeItem('gmb_logged_in')
         localStorage.removeItem('gmb_user')
         window.location.href = '/login?expired=true'
       }

@@ -1,6 +1,7 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import select, func, outerjoin
 from app.db.session import get_db
 from app.api.deps import get_current_user, staff_required, admin_required, get_user_location_ids, verify_location_access
 from app.models.user import User
@@ -9,7 +10,10 @@ from app.models.location import Location
 from app.models.sync_log import SyncLog
 from app.schemas.schemas import LocationOut, SyncLogOut
 from app.schemas.location import LocationSyncStatus
+from app.schemas.sla import LocationSLAMetrics, LocationSLASummary
+from app.services.sla_service import get_location_sla_metrics, get_organization_sla_summary
 from app.worker import celery
+from sqlalchemy import func
 
 router = APIRouter()
 
@@ -18,14 +22,40 @@ def get_locations(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
-    """Fetch all synced Google Business Profile locations for the user's organization."""
-    query = db.query(Location).filter(Location.organization_id == current_user.organization_id)
-    
+    """Fetch all synced locations, embedding the latest sync-log status so the
+    frontend needs only this one request (no per-location /sync-status calls)."""
+
+    # Correlated subquery: for each location, find the id of its most recent SyncLog.
+    latest_log_id_sq = (
+        select(func.max(SyncLog.id))
+        .where(SyncLog.location_id == Location.id)
+        .correlate(Location)
+        .scalar_subquery()
+    )
+
+    query = (
+        db.query(
+            Location,
+            SyncLog.status.label("latest_sync_status"),
+            SyncLog.error_message.label("latest_sync_error"),
+        )
+        .outerjoin(SyncLog, SyncLog.id == latest_log_id_sq)
+        .filter(Location.organization_id == current_user.organization_id)
+    )
+
     allowed_location_ids = get_user_location_ids(current_user, db)
     if allowed_location_ids is not None:
         query = query.filter(Location.id.in_(allowed_location_ids))
-        
-    return query.all()
+
+    results = query.all()
+
+    out = []
+    for location, latest_sync_status, latest_sync_error in results:
+        loc_out = LocationOut.model_validate(location)
+        loc_out.latest_sync_status = latest_sync_status
+        loc_out.latest_sync_error = latest_sync_error
+        out.append(loc_out)
+    return out
 
 @router.get("/sync-logs", response_model=List[SyncLogOut])
 def get_sync_logs(
@@ -40,6 +70,62 @@ def get_sync_logs(
         query = query.filter(SyncLog.location_id.in_(allowed_location_ids))
         
     return query.order_by(SyncLog.created_at.desc()).limit(50).all()
+
+@router.get("/sla-summary", response_model=List[LocationSLASummary])
+async def get_locations_sla_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Fetch SLA summary for all locations in the organization."""
+    return await get_organization_sla_summary(current_user.organization_id, db)
+
+@router.get("/{location_id}/sla", response_model=LocationSLAMetrics)
+async def get_location_sla(
+    location_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Fetch SLA metrics for a specific location."""
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    if allowed_location_ids is not None and location_id not in allowed_location_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to this location")
+        
+    location = db.query(Location).filter(
+        Location.id == location_id,
+        Location.organization_id == current_user.organization_id
+    ).first()
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    return await get_location_sla_metrics(location_id, current_user.organization_id, db)
+
+@router.post("/{location_id}/sla/enable", status_code=status.HTTP_200_OK)
+def enable_location_sla(
+    location_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required)
+):
+    """Enable SLA tracking for a specific location."""
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    if allowed_location_ids is not None and location_id not in allowed_location_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to this location")
+        
+    location = db.query(Location).filter(
+        Location.id == location_id,
+        Location.organization_id == current_user.organization_id
+    ).first()
+    
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    if location.sla_tracking_started_at is not None:
+        return {"status": "already_enabled", "sla_tracking_started_at": location.sla_tracking_started_at}
+        
+    location.sla_tracking_started_at = func.now()
+    db.commit()
+    db.refresh(location)
+    
+    return {"status": "enabled", "sla_tracking_started_at": location.sla_tracking_started_at}
 
 @router.get("/{location_id}", response_model=LocationOut)
 def get_location(

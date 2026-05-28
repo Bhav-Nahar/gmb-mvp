@@ -35,11 +35,18 @@ class ProviderFactory:
         if provider_name == "gbp":
             provider_names.append("google")
             
-        oauth_account = db.query(OAuthAccount).join(User).filter(
-            User.organization_id == organization_id,
-            User.role.in_(["Owner", "Admin"]),
-            OAuthAccount.provider.in_(provider_names)
-        ).first()
+        oauth_account = (
+            db.query(OAuthAccount)
+            .join(User)
+            .filter(
+                User.organization_id == organization_id,
+                User.role.in_(["Owner", "Admin"]),
+                User.is_active == True,
+                OAuthAccount.provider.in_(provider_names)
+            )
+            .order_by(OAuthAccount.expires_at.desc(), User.id.asc())
+            .first()
+        )
         
         if not oauth_account:
             raise Exception(f"No connected {provider_name} account found for organization {organization_id}")

@@ -35,10 +35,14 @@ interface Location {
   sync_status: string
   last_synced_at?: string
   created_at: string
+  // Embedded from latest SyncLog by the backend — no extra fetch needed
+  latest_sync_status?: string | null
+  latest_sync_error?: string | null
 }
 
 interface SyncLog {
   id: number
+  location_id: number | null
   status: string
   error_message?: string
   run_type: string
@@ -52,6 +56,18 @@ interface TokenStatus {
   google_email?: string
 }
 
+interface LocationSLASummary {
+  location_id: number
+  location_name: string
+  sla_enabled: boolean
+  sla_tracking_started_at: string | null
+  avg_response_hours: number | null
+  avg_sla_tier: string | null
+  total_replied: number
+  overdue_count: number
+  pending_count: number
+}
+
 export default function DashboardPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -62,6 +78,7 @@ export default function DashboardPage() {
   const [tokenStatus, setTokenStatus] = useState<TokenStatus | null>(null)
   const [syncStatuses, setSyncStatuses] = useState<Record<number, { status: string, error_message: string | null, last_synced_at: string | null }>>({})
   const [pollingLocationIds, setPollingLocationIds] = useState<number[]>([])
+  const [slaSummaries, setSlaSummaries] = useState<Record<number, LocationSLASummary>>({})
   
   // Loaders
   const [loadingLocations, setLoadingLocations] = useState(true)
@@ -124,9 +141,14 @@ export default function DashboardPage() {
         setSyncLogs(logsData)
         setTokenStatus(statusData)
 
-        // Check if sync completed (represented by sync log records and updated locations)
-        const hasFinished = logsData.length > 0 && (
-          logsData[0].status === 'Success' || logsData[0].status === 'Failed'
+        // Check if sync completed by finding the specific org-level location sync log
+        const locationSyncLog = logsData.find(log => 
+          log.location_id === null && 
+          log.error_message && 
+          (log.error_message.includes('Synchronized') || log.error_message.includes('Sync Failed'))
+        )
+        const hasFinished = !!locationSyncLog && (
+          locationSyncLog.status === 'Success' || locationSyncLog.status === 'Failed'
         )
 
         // If succeeded or failed, or max poll duration (30 seconds) reached, resolve onboarding overlay
@@ -293,7 +315,21 @@ export default function DashboardPage() {
       loadTokenStatus()
       loadLocations()
       loadSyncLogs()
+      loadSlaSummary()
     } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const loadSlaSummary = async () => {
+    try {
+      const data = await api.get<LocationSLASummary[]>('/locations/sla-summary')
+      const summaryMap: Record<number, LocationSLASummary> = {}
+      for (const item of data) {
+        summaryMap[item.location_id] = item
+      }
+      setSlaSummaries(summaryMap)
+    } catch (e: any) {
       console.error(e)
     }
   }
@@ -312,33 +348,32 @@ export default function DashboardPage() {
     try {
       const data = await api.get<Location[]>('/locations/')
       setLocations(data)
-      // Fetch sync status for each location
-      data.forEach(async (loc) => {
-        try {
-          const res = await api.get<{
-            location_id: number;
-            status: string;
-            last_synced_at: string | null;
-            error_message: string | null;
-            run_type: string;
-          }>(`/locations/${loc.id}/sync-status`);
-          
-          setSyncStatuses(prev => ({
-            ...prev,
-            [loc.id]: {
-              status: res.status,
-              last_synced_at: res.last_synced_at,
-              error_message: res.error_message
-            }
-          }));
 
-          if (res.status === 'Pending') {
-            setPollingLocationIds(prev => prev.includes(loc.id) ? prev : [...prev, loc.id]);
-          }
-        } catch (err) {
-          console.error(`Failed to load sync status for location ${loc.id}`, err);
+      // Seed sync status from the embedded fields — zero extra HTTP calls
+      const newStatuses: Record<number, { status: string; last_synced_at: string | null; error_message: string | null }> = {}
+      const pendingIds: number[] = []
+
+      for (const loc of data) {
+        // latest_sync_status comes from the latest SyncLog row joined by the backend.
+        // Fall back to loc.sync_status (the denormalised column) when no log exists yet.
+        const status = loc.latest_sync_status ?? loc.sync_status
+        newStatuses[loc.id] = {
+          status,
+          last_synced_at: loc.last_synced_at ?? null,
+          error_message: loc.latest_sync_error ?? null,
         }
-      });
+        if (status === 'Pending') {
+          pendingIds.push(loc.id)
+        }
+      }
+
+      setSyncStatuses(prev => ({ ...prev, ...newStatuses }))
+      if (pendingIds.length > 0) {
+        setPollingLocationIds(prev => [
+          ...prev,
+          ...pendingIds.filter(id => !prev.includes(id)),
+        ])
+      }
     } catch (e: any) {
       console.error(e)
     } finally {
@@ -598,6 +633,20 @@ export default function DashboardPage() {
                           <h4 className="text-base font-bold text-white leading-tight">{loc.location_name}</h4>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">{loc.primary_category || 'Storefront'}</span>
+                            
+                            {/* SLA Badge */}
+                            {slaSummaries[loc.id]?.sla_enabled && (
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                slaSummaries[loc.id].avg_sla_tier === 'Best' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                slaSummaries[loc.id].avg_sla_tier === 'Good' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                                slaSummaries[loc.id].avg_sla_tier === 'Average' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                                slaSummaries[loc.id].avg_sla_tier === 'Poor' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                                'bg-muted/20 text-muted-foreground border-border'
+                              }`}>
+                                {slaSummaries[loc.id].avg_response_hours !== null ? `${slaSummaries[loc.id].avg_response_hours}h SLA` : 'SLA: No Data'}
+                              </span>
+                            )}
+                            
                             {loc.average_rating !== undefined && loc.average_rating !== null && (
                               <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 text-[10px] font-bold">
                                 <Sparkles className="h-2.5 w-2.5 fill-current" />

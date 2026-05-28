@@ -118,6 +118,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         provider_locations = asyncio.run(provider.get_locations())
         
         synced_count = 0
+        sync_jobs = []
         for p_loc in provider_locations:
             print(f"DEBUG: Processing location: {p_loc.name}")
             
@@ -139,7 +140,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 existing_loc.total_reviews = p_loc.total_reviews
                 existing_loc.sync_status = "Synced"
                 existing_loc.last_synced_at = datetime.datetime.utcnow()
-                db.commit()
+                db.flush()
                 loc_id = existing_loc.id
             else:
                 # Insert new
@@ -158,13 +159,18 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     last_synced_at=datetime.datetime.utcnow()
                 )
                 db.add(new_loc)
-                db.commit()
-                db.refresh(new_loc)
+                db.flush()
                 loc_id = new_loc.id
                 
-            # Trigger review sync for this location
-            sync_reviews_task.delay(loc_id, run_type, user_id)
+            sync_jobs.append(loc_id)
             synced_count += 1
+            
+        # Commit once after the loop
+        db.commit()
+        
+        # Trigger review sync for this location
+        for loc_id in sync_jobs:
+            sync_reviews_task.delay(loc_id, run_type, user_id)
             
         # Log successful sync operation
         log_message = f"Synchronized {synced_count} locations successfully."
@@ -214,18 +220,36 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
 @shared_task(name="app.tasks.sync_all_organizations_task")
 def sync_all_organizations_task() -> str:
     """
-    Periodic task enqueuing background synchronizations for organizations.
-    Iterates over users and locates their active oauth credentials.
+    Periodic task enqueuing one background sync per organization.
+    Picks the active Owner/Admin with the freshest OAuth token for each org
+    to avoid queuing redundant tasks when multiple admins have connected accounts.
     """
     db: Session = SessionLocal()
     try:
-        users_with_google = db.query(User).join(OAuthAccount).filter(User.role.in_(["Owner", "Admin"])).all()
-        triggered_count = 0
-        
+        # Fetch all active Owner/Admin users who have a connected OAuth account,
+        # ordered so the freshest token comes first within each organization.
+        users_with_google = (
+            db.query(User)
+            .join(OAuthAccount, OAuthAccount.user_id == User.id)
+            .filter(
+                User.role.in_(["Owner", "Admin"]),
+                User.is_active == True
+            )
+            .order_by(OAuthAccount.expires_at.desc())
+            .all()
+        )
+
+        # Deduplicate: keep only the first (freshest-token) admin per org.
+        best_admin_per_org: dict[int, User] = {}
         for admin in users_with_google:
-            sync_locations_task.delay(admin.organization_id, admin.id, "Scheduled")
+            if admin.organization_id not in best_admin_per_org:
+                best_admin_per_org[admin.organization_id] = admin
+
+        triggered_count = 0
+        for org_id, admin in best_admin_per_org.items():
+            sync_locations_task.delay(org_id, admin.id, "Scheduled")
             triggered_count += 1
-                
+
         return f"Triggered synchronization for {triggered_count} organizations."
     finally:
         db.close()

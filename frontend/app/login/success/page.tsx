@@ -19,16 +19,14 @@ export default function LoginSuccessPage() {
       return
     }
 
-    // Save token
-    localStorage.setItem('gmb_auth_token', token)
+    // Save token-like flag, not the actual secret
+    localStorage.setItem('gmb_logged_in', 'true')
     
     // Fetch profile and store
     const fetchAndRedirect = async () => {
       try {
         setStatusMessage('Establishing workspace...')
-        const userProfile = await api.get('/users/me', undefined, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
+        const userProfile = await api.get('/users/me')
         localStorage.setItem('gmb_user', JSON.stringify(userProfile))
         
         setStatusMessage('Onboarding workspace...')
@@ -41,7 +39,7 @@ export default function LoginSuccessPage() {
           }
         }, 1000)
       } catch (e) {
-        localStorage.removeItem('gmb_auth_token')
+        localStorage.removeItem('gmb_logged_in')
         router.replace('/login?error=profile_fetch_failed')
       }
     }

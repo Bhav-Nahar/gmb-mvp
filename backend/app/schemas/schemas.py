@@ -72,7 +72,11 @@ class LocationOut(BaseModel):
     total_reviews: Optional[int] = None
     sync_status: str
     last_synced_at: Optional[datetime] = None
+    sla_tracking_started_at: Optional[datetime] = None
     created_at: datetime
+    # Embedded from latest SyncLog — avoids N+1 sync-status requests
+    latest_sync_status: Optional[str] = None
+    latest_sync_error: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -80,6 +84,7 @@ class LocationOut(BaseModel):
 # SyncLog schemas
 class SyncLogOut(BaseModel):
     id: int
+    location_id: Optional[int] = None
     status: str
     error_message: Optional[str] = None
     run_type: str

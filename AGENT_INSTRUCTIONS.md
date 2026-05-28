@@ -150,6 +150,7 @@ All tables reside in a PostgreSQL database and are managed using SQLAlchemy mode
 | `total_reviews` | `Integer` | `nullable=True` | Total number of reviews synced |
 | `sync_status` | `String` | `nullable=False`, `default="Pending"` | Sync state (`"Pending"`, `"Synced"`, `"Failed"`) |
 | `last_synced_at` | `DateTime(timezone=True)` | `nullable=True` | Timestamp of last success sync |
+| `sla_tracking_started_at` | `DateTime(timezone=True)` | `nullable=True`, `index=True` | Opt-in timestamp for SLA tracking |
 | `created_at` | `DateTime(timezone=True)` | `nullable=False`, `server_default=now()` | Creation timestamp |
 
 #### Sync Logs Table (`sync_logs` / `SyncLog` Model)
@@ -177,6 +178,7 @@ All tables reside in a PostgreSQL database and are managed using SQLAlchemy mode
 | `comment` | `Text` | `nullable=True` | Textual content of the review |
 | `is_replied` | `Boolean` | `nullable=False`, `default=False` | Flag indicating if a reply has been posted |
 | `reply_text` | `Text` | `nullable=True` | Textual content of the reply |
+| `reply_created_at` | `DateTime(timezone=True)` | `nullable=True`, `index=True` | Timestamp when the first reply was created |
 | `review_created_at` | `DateTime(timezone=True)` | `nullable=False` | Original review timestamp from provider |
 | `review_updated_at` | `DateTime(timezone=True)` | `nullable=True` | Last modification timestamp from provider |
 | `raw_payload` | `JSONB` | `nullable=True` | Entire unmapped JSON structure for historical auditing |
@@ -191,6 +193,7 @@ All tables reside in a PostgreSQL database and are managed using SQLAlchemy mode
 **Table Constraints & Indices:**
 - **Unique Constraint (`uq_review_provider_id`):** Enforces a combination of `(provider, provider_review_id)` to prevent duplicating reviews.
 - **Sorted Composite Index (`idx_reviews_location_created_at_desc`):** Defined over `(location_id, review_created_at DESC)` for O(1) page lookups on sorting.
+- **SLA Optimizations:** Includes `ix_reviews_sla_lookup` covering `(organization_id, location_id, is_deleted, is_replied, review_created_at)` to support rapid SLA grouping and time-based filtering.
 
 ---
 
@@ -306,6 +309,12 @@ Reviews are kept in sync continuously using Celery background tasks or manual cl
 - **Classification:** Reviews are processed in batches (default 5) via `SentimentService`. The system prompt instructs the LLM to output a strict JSON array assigning a sentiment (e.g., `Positive`, `Negative`) and an issue category (e.g., `Staff Praise`, `Service Issue`). The allowed labels have a single source of truth in `app/constants/review_sentiment.py`.
 - **Error Resilience:** Uses `temperature=0.1` for consistency. Individual JSON item failures (e.g., invalid label or missing ID) do not fail the entire batch. If the response isn't parseable as JSON, the batch is safely skipped.
 
+### 6.7 SLA Tracking & Metrics
+- **Opt-in Design:** Locations must explicitly opt-in to SLA tracking to avoid artificially punishing locations with years of historical, unanswered reviews. Opting in sets `sla_tracking_started_at`.
+- **Time Constraints:** SLA computations (in `sla_service.py`) and API filtering (`reviews.py`) STRICTLY gate calculations to only include reviews where `review_created_at >= sla_tracking_started_at`.
+- **N+1 Query Avoidance:** `get_organization_sla_summary` computes metrics for all locations belonging to an organization at once by utilizing SQLAlchemy `group_by` and aggregate functions (`func.sum`, `func.avg`, `case`), completely avoiding per-location N+1 iteration.
+- **Tiers:** Time cutoffs (e.g. Best < 12h, Good < 24h) are defined exclusively in `app/constants/sla.py`. Tiers dynamically categorize response speed (based on `reply_created_at` - `review_created_at`).
+
 ---
 
 ## 7. Development Operations
@@ -369,6 +378,10 @@ Any new agent working on this project must be aware of these historical bug fixe
 ### 9.8 Docker Layer Caching with Shared Dockerfile
 - **Quirk:** The backend and celery worker share the same `Dockerfile`. If a new dependency (e.g., `openai`) is added to `requirements.txt`, running `docker compose build celery_worker` or `docker compose up --build` might incorrectly hit a cached `pip install` layer from an earlier build that didn't include the new dependency. This leads to a `ModuleNotFoundError` inside the container at runtime.
 - **Fix:** Always explicitly run `docker compose build --no-cache [service_name]` when adding new dependencies to a shared `requirements.txt` file to force a clean installation.
+
+### 9.9 SLA Time Handling and Filter Gating
+- **Quirk:** Pre-SLA historical reviews can get accidentally caught in SLA aggregations (e.g., "Overdue" metrics) if boundary conditions aren't strictly joined. Moreover, using Python's naive `datetime.utcnow()` instead of the database's `func.now()` can introduce skew and boundary errors during evaluation.
+- **Fix:** All SLA time filtering strictly joins the `Location` table and filters by `review_created_at >= Location.sla_tracking_started_at`. Additionally, writing SLA-critical timestamps to the DB must universally use `func.now()` to guarantee correct PostgreSQL evaluation. The endpoint to enable SLA is also explicitly locked to `admin_required`.
 
 ---
 

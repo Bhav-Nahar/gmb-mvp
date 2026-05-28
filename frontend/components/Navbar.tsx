@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { LogOut, User as UserIcon, RefreshCw, Layers } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { api } from '@/lib/api'
 
 export default function Navbar() {
   const router = useRouter()
@@ -25,8 +26,13 @@ export default function Navbar() {
     }
   }, [])
 
-  const handleLogout = () => {
-    localStorage.removeItem('gmb_auth_token')
+  const handleLogout = async () => {
+    try {
+      await api.post('/auth/logout')
+    } catch (e) {
+      console.error('Logout error', e)
+    }
+    localStorage.removeItem('gmb_logged_in')
     localStorage.removeItem('gmb_user')
     router.push('/login')
   }

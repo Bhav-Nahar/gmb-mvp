@@ -53,7 +53,7 @@ export default function SettingsPage() {
     try {
       await api.delete('/users/me')
       // Successfully deleted. Clear local storage and redirect.
-      localStorage.removeItem('gmb_auth_token')
+      localStorage.removeItem('gmb_logged_in')
       localStorage.removeItem('gmb_user')
       router.push('/login?deleted=true')
     } catch (err: any) {

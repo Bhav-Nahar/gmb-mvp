@@ -27,6 +27,6 @@ class Invite(Base):
             "email",
             "organization_id",
             unique=True,
-            postgresql_where=text("status = 'pending'")
+            postgresql_where=text("status IN ('pending', 'in_progress')")
         ),
     )

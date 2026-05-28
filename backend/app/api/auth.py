@@ -282,7 +282,18 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         
         # Redirect to frontend success page that will save credentials
         redirect_url = f"{settings.FRONTEND_URL}/login/success?token={local_token}&onboarding={'true' if is_new_user else 'false'}"
-        return RedirectResponse(url=redirect_url)
+        response = RedirectResponse(url=redirect_url)
+        
+        secure_cookie = settings.FRONTEND_URL.startswith("https://")
+        response.set_cookie(
+            key="gmb_auth_token",
+            value=local_token,
+            httponly=True,
+            secure=secure_cookie,
+            samesite="lax",
+            max_age=3600 * 24 * 7
+        )
+        return response
         
     except ValueError as e:
         db.rollback()
@@ -294,3 +305,15 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         import logging
         logging.exception("Unhandled exception during Google OAuth callback")
         return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=oauth_failed")
+
+@router.post("/logout")
+def logout(response: Response):
+    """
+    Clear the secure httpOnly authentication cookie.
+    """
+    response.delete_cookie(
+        key="gmb_auth_token",
+        path="/",
+        samesite="lax"
+    )
+    return {"message": "Successfully logged out"}

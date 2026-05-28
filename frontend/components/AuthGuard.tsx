@@ -8,8 +8,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
 
   useEffect(() => {
-    const token = localStorage.getItem('gmb_auth_token')
-    if (!token) {
+    const loggedIn = localStorage.getItem('gmb_logged_in')
+    if (!loggedIn) {
       setIsAuthenticated(false)
       router.replace('/login')
     } else {

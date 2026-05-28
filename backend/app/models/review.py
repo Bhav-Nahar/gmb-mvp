@@ -17,6 +17,7 @@ class Review(Base):
     comment = Column(Text, nullable=True)
     is_replied = Column(Boolean, default=False, nullable=False)
     reply_text = Column(Text, nullable=True)
+    reply_created_at = Column(DateTime(timezone=True), nullable=True)
     review_created_at = Column(DateTime(timezone=True), nullable=False)
     review_updated_at = Column(DateTime(timezone=True), nullable=True)
     raw_payload = Column(JSON().with_variant(JSONB, 'postgresql'), nullable=True)
@@ -41,4 +42,6 @@ class Review(Base):
     __table_args__ = (
         UniqueConstraint("location_id", "provider", "provider_review_id", name="uq_review_provider_id"),
         Index("idx_reviews_location_created_at_desc", "location_id", review_created_at.desc()),
+        Index("ix_reviews_sla_lookup", "organization_id", "location_id", "is_deleted", "is_replied", "review_created_at"),
+        Index("ix_reviews_reply_created_at", "reply_created_at"),
     )

@@ -7,8 +7,8 @@ export default function RootPage() {
   const router = useRouter()
 
   useEffect(() => {
-    const token = localStorage.getItem('gmb_auth_token')
-    if (token) {
+    const loggedIn = localStorage.getItem('gmb_logged_in')
+    if (loggedIn) {
       router.replace('/dashboard')
     } else {
       router.replace('/login')

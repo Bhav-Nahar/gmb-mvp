@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, Float
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, Float, Index
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 
@@ -19,8 +19,13 @@ class Location(Base):
     
     sync_status = Column(String, default="Pending", nullable=False)  # Pending, Synced, Failed
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    sla_tracking_started_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     organization = relationship("Organization", back_populates="locations")
     sync_logs = relationship("SyncLog", back_populates="location", cascade="all, delete-orphan")
     reviews = relationship("Review", back_populates="location", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_locations_sla_tracking_started_at", "sla_tracking_started_at"),
+    )

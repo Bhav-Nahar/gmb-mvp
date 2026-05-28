@@ -14,6 +14,7 @@ class ReviewResponse(BaseModel):
     comment: Optional[str] = None
     is_replied: bool
     reply_text: Optional[str] = None
+    reply_created_at: Optional[datetime] = None
     review_created_at: datetime
     review_updated_at: Optional[datetime] = None
     created_at: datetime

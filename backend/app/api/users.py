@@ -36,7 +36,18 @@ def get_token_status(
     Check active Google OAuth connection status.
     Determines if credentials are valid, expired, or require re-auth alerts.
     """
-    oauth_account = db.query(OAuthAccount).filter(OAuthAccount.user_id == current_user.id).first()
+    oauth_account = (
+        db.query(OAuthAccount)
+        .join(User)
+        .filter(
+            User.organization_id == current_user.organization_id,
+            User.role.in_(["Owner", "Admin"]),
+            User.is_active == True,
+            OAuthAccount.provider.in_(["gbp", "google"])
+        )
+        .order_by(OAuthAccount.expires_at.desc(), User.id.asc())
+        .first()
+    )
     
     if not oauth_account:
         return {"status": "disconnected", "message": "No Google Account connected"}
@@ -51,20 +62,20 @@ def get_token_status(
             return {
                 "status": "requires_refresh",
                 "message": "Access token expired. Ready to auto-refresh.",
-                "google_email": current_user.email
+                "google_email": oauth_account.user.email
             }
         else:
             return {
                 "status": "expired",
                 "message": "Google authentication expired. Please reconnect.",
-                "google_email": current_user.email
+                "google_email": oauth_account.user.email
             }
             
     time_remaining = token_expiry - now
     return {
         "status": "active",
         "expires_in_seconds": int(time_remaining.total_seconds()),
-        "google_email": current_user.email
+        "google_email": oauth_account.user.email
     }
 
 @router.get("/", response_model=List[UserOut])
@@ -82,9 +93,18 @@ def disconnect_google(
     current_user: User = Depends(admin_required)
 ):
     """Disconnect organization Google Business Profile integration."""
-    oauth_account = db.query(OAuthAccount).filter(OAuthAccount.user_id == current_user.id).first()
-    if oauth_account:
-        db.delete(oauth_account)
+    oauth_accounts = (
+        db.query(OAuthAccount)
+        .join(User)
+        .filter(
+            User.organization_id == current_user.organization_id,
+            User.role.in_(["Owner", "Admin"]),
+            OAuthAccount.provider.in_(["gbp", "google"])
+        )
+        .all()
+    )
+    for oa in oauth_accounts:
+        db.delete(oa)
         
     # Invalidate active administrator sessions immediately upon GBP disconnect
     current_user.token_version += 1
@@ -190,8 +210,20 @@ def list_invites(
     db: Session = Depends(get_db),
     current_user: User = Depends(regional_manager_plus)
 ):
-    """List all pending/expired/revoked/accepted invites for the organization."""
-    return invite_service.list_organization_invites(db, current_user.organization_id)
+    """List pending/expired/revoked/accepted invites for the organization.
+    Regional Managers only see Store Manager invites for their assigned locations."""
+    all_invites = invite_service.list_organization_invites(db, current_user.organization_id)
+
+    if current_user.role == "Regional Manager":
+        rm_locs = set(get_user_location_ids(current_user, db) or [])
+        return [
+            inv for inv in all_invites
+            if inv.role == "Store Manager"
+            and inv.location_ids
+            and any(loc in rm_locs for loc in inv.location_ids)
+        ]
+
+    return all_invites
 
 @router.delete("/invites/{invite_id}")
 def revoke_invite(

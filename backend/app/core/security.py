@@ -7,10 +7,12 @@ from app.core.config import settings
 # AES-256 encryption using Fernet symmetric key
 try:
     fernet = Fernet(settings.ENCRYPTION_KEY.encode())
-except Exception:
-    # Generate a temporary key on invalid config; log a warning
-    print("WARNING: ENCRYPTION_KEY in .env is invalid. Generated a temporary key. Set a proper Fernet key in production.")
-    fernet = Fernet(Fernet.generate_key())
+except Exception as e:
+    raise RuntimeError(
+        "ENCRYPTION_KEY is missing or invalid. "
+        "Generate a valid key with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
+        "and set it in your .env file."
+    ) from e
 
 def create_access_token(subject: Union[str, Any], token_version: int = 1, expires_delta: Optional[timedelta] = None) -> str:
     if expires_delta:
