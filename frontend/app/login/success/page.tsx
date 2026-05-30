@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { RefreshCw, CheckCircle2 } from 'lucide-react'
 import { api } from '@/lib/api'
 
-export default function LoginSuccessPage() {
+function LoginSuccessContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [statusMessage, setStatusMessage] = useState('Securing connection...')
@@ -59,5 +59,19 @@ export default function LoginSuccessPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginSuccessPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4 text-center p-6 max-w-sm glass-panel border border-border rounded-2xl shadow-2xl">
+          <RefreshCw className="h-6 w-6 text-indigo-500 animate-spin" />
+        </div>
+      </div>
+    }>
+      <LoginSuccessContent />
+    </Suspense>
   )
 }

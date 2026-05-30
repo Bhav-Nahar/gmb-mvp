@@ -19,3 +19,5 @@ class User(Base):
 
     organization = relationship("Organization", back_populates="users")
     oauth_accounts = relationship("OAuthAccount", back_populates="user", cascade="all, delete-orphan")
+    created_campaigns = relationship("Campaign", back_populates="created_by", cascade="all, delete-orphan")
+    created_posts = relationship("Post", back_populates="created_by", cascade="all, delete-orphan")

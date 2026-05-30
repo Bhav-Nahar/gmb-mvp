@@ -11,7 +11,7 @@ from app.models.location import Location
 from app.models.review import Review
 from app.schemas.review import ReviewResponse, ReviewListResponse, ReviewReplyRequest, GenerateReplyResponse
 from app.providers.factory import ProviderFactory
-from app.worker import celery
+from app.worker import celery as celery_app
 from app.services.ai_reply_service import generate_reply
 from app.llm.exceptions import LLMProviderError
 from app.constants.review_sentiment import ALLOWED_SENTIMENTS, ALLOWED_ISSUE_CATEGORIES
@@ -126,7 +126,7 @@ def trigger_reviews_sync(
         if not loc:
             raise HTTPException(status_code=404, detail="Location not found")
             
-        task = celery.send_task("app.tasks.sync_reviews_task", args=[location_id, "Manual", current_user.id])
+        task = celery_app.send_task("app.tasks.sync_reviews_task", args=[location_id, "Manual", current_user.id])
         return {"message": "Sync task has been queued for the location.", "task_id": task.id}
     else:
         if current_user.role not in ["Owner", "Admin"]:
@@ -137,7 +137,7 @@ def trigger_reviews_sync(
         ).all()
         task_ids = []
         for loc in locations:
-            task = celery.send_task("app.tasks.sync_reviews_task", args=[loc.id, "Manual", current_user.id])
+            task = celery_app.send_task("app.tasks.sync_reviews_task", args=[loc.id, "Manual", current_user.id])
             task_ids.append(task.id)
         return {"message": f"Sync tasks have been queued for {len(locations)} locations.", "task_ids": task_ids}
 
@@ -235,8 +235,6 @@ def retag_sentiment(
     Reset sentiment_tagged_at for all non-deleted reviews of a location to NULL,
     then enqueue the sentiment tagging task.
     """
-    from app.tasks import tag_reviews_sentiment_task
-
     allowed_location_ids = get_user_location_ids(current_user, db)
     if allowed_location_ids is not None and location_id not in allowed_location_ids:
         raise HTTPException(status_code=403, detail="You do not have access to this location")
@@ -257,9 +255,12 @@ def retag_sentiment(
     ).update({Review.sentiment_tagged_at: None}, synchronize_session=False)
     db.commit()
 
-    tag_reviews_sentiment_task.delay(
-        location_id=location_id,
-        organization_id=current_user.organization_id
+    celery_app.send_task(
+        "app.tasks.tag_reviews_sentiment_task",
+        kwargs={
+            "location_id": location_id,
+            "organization_id": current_user.organization_id
+        }
     )
 
     return {"status": "queued", "message": "Sentiment retagging queued for this location"}

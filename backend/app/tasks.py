@@ -308,3 +308,1120 @@ def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> 
         except Exception:
             pass
         db.close()
+
+@shared_task(bind=True, name="app.tasks.process_publish_job_task", max_retries=3)
+def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
+    """
+    Background worker that physically posts content to Google Business Profile for a single location.
+    Secured with Redis lock and idempotency key checks.
+    """
+    import redis
+    import logging
+    import httpx
+    from app.core.config import settings
+    from app.db.session import SessionLocal
+    from sqlalchemy.orm import Session
+    from app.models.publish_job import PublishJob
+    from app.models.post import Post
+    from app.models.location import Location
+    from app.models.post_variant import PostVariant
+    from app.models.post_audit_log import PostAuditLog
+    from app.constants.posts import PublishJobStatus, PostStatus
+    from app.providers.gbp.post_mapper import GBPPostMapper
+    from app.providers.factory import ProviderFactory
+    from app.providers.gbp.auth import PermanentAuthError
+    
+    logger = logging.getLogger(__name__)
+    
+    r = redis.Redis.from_url(settings.REDIS_URL)
+    lock_key = f"lock:publish_job:{organization_id}:{job_id}"
+    lock = r.lock(lock_key, timeout=120)
+    
+    if not lock.acquire(blocking=False):
+        return {"status": "skipped", "reason": "Job is currently being processed by another worker"}
+        
+    db: Session = SessionLocal()
+    try:
+        logger.info(f"Processing PublishJob {job_id} for Organization {organization_id}")
+        job = db.query(PublishJob).filter(PublishJob.id == job_id, PublishJob.organization_id == organization_id).first()
+        if not job or job.status not in [PublishJobStatus.PENDING.value, PublishJobStatus.RETRYING.value]:
+            return {"status": "skipped", "reason": "Job not found or not in a processable state"}
+
+        # State transition to RUNNING
+        job.status = PublishJobStatus.RUNNING.value
+        db.commit()
+
+        # Fetch parent post and location details
+        post = db.query(Post).filter(Post.id == job.post_id).first()
+        location = db.query(Location).filter(Location.id == job.location_id).first()
+        if not post or not location:
+            raise Exception("Post or Location linked to PublishJob not found.")
+
+        # Find dynamic variant if exists
+        variant = db.query(PostVariant).filter(
+            PostVariant.post_id == post.id,
+            PostVariant.location_id == location.id
+        ).first()
+
+        # Map dynamic payload using mapper
+        payload = GBPPostMapper.to_gbp_payload(post, variant)
+
+        # Retrieve Google Business Profile Provider dynamically
+        provider = ProviderFactory.get_provider("gbp", organization_id, db)
+
+        # Sync/Async invocation: internally provider.create_post is fully async but called here synchronously
+        res = asyncio.run(provider.create_post(location.google_location_id, payload))
+
+        # Simulating/Parsing successful Google API response
+        job.status = PublishJobStatus.SUCCESS.value
+        job.google_post_id = res.id
+        job.provider_response = getattr(res, "provider_metadata", {}) or {}
+        job.published_at = datetime.datetime.now(timezone.utc)
+        
+        # Atomically transition parent Post to PUBLISHED
+        if not job.campaign_id:
+            post.status = PostStatus.PUBLISHED.value
+        
+        # Atomic campaign counter update
+        if job.campaign_id:
+            from app.models.campaign import Campaign
+            from app.models.campaign_audit_log import CampaignAuditLog
+            db.query(Campaign).filter(Campaign.id == job.campaign_id).update({
+                Campaign.total_published: Campaign.total_published + 1,
+                Campaign.total_pending: Campaign.total_pending - 1
+            }, synchronize_session=False)
+            
+            campaign = db.query(Campaign).filter(Campaign.id == job.campaign_id).first()
+            if campaign and campaign.total_pending == 0:
+                old_status = campaign.status
+                if campaign.total_failed == 0:
+                    new_status = "Completed"
+                elif campaign.total_published == 0:
+                    new_status = "Failed"
+                else:
+                    new_status = "PartiallyCompleted"
+                    
+                campaign.status = new_status
+                db.add(CampaignAuditLog(
+                    organization_id=organization_id,
+                    campaign_id=campaign.id,
+                    actor_user_id=None,
+                    action="completed",
+                    previous_status=old_status,
+                    new_status=new_status,
+                    log_metadata={"final_stats": {"published": campaign.total_published, "failed": campaign.total_failed}}
+                ))
+        
+        # Save a PostAuditLog
+        audit_log = PostAuditLog(
+            organization_id=organization_id,
+            post_id=post.id,
+            action="PUBLISHED",
+            previous_status="PUBLISHING",
+            new_status=PostStatus.PUBLISHED.value,
+            log_metadata={
+                "google_post_id": res.id,
+                "location_id": location.id,
+                "publish_job_id": job.id
+            }
+        )
+        db.add(audit_log)
+        db.commit()
+        
+        return {"status": "completed", "google_post_id": job.google_post_id}
+    except Exception as e:
+        logger.error(f"PublishJob {job_id} failed: {str(e)}")
+        db.rollback()
+        
+        # Decide if error is retryable or not
+        is_retryable = True
+        
+        if isinstance(e, PermanentAuthError):
+            is_retryable = False
+        elif isinstance(e, httpx.HTTPStatusError):
+            # Client errors (except 429) are usually non-retryable
+            if e.response.status_code in [400, 401, 403, 404, 409]:
+                is_retryable = False
+        elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
+            # System logic/code exceptions are non-retryable
+            is_retryable = False
+            
+        # Re-fetch job/post inside a fresh session to record the failure safely
+        job_db = SessionLocal()
+        try:
+            job_record = job_db.query(PublishJob).filter(PublishJob.id == job_id).first()
+            post_record = job_db.query(Post).filter(Post.id == job.post_id).first() if job else None
+            
+            if job_record:
+                # Capture status details from the exception safely
+                err_data = {}
+                if isinstance(e, httpx.HTTPStatusError):
+                    try:
+                        err_data = e.response.json()
+                    except Exception:
+                        err_data = {"raw_response": e.response.text}
+                
+                if is_retryable and self.request.retries < self.max_retries:
+                    job_record.status = PublishJobStatus.RETRYING.value
+                    job_record.last_error = str(e)
+                    job_record.retry_count = self.request.retries + 1
+                    job_record.provider_response = err_data
+                    job_db.commit()
+                    
+                    # Celery retry countdown
+                    countdown = 60 * (2 ** self.request.retries)
+                    job_db.close()
+                    raise self.retry(exc=e, countdown=countdown)
+                else:
+                    # Mark permanent or final run failure
+                    job_record.status = PublishJobStatus.FAILED.value
+                    job_record.last_error = str(e)
+                    job_record.provider_response = err_data
+                    
+                    if post_record and not job_record.campaign_id:
+                        post_record.status = PostStatus.FAILED.value
+                        
+                        # Save a PostAuditLog
+                        audit_log = PostAuditLog(
+                            organization_id=organization_id,
+                            post_id=post_record.id,
+                            action="PUBLISH_FAILED",
+                            previous_status="PUBLISHING",
+                            new_status=PostStatus.FAILED.value,
+                            log_metadata={
+                                "error": str(e),
+                                "publish_job_id": job_record.id
+                            }
+                        )
+                        job_db.add(audit_log)
+                        
+                    if job_record.campaign_id:
+                        from app.models.campaign import Campaign
+                        from app.models.campaign_audit_log import CampaignAuditLog
+                        job_db.query(Campaign).filter(Campaign.id == job_record.campaign_id).update({
+                            Campaign.total_failed: Campaign.total_failed + 1,
+                            Campaign.total_pending: Campaign.total_pending - 1
+                        }, synchronize_session=False)
+                        
+                        campaign = job_db.query(Campaign).filter(Campaign.id == job_record.campaign_id).first()
+                        if campaign and campaign.total_pending == 0:
+                            old_status = campaign.status
+                            if campaign.total_failed == 0:
+                                new_status = "Completed"
+                            elif campaign.total_published == 0:
+                                new_status = "Failed"
+                            else:
+                                new_status = "PartiallyCompleted"
+                                
+                            campaign.status = new_status
+                            job_db.add(CampaignAuditLog(
+                                organization_id=organization_id,
+                                campaign_id=campaign.id,
+                                actor_user_id=None,
+                                action="completed",
+                                previous_status=old_status,
+                                new_status=new_status,
+                                log_metadata={"final_stats": {"published": campaign.total_published, "failed": campaign.total_failed}}
+                            ))
+                    
+                    job_db.commit()
+        finally:
+            job_db.close()
+            
+        raise e
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
+        db.close()
+
+@shared_task(bind=True, name="app.tasks.orchestrate_campaign_task", max_retries=30)
+def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, location_ids: list, user_id: int) -> dict:
+    import logging
+    from app.db.session import SessionLocal
+    from sqlalchemy.orm import Session
+    from app.models.campaign import Campaign
+    from app.models.post import Post
+    from app.models.location import Location
+    from app.models.publish_job import PublishJob
+    from app.models.post_variant import PostVariant
+    from app.constants.posts import CampaignStatus, PublishJobStatus
+    from app.models.campaign_audit_log import CampaignAuditLog
+    import re
+    
+    logger = logging.getLogger(__name__)
+    db: Session = SessionLocal()
+    staged_jobs = []
+    
+    try:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id, Campaign.organization_id == organization_id).first()
+        if not campaign:
+            return {"status": "error", "reason": "Campaign not found"}
+            
+        old_status = campaign.status
+        campaign.status = CampaignStatus.PROCESSING.value
+        
+        db.add(CampaignAuditLog(
+            organization_id=organization_id,
+            campaign_id=campaign.id,
+            actor_user_id=user_id,
+            action="started",
+            previous_status=old_status,
+            new_status=CampaignStatus.PROCESSING.value,
+            log_metadata={"action": "orchestration_started"}
+        ))
+        
+        # Explicit primary_post_id linkage with fallback
+        post = None
+        if campaign.primary_post_id:
+            post = db.query(Post).filter(Post.id == campaign.primary_post_id).first()
+        if not post:
+            post = db.query(Post).filter(Post.campaign_id == campaign.id).order_by(Post.id.asc()).first()
+            
+        if not post:
+            campaign.status = CampaignStatus.FAILED.value
+            db.add(CampaignAuditLog(
+                organization_id=organization_id,
+                campaign_id=campaign.id,
+                actor_user_id=user_id,
+                action="failed",
+                previous_status=CampaignStatus.PROCESSING.value,
+                new_status=CampaignStatus.FAILED.value,
+                log_metadata={"error": "No posts attached to campaign"}
+            ))
+            db.commit()
+            return {"status": "error", "reason": "No posts attached to campaign"}
+
+        # Wait for Media Optimization & Validation (Bug 2)
+        attached_media = [m for m in post.media if not m.is_deleted]
+        if attached_media:
+            # 1. Fail fast if any media is permanently invalid or upload failed
+            invalid_media = [m for m in attached_media if m.validation_status == "Invalid" or m.upload_status == "Failed"]
+            if invalid_media:
+                campaign.status = CampaignStatus.FAILED.value
+                db.add(CampaignAuditLog(
+                    organization_id=organization_id,
+                    campaign_id=campaign.id,
+                    actor_user_id=user_id,
+                    action="failed",
+                    previous_status=CampaignStatus.PROCESSING.value,
+                    new_status=CampaignStatus.FAILED.value,
+                    log_metadata={"error": "Campaign post contains invalid or failed media."}
+                ))
+                db.commit()
+                return {"status": "error", "reason": "Campaign post contains invalid or failed media."}
+
+            # 2. Check for pending optimization or validation
+            unready_media = [m for m in attached_media if not m.optimized_url or m.validation_status == "Pending" or m.upload_status == "Pending"]
+            if unready_media:
+                current_retry = self.request.retries
+                # Keep campaign in PROCESSING status
+                if campaign.status != CampaignStatus.PROCESSING.value:
+                    campaign.status = CampaignStatus.PROCESSING.value
+                    db.commit()
+                
+                if current_retry < 30: # 5 minutes total (30 retries * 10 seconds)
+                    logger.info(f"Campaign {campaign_id}: Media is still optimizing. Retrying orchestrator task in 10 seconds. (Retry {current_retry + 1}/30)")
+                    db.commit()
+                    db.close()
+                    raise self.retry(countdown=10, max_retries=30)
+                else:
+                    campaign.status = CampaignStatus.FAILED.value
+                    db.add(CampaignAuditLog(
+                        organization_id=organization_id,
+                        campaign_id=campaign.id,
+                        actor_user_id=user_id,
+                        action="failed",
+                        previous_status=CampaignStatus.PROCESSING.value,
+                        new_status=CampaignStatus.FAILED.value,
+                        log_metadata={"error": "Media optimization timed out (exceeded 5 minutes)."}
+                    ))
+                    db.commit()
+                    return {"status": "error", "reason": "Media optimization timed out."}
+        # Delete existing variants and jobs to prevent unique constraint failures on relaunch
+        db.query(PostVariant).filter(
+            PostVariant.post_id == post.id,
+            PostVariant.location_id.in_(location_ids)
+        ).delete(synchronize_session=False)
+        db.query(PublishJob).filter(
+            PublishJob.post_id == post.id,
+            PublishJob.location_id.in_(location_ids)
+        ).delete(synchronize_session=False)
+        db.flush()
+
+        locations = db.query(Location).filter(Location.id.in_(location_ids)).all()
+        loc_map = {l.id: l for l in locations}
+        
+        for loc_id in location_ids:
+            loc = loc_map.get(loc_id)
+            if not loc:
+                continue
+                
+            # City Parser fallback logic
+            city = loc.location_name
+            if loc.address:
+                parts = [p.strip() for p in loc.address.split(',')]
+                found_city = False
+                for i, part in enumerate(parts):
+                    if re.search(r'\b\d{5}\b', part) or re.search(r'\b[A-Z]{2}\s\d{5}\b', part):
+                        if i > 0:
+                            city = parts[i-1]
+                            found_city = True
+                            break
+                if not found_city and len(parts) >= 3:
+                    city = parts[-3]
+            
+            summary_template = post.summary or ""
+            rendered_summary = summary_template.replace("{{location}}", loc.location_name).replace("{{city}}", city).replace("{{phone}}", loc.phone or "")
+            
+            cta_template = post.cta_url or ""
+            rendered_cta_url = cta_template.replace("{{location_id}}", str(loc.id)) if cta_template else None
+            
+            variant = PostVariant(
+                organization_id=organization_id,
+                post_id=post.id,
+                location_id=loc.id,
+                rendered_summary=rendered_summary,
+                rendered_cta_url=rendered_cta_url,
+                rendering_variables={"city": city}
+            )
+            db.add(variant)
+            
+            job = PublishJob(
+                organization_id=organization_id,
+                campaign_id=campaign.id,
+                post_id=post.id,
+                location_id=loc.id,
+                provider="gbp",
+                status=PublishJobStatus.PENDING.value
+            )
+            db.add(job)
+            staged_jobs.append(job)
+            
+        # No Inline Dispatch Rule: commit all DB changes first!
+        db.commit()
+        # Collect job IDs for dispatch
+        job_ids = [job.id for job in staged_jobs]
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Orchestration failed for campaign {campaign_id}: {str(e)}")
+        
+        job_db = SessionLocal()
+        try:
+            from app.models.campaign import Campaign
+            from app.models.campaign_audit_log import CampaignAuditLog
+            campaign_err = job_db.query(Campaign).filter(Campaign.id == campaign_id).first()
+            if campaign_err:
+                old_status = campaign_err.status
+                campaign_err.status = CampaignStatus.FAILED.value
+                job_db.add(CampaignAuditLog(
+                    organization_id=organization_id,
+                    campaign_id=campaign_err.id,
+                    actor_user_id=user_id,
+                    action="failed",
+                    previous_status=old_status,
+                    new_status=CampaignStatus.FAILED.value,
+                    log_metadata={"error": str(e)}
+                ))
+                job_db.commit()
+        finally:
+            job_db.close()
+            
+        raise
+    finally:
+        db.close()
+        
+    # Boundary crossed: DB is committed. Now chunk jobs and dispatch campaign shards.
+    shards_count = 0
+    if job_ids:
+        import redis
+        from app.core.config import settings
+        
+        chunk_size = 50
+        shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
+        shards_count = len(shards)
+        
+        r = redis.Redis.from_url(settings.REDIS_URL)
+        r.set(f"campaign:{campaign_id}:pending_shards", len(shards))
+        r.set(f"campaign:{campaign_id}:success", 0)
+        r.set(f"campaign:{campaign_id}:failed", 0)
+        r.set(f"campaign:{campaign_id}:total_locations", len(job_ids))
+        r.set(f"campaign:{campaign_id}:status", "Processing")
+        
+        for shard in shards:
+            process_campaign_shard_task.delay(shard, organization_id, campaign_id)
+        
+    return {"status": "success", "jobs_created": len(job_ids), "shards_created": shards_count}
+
+
+@shared_task(bind=True, name="app.tasks.process_campaign_shard_task", max_retries=1)
+def process_campaign_shard_task(self, job_ids: list, organization_id: int, campaign_id: int) -> dict:
+    """
+    Processes a shard of publish jobs sequentially with adaptive rate limiting,
+    jitter, circuit breaking, and atomic Redis-backed PostgreSQL updates.
+    """
+    import time
+    import random
+    import redis
+    import logging
+    import httpx
+    import asyncio
+    import datetime
+    from app.core.config import settings
+    from app.db.session import SessionLocal
+    from sqlalchemy.orm import Session
+    from app.models.publish_job import PublishJob
+    from app.models.post import Post
+    from app.models.location import Location
+    from app.models.post_variant import PostVariant
+    from app.models.post_audit_log import PostAuditLog
+    from app.models.campaign import Campaign
+    from app.models.campaign_audit_log import CampaignAuditLog
+    from app.constants.posts import PublishJobStatus, CampaignStatus, PostStatus
+    from app.providers.gbp.post_mapper import GBPPostMapper
+    from app.providers.factory import ProviderFactory
+    from app.providers.gbp.auth import PermanentAuthError
+    
+    logger = logging.getLogger(__name__)
+    r = redis.Redis.from_url(settings.REDIS_URL)
+    
+    shard_success = 0
+    shard_failed = 0
+    shard_paused_cancelled = 0
+    
+    # Pre-flight campaign status check
+    campaign_status = (r.get(f"campaign:{campaign_id}:status") or b"").decode("utf-8")
+    if campaign_status in ["Paused", "Cancelled"]:
+        # Circuit breaker tripped before we even start
+        db = SessionLocal()
+        try:
+            # Drain/mark all remaining jobs as PAUSED or CANCELLED
+            status_val = PublishJobStatus.PAUSED.value if campaign_status == "Paused" else PublishJobStatus.CANCELLED.value
+            db.query(PublishJob).filter(PublishJob.id.in_(job_ids)).update(
+                {PublishJob.status: status_val}, synchronize_session=False
+            )
+            db.commit()
+            shard_paused_cancelled = len(job_ids)
+        except Exception as ex:
+            db.rollback()
+            logger.error(f"Failed to drain campaign jobs on pre-flight circuit breaker: {str(ex)}")
+        finally:
+            db.close()
+            
+        # Decrement pending shards and handle terminal state check
+        _decr_and_flush_terminal_state(r, campaign_id, organization_id, shard_success, shard_failed, shard_paused_cancelled)
+        return {"status": "aborted", "reason": f"Campaign is {campaign_status}"}
+
+    try:
+        # Loop over shard jobs sequentially
+        for idx, job_id in enumerate(job_ids):
+            # 1. Double check Campaign Status before executing individual job provider call
+            campaign_status = (r.get(f"campaign:{campaign_id}:status") or b"").decode("utf-8")
+            if campaign_status in ["Paused", "Cancelled"]:
+                # Circuit breaker tripped mid-shard
+                logger.info(f"Campaign {campaign_id} transitioned to {campaign_status}. Tripping circuit breaker for remaining jobs in shard.")
+                remaining_ids = job_ids[idx:]
+                db = SessionLocal()
+                try:
+                    status_val = PublishJobStatus.PAUSED.value if campaign_status == "Paused" else PublishJobStatus.CANCELLED.value
+                    db.query(PublishJob).filter(PublishJob.id.in_(remaining_ids)).update(
+                        {PublishJob.status: status_val}, synchronize_session=False
+                    )
+                    db.commit()
+                    shard_paused_cancelled += len(remaining_ids)
+                except Exception as ex:
+                    db.rollback()
+                    logger.error(f"Failed to drain remaining campaign jobs on mid-shard circuit breaker: {str(ex)}")
+                finally:
+                    db.close()
+                break
+
+            # 2. Queue Jitter & Adaptive Pacing (between sequential requests in a shard)
+            if idx > 0:
+                jitter = random.uniform(0.8, 1.5)
+                time.sleep(jitter)
+
+            # 3. Process individual job
+            db = SessionLocal()
+            try:
+                job = db.query(PublishJob).filter(PublishJob.id == job_id, PublishJob.organization_id == organization_id).first()
+                if not job or job.status not in [PublishJobStatus.PENDING.value, PublishJobStatus.RETRYING.value]:
+                    shard_paused_cancelled += 1
+                    continue
+
+                job.status = PublishJobStatus.RUNNING.value
+                db.commit()
+
+                post = db.query(Post).filter(Post.id == job.post_id).first()
+                location = db.query(Location).filter(Location.id == job.location_id).first()
+                if not post or not location:
+                    raise Exception("Post or Location linked to PublishJob not found.")
+
+                variant = db.query(PostVariant).filter(
+                    PostVariant.post_id == post.id,
+                    PostVariant.location_id == location.id
+                ).first()
+
+                payload = GBPPostMapper.to_gbp_payload(post, variant)
+                provider = ProviderFactory.get_provider("gbp", organization_id, db)
+
+                # Invoke provider.create_post
+                res = asyncio.run(provider.create_post(location.google_location_id, payload))
+
+                # Job Success
+                job.status = PublishJobStatus.SUCCESS.value
+                job.google_post_id = res.id
+                job.provider_response = getattr(res, "provider_metadata", {}) or {}
+                job.published_at = datetime.datetime.now(datetime.timezone.utc)
+
+                # Save PostAuditLog
+                audit_log = PostAuditLog(
+                    organization_id=organization_id,
+                    post_id=post.id,
+                    action="PUBLISHED",
+                    previous_status="PUBLISHING",
+                    new_status=PostStatus.PUBLISHED.value,
+                    log_metadata={
+                        "google_post_id": res.id,
+                        "location_id": location.id,
+                        "publish_job_id": job.id
+                    }
+                )
+                db.add(audit_log)
+                db.commit()
+
+                # Increment success counters
+                r.incr(f"campaign:{campaign_id}:success")
+                shard_success += 1
+
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Job {job_id} in shard failed: {str(e)}")
+                
+                # Transient vs Permanent Error Classification
+                is_retryable = True
+                if isinstance(e, PermanentAuthError):
+                    is_retryable = False
+                elif isinstance(e, httpx.HTTPStatusError):
+                    # 429, 502, 503, timeouts are Transient. Others are Permanent.
+                    if e.response.status_code in [400, 401, 403, 404, 409]:
+                        is_retryable = False
+                elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
+                    is_retryable = False
+
+                # Capture details safely
+                err_data = {}
+                if isinstance(e, httpx.HTTPStatusError):
+                    try:
+                        err_data = e.response.json()
+                    except Exception:
+                        err_data = {"raw_response": e.response.text}
+
+                job_db = SessionLocal()
+                try:
+                    job_record = job_db.query(PublishJob).filter(PublishJob.id == job_id).first()
+                    post_record = job_db.query(Post).filter(Post.id == post.id).first() if post else None
+                    
+                    if job_record:
+                        current_retries = job_record.retry_count
+                        if is_retryable and current_retries < 3:
+                            # Schedule individual job retry with exponential backoff pacing
+                            job_record.status = PublishJobStatus.RETRYING.value
+                            job_record.last_error = str(e)
+                            job_record.retry_count = current_retries + 1
+                            job_record.provider_response = err_data
+                            job_db.commit()
+                            
+                            countdown = 60 * (2 ** current_retries)
+                            # Re-enqueue this single job in its own single-element shard
+                            # Idempotent retry locking to prevent double registering retry or double-incrementing pending_shards (Bug 3 & 4 refinement)
+                            retry_key = f"campaign:{campaign_id}:retry_registered:{job_id}:{current_retries + 1}"
+                            if r.set(retry_key, "1", ex=86400, nx=True):
+                                r.incr(f"campaign:{campaign_id}:pending_shards")
+                                process_campaign_shard_task.apply_async(
+                                    args=([job_id], organization_id, campaign_id),
+                                    countdown=countdown
+                                )
+                        else:
+                            # Permanent failure
+                            job_record.status = PublishJobStatus.FAILED.value
+                            job_record.last_error = str(e)
+                            job_record.provider_response = err_data
+                            
+                            if post_record:
+                                audit_log = PostAuditLog(
+                                    organization_id=organization_id,
+                                    post_id=post_record.id,
+                                    action="PUBLISH_FAILED",
+                                    previous_status="PUBLISHING",
+                                    new_status=PostStatus.FAILED.value,
+                                    log_metadata={
+                                        "error": str(e),
+                                        "publish_job_id": job_record.id
+                                    }
+                                )
+                                job_db.add(audit_log)
+                            
+                            job_db.commit()
+                            r.incr(f"campaign:{campaign_id}:failed")
+                            shard_failed += 1
+                except Exception as retry_err:
+                    logger.error(f"Failed to record job failure state: {str(retry_err)}")
+                finally:
+                    job_db.close()
+            finally:
+                db.close()
+    finally:
+        # 4. Flush aggregated shard counters to PostgreSQL (using greatest to prevent negative total_pending)
+        if shard_success > 0 or shard_failed > 0 or shard_paused_cancelled > 0:
+            db = SessionLocal()
+            try:
+                from sqlalchemy import func
+                db.query(Campaign).filter(Campaign.id == campaign_id).update({
+                    Campaign.total_published: Campaign.total_published + shard_success,
+                    Campaign.total_failed: Campaign.total_failed + shard_failed,
+                    Campaign.total_pending: func.greatest(0, Campaign.total_pending - (shard_success + shard_failed + shard_paused_cancelled))
+                }, synchronize_session=False)
+                db.commit()
+            except Exception as flush_err:
+                db.rollback()
+                logger.error(f"Failed to flush shard counters to campaign {campaign_id}: {str(flush_err)}")
+            finally:
+                db.close()
+
+        # 5. Decrement pending shards and transition terminal state if last one
+        _decr_and_flush_terminal_state(r, campaign_id, organization_id, shard_success, shard_failed, shard_paused_cancelled)
+        
+    return {"status": "shard_completed", "success": shard_success, "failed": shard_failed, "paused_cancelled": shard_paused_cancelled}
+
+
+def _decr_and_flush_terminal_state(r, campaign_id: int, organization_id: int, shard_success: int, shard_failed: int, shard_paused_cancelled: int):
+    """
+    Atomically decrements the pending shards counter in Redis and,
+    if it is the final shard (0), performs the terminal status transition in Postgres.
+    """
+    import logging
+    from app.db.session import SessionLocal
+    from app.models.campaign import Campaign
+    from app.models.campaign_audit_log import CampaignAuditLog
+    from app.constants.posts import CampaignStatus, PostStatus
+    
+    logger = logging.getLogger(__name__)
+    remaining_shards = r.decr(f"campaign:{campaign_id}:pending_shards")
+    
+    if remaining_shards <= 0:
+        db = SessionLocal()
+        try:
+            campaign = db.query(Campaign).filter(Campaign.id == campaign_id, Campaign.organization_id == organization_id).first()
+            if campaign:
+                camp_redis_status = (r.get(f"campaign:{campaign_id}:status") or b"").decode("utf-8")
+                
+                old_status = campaign.status
+                if camp_redis_status == "Paused":
+                    new_status = CampaignStatus.PAUSED.value
+                elif camp_redis_status == "Cancelled":
+                    new_status = CampaignStatus.CANCELLED.value
+                else:
+                    if campaign.total_failed == 0 and campaign.total_published > 0:
+                        new_status = CampaignStatus.COMPLETED.value
+                    elif campaign.total_published == 0:
+                        new_status = CampaignStatus.FAILED.value
+                    else:
+                        new_status = CampaignStatus.PARTIALLY_COMPLETED.value
+                
+                campaign.status = new_status
+                
+                if campaign.primary_post:
+                    campaign.primary_post.status = PostStatus.PUBLISHED.value if campaign.total_published > 0 else PostStatus.FAILED.value
+                
+                db.add(CampaignAuditLog(
+                    organization_id=organization_id,
+                    campaign_id=campaign.id,
+                    actor_user_id=None,
+                    action="completed",
+                    previous_status=old_status,
+                    new_status=new_status,
+                    log_metadata={
+                        "final_stats": {
+                            "published": campaign.total_published,
+                            "failed": campaign.total_failed,
+                            "pending": campaign.total_pending
+                        }
+                    }
+                ))
+                db.commit()
+                logger.info(f"Campaign {campaign_id} terminal transition to {new_status} completed successfully.")
+                
+                # Cleanup Redis keys
+                r.delete(f"campaign:{campaign_id}:pending_shards")
+                r.delete(f"campaign:{campaign_id}:success")
+                r.delete(f"campaign:{campaign_id}:failed")
+                r.delete(f"campaign:{campaign_id}:total_locations")
+                r.delete(f"campaign:{campaign_id}:status")
+        except Exception as terminal_err:
+            db.rollback()
+            logger.error(f"Failed to execute campaign terminal transition for {campaign_id}: {str(terminal_err)}")
+        finally:
+            db.close()
+
+
+# ----------------------------------------------------
+# Media Pipeline & Background Optimization Tasks
+# ----------------------------------------------------
+
+async def _optimize_media_async(media_id: int, organization_id: int) -> dict:
+    import io
+    import os
+    import logging
+    from PIL import Image
+    from app.models.post_media import PostMedia
+    from app.storage.factory import StorageProviderFactory
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    try:
+        media = db.query(PostMedia).filter(
+            PostMedia.id == media_id,
+            PostMedia.organization_id == organization_id
+        ).first()
+        if not media or media.is_deleted:
+            return {"status": "skipped", "reason": "Media not found or deleted"}
+
+        # 1. Instantiate Storage Provider and download original file
+        storage_provider = StorageProviderFactory.get_provider(media.storage_provider)
+        file_bytes = await storage_provider.read_file(media.storage_key)
+
+        # 2. Open and process with Pillow
+        image = Image.open(io.BytesIO(file_bytes))
+        width, height = image.size
+        
+        # Cap longest edge at 2048px
+        max_edge = 2048
+        if max(width, height) > max_edge:
+            if width > height:
+                new_width = max_edge
+                new_height = int(height * (max_edge / width))
+            else:
+                new_height = max_edge
+                new_width = int(width * (max_edge / height))
+            
+            # Use LANCZOS for high quality downscaling
+            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+        # Write to byte buffer
+        if media.mime_type == "image/png":
+            img_format = "PNG"
+        elif media.mime_type == "image/webp":
+            img_format = "WEBP"
+        else:
+            img_format = "JPEG"
+            
+        out_buf = io.BytesIO()
+        image.save(out_buf, format=img_format, quality=85, optimize=True)
+        optimized_bytes = out_buf.getvalue()
+
+        # 3. Upload optimized file
+        base, ext = os.path.splitext(media.storage_key)
+        opt_key = f"{base}_optimized{ext}"
+        
+        opt_url = await storage_provider.upload_file(
+            file_data=optimized_bytes,
+            key=opt_key,
+            mime_type=media.mime_type
+        )
+
+        # 4. Save to Database
+        media.optimized_url = opt_url
+        media.upload_status = "Optimized"
+        
+        # Update log_metadata
+        meta = dict(media.log_metadata or {})
+        meta["optimized_size_bytes"] = len(optimized_bytes)
+        meta["optimized_width"] = image.width
+        meta["optimized_height"] = image.height
+        media.log_metadata = meta
+        
+        db.commit()
+
+        logger.info(
+            "Media optimized successfully",
+            extra={
+                "organization_id": organization_id,
+                "media_id": media.id,
+                "storage_provider": media.storage_provider,
+                "upload_status": "Optimized"
+            }
+        )
+        return {"status": "success", "optimized_url": opt_url}
+    except Exception as e:
+        logger.error(
+            f"Media optimization failed: {str(e)}",
+            extra={
+                "organization_id": organization_id,
+                "media_id": media_id
+            }
+        )
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+
+
+async def _generate_thumbnail_async(media_id: int, organization_id: int) -> dict:
+    import io
+    import os
+    import logging
+    from PIL import Image
+    from app.models.post_media import PostMedia
+    from app.storage.factory import StorageProviderFactory
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    try:
+        media = db.query(PostMedia).filter(
+            PostMedia.id == media_id,
+            PostMedia.organization_id == organization_id
+        ).first()
+        if not media or media.is_deleted:
+            return {"status": "skipped", "reason": "Media not found or deleted"}
+
+        # 1. Instantiate Storage Provider and download original file
+        storage_provider = StorageProviderFactory.get_provider(media.storage_provider)
+        file_bytes = await storage_provider.read_file(media.storage_key)
+
+        # 2. Open and process with Pillow
+        image = Image.open(io.BytesIO(file_bytes))
+        
+        # Generate thumbnail maintaining aspect ratio
+        image.thumbnail((300, 300), Image.Resampling.LANCZOS)
+        
+        # Write to byte buffer
+        if media.mime_type == "image/png":
+            img_format = "PNG"
+        elif media.mime_type == "image/webp":
+            img_format = "WEBP"
+        else:
+            img_format = "JPEG"
+            
+        out_buf = io.BytesIO()
+        image.save(out_buf, format=img_format, quality=85, optimize=True)
+        thumb_bytes = out_buf.getvalue()
+
+        # 3. Upload thumbnail
+        base, ext = os.path.splitext(media.storage_key)
+        thumb_key = f"{base}_thumb{ext}"
+        
+        thumb_url = await storage_provider.upload_file(
+            file_data=thumb_bytes,
+            key=thumb_key,
+            mime_type=media.mime_type
+        )
+
+        # 4. Save to Database
+        media.thumbnail_url = thumb_url
+        meta = dict(media.log_metadata or {})
+        meta["thumbnail_size_bytes"] = len(thumb_bytes)
+        meta["thumbnail_width"] = image.width
+        meta["thumbnail_height"] = image.height
+        media.log_metadata = meta
+        
+        db.commit()
+
+        logger.info(
+            "Media thumbnail generated successfully",
+            extra={
+                "organization_id": organization_id,
+                "media_id": media.id,
+                "storage_provider": media.storage_provider,
+                "upload_status": "Thumbnailed"
+            }
+        )
+        return {"status": "success", "thumbnail_url": thumb_url}
+    except Exception as e:
+        logger.error(
+            f"Media thumbnail generation failed: {str(e)}",
+            extra={
+                "organization_id": organization_id,
+                "media_id": media_id
+            }
+        )
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+
+
+async def _cleanup_deleted_media_async() -> dict:
+    import os
+    import logging
+    from app.models.post_media import PostMedia
+    from app.storage.factory import StorageProviderFactory
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    try:
+        deleted_medias = db.query(PostMedia).filter(
+            PostMedia.is_deleted == True,
+            PostMedia.upload_status != "FullyDeleted"
+        ).all()
+        
+        cleaned_count = 0
+        for media in deleted_medias:
+            try:
+                storage_provider = StorageProviderFactory.get_provider(media.storage_provider)
+                
+                # Delete original file
+                try:
+                    await storage_provider.delete_file(media.storage_key)
+                except Exception:
+                    pass
+                    
+                # Delete optimized file if exists
+                if media.optimized_url:
+                    base, ext = os.path.splitext(media.storage_key)
+                    opt_key = f"{base}_optimized{ext}"
+                    try:
+                        await storage_provider.delete_file(opt_key)
+                    except Exception:
+                        pass
+                        
+                # Delete thumbnail file if exists
+                if media.thumbnail_url:
+                    base, ext = os.path.splitext(media.storage_key)
+                    thumb_key = f"{base}_thumb{ext}"
+                    try:
+                        await storage_provider.delete_file(thumb_key)
+                    except Exception:
+                        pass
+                
+                media.upload_status = "FullyDeleted"
+                db.flush()
+                cleaned_count += 1
+            except Exception as e:
+                logger.error(f"Failed to clean up storage for media {media.id}: {str(e)}")
+                
+        db.commit()
+        return {"status": "success", "cleaned_count": cleaned_count}
+    except Exception as e:
+        logger.error(f"Cleanup deleted media task failed: {str(e)}")
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+
+
+@shared_task(bind=True, name="app.tasks.optimize_media_task", max_retries=3)
+def optimize_media_task(self, media_id: int, organization_id: int) -> dict:
+    """
+    Async Celery task to optimize/compress and resize original media upload.
+    Capping longest edge to 2048px and saving as quality=85 format-specific bytes.
+    """
+    return asyncio.run(_optimize_media_async(media_id, organization_id))
+
+
+@shared_task(bind=True, name="app.tasks.generate_thumbnail_task", max_retries=3)
+def generate_thumbnail_task(self, media_id: int, organization_id: int) -> dict:
+    """
+    Async Celery task to generate a 300x300 pixel crop/scale thumbnail of original media upload.
+    """
+    return asyncio.run(_generate_thumbnail_async(media_id, organization_id))
+
+
+@shared_task(name="app.tasks.cleanup_deleted_media_task")
+def cleanup_deleted_media_task() -> dict:
+    """
+    Periodic task to physically delete blobs of soft-deleted media files from storage.
+    """
+    return asyncio.run(_cleanup_deleted_media_async())
+
+
+@shared_task(name="app.tasks.check_scheduled_posts_task")
+def check_scheduled_posts_task() -> dict:
+    """
+    Celery periodic beat task to poll and publish due scheduled posts.
+    """
+    import datetime
+    import logging
+    from app.db.session import SessionLocal
+    from app.models.post import Post
+    from app.models.campaign import Campaign
+    from app.models.publish_job import PublishJob
+    from app.constants.posts import PostStatus, CampaignStatus, PublishJobStatus
+    import redis
+    from app.core.config import settings
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    r = redis.Redis.from_url(settings.REDIS_URL)
+    
+    now = datetime.datetime.now(datetime.timezone.utc)
+    due_posts = db.query(Post).filter(
+        Post.status == PostStatus.SCHEDULED.value,
+        Post.scheduled_at <= now
+    ).all()
+    
+    processed_count = 0
+    
+    for post in due_posts:
+        logger.info(f"Processing scheduled post {post.id} (due at {post.scheduled_at})")
+        try:
+            post.status = PostStatus.APPROVED.value
+            
+            if post.campaign_id:
+                campaign = db.query(Campaign).filter(Campaign.id == post.campaign_id).first()
+                if campaign:
+                    jobs = db.query(PublishJob).filter(PublishJob.campaign_id == campaign.id).all()
+                    job_ids = [job.id for job in jobs]
+                    
+                    if job_ids:
+                        campaign.status = CampaignStatus.PROCESSING.value
+                        db.commit()
+                        
+                        chunk_size = 50
+                        shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
+                        
+                        r.set(f"campaign:{campaign.id}:pending_shards", len(shards))
+                        r.set(f"campaign:{campaign.id}:status", "Processing")
+                        
+                        from app.tasks import process_campaign_shard_task
+                        for shard in shards:
+                            process_campaign_shard_task.delay(shard, post.organization_id, campaign.id)
+                    else:
+                        from app.models.location import Location
+                        locs = db.query(Location).filter(Location.organization_id == post.organization_id).all()
+                        loc_ids = [l.id for l in locs]
+                        
+                        if loc_ids:
+                            campaign.status = CampaignStatus.QUEUED.value
+                            db.commit()
+                            from app.tasks import orchestrate_campaign_task
+                            orchestrate_campaign_task.delay(campaign.id, post.organization_id, loc_ids, post.created_by_user_id)
+                        else:
+                            campaign.status = CampaignStatus.FAILED.value
+                            db.commit()
+            else:
+                from app.models.location import Location
+                loc = db.query(Location).filter(Location.organization_id == post.organization_id).first()
+                if loc:
+                    job = PublishJob(
+                        organization_id=post.organization_id,
+                        post_id=post.id,
+                        location_id=loc.id,
+                        provider="gbp",
+                        status=PublishJobStatus.PENDING.value
+                    )
+                    db.add(job)
+                    db.commit()
+                    
+                    from app.tasks import process_publish_job_task
+                    process_publish_job_task.delay(job.id, post.organization_id)
+            
+            processed_count += 1
+            db.commit()
+        except Exception as post_err:
+            logger.error(f"Failed to process scheduled post {post.id}: {str(post_err)}")
+            db.rollback()
+            
+    db.close()
+    return {"status": "success", "processed_count": processed_count}

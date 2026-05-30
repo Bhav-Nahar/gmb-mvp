@@ -71,6 +71,13 @@ export const api = {
       ...options 
     }),
     
+  patch: <T>(endpoint: string, body?: any, options?: RequestInit) =>
+    request<T>(endpoint, {
+      method: 'PATCH',
+      body: body instanceof FormData ? body : JSON.stringify(body),
+      ...options
+    }),
+
   delete: <T>(endpoint: string, options?: RequestInit) => 
     request<T>(endpoint, { method: 'DELETE', ...options }),
 }

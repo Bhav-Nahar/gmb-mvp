@@ -8,6 +8,10 @@ from app.core.security import encrypt_token, decrypt_token
 from app.models.oauth_account import OAuthAccount
 import httpx
 
+class PermanentAuthError(Exception):
+    """Exception raised when OAuth connections are permanently invalid or revoked."""
+    pass
+
 class GBPAuthManager:
     def __init__(self, auth_context: AuthContext, db: Session):
         self.auth_context = auth_context
@@ -33,79 +37,97 @@ class GBPAuthManager:
     async def _refresh_token(self):
         from app.models.user import User
         from app.db.session import SessionLocal
+        import redis
 
-        # TODO:
-        # Replace with Redis distributed lock if refresh concurrency grows.
-        with SessionLocal() as new_db:
-            # 1. Pessimistic lock on the DB row BEFORE calling Google API
-            oauth_account = new_db.query(OAuthAccount).join(User).filter(
-                User.organization_id == self.auth_context.organization_id,
-                User.role.in_(["Owner", "Admin"]),
-                OAuthAccount.provider.in_(["gbp", "google"])
-            ).with_for_update().first()
+        # Lock at the organization active account level to prevent simultaneous overlaps
+        r = redis.Redis.from_url(settings.REDIS_URL)
+        lock_key = f"lock:oauth_refresh:{self.auth_context.organization_id}"
+        lock = r.lock(lock_key, timeout=60)
 
-            if not oauth_account:
-                raise Exception("Google credentials expired or invalid. OAuthAccount not found in database.")
+        # Wait up to 10 seconds for any concurrent refresh tasks to complete
+        if not lock.acquire(blocking=True, blocking_timeout=10):
+            raise Exception("Could not acquire token refresh lock. Concurrency limit exceeded.")
 
-            # 2. Check if another concurrent task already completed the refresh
-            now = datetime.datetime.now(timezone.utc)
-            db_expiry = oauth_account.expires_at
-            if db_expiry and db_expiry.tzinfo is None:
-                db_expiry = db_expiry.replace(tzinfo=timezone.utc)
+        try:
+            with SessionLocal() as new_db:
+                # 1. Pessimistic lock on the DB row BEFORE calling Google API
+                oauth_account = new_db.query(OAuthAccount).join(User).filter(
+                    User.organization_id == self.auth_context.organization_id,
+                    User.role.in_(["Owner", "Admin"]),
+                    OAuthAccount.provider.in_(["gbp", "google"])
+                ).with_for_update().first()
 
-            if db_expiry and db_expiry > now + datetime.timedelta(minutes=5):
-                # Success! Another task refreshed it. Load the newly persisted token.
-                decrypted_access = decrypt_token(oauth_account.access_token)
-                decrypted_refresh = decrypt_token(oauth_account.refresh_token) if oauth_account.refresh_token else None
-                
-                self.auth_context.access_token = decrypted_access
-                if decrypted_refresh:
-                    self.auth_context.refresh_token = decrypted_refresh
-                self.auth_context.expires_at = db_expiry
-                return
+                if not oauth_account:
+                    raise Exception("Google credentials expired or invalid. OAuthAccount not found in database.")
 
-            # 3. We are the first: proceed to refresh via Google
-            refresh_token = decrypt_token(oauth_account.refresh_token) if oauth_account.refresh_token else self.auth_context.refresh_token
-            if not refresh_token:
-                raise Exception("Google credentials expired or invalid. Refresh token missing. Re-authentication required.")
+                # 2. Check if another concurrent task already completed the refresh
+                now = datetime.datetime.now(timezone.utc)
+                db_expiry = oauth_account.expires_at
+                if db_expiry and db_expiry.tzinfo is None:
+                    db_expiry = db_expiry.replace(tzinfo=timezone.utc)
 
-            # Sandbox / Mock Token handling
-            if "mock_refresh_token" in refresh_token:
-                new_access_token = "mock_access_token_refreshed_" + str(int(datetime.datetime.now(timezone.utc).timestamp()))
-                expires_in = 3600
-                new_refresh_token = refresh_token
-            else:
-                url = "https://oauth2.googleapis.com/token"
-                data = {
-                    "refresh_token": refresh_token,
-                    "client_id": settings.GOOGLE_CLIENT_ID,
-                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                    "grant_type": "refresh_token"
-                }
-                
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(url, data=data)
+                if db_expiry and db_expiry > now + datetime.timedelta(minutes=5):
+                    # Success! Another task refreshed it. Load the newly persisted token.
+                    decrypted_access = decrypt_token(oauth_account.access_token)
+                    decrypted_refresh = decrypt_token(oauth_account.refresh_token) if oauth_account.refresh_token else None
                     
-                if response.status_code != 200:
-                    raise Exception(f"Failed to refresh token: {response.text}")
+                    self.auth_context.access_token = decrypted_access
+                    if decrypted_refresh:
+                        self.auth_context.refresh_token = decrypted_refresh
+                    self.auth_context.expires_at = db_expiry
+                    return
+
+                # 3. We are the first: proceed to refresh via Google
+                refresh_token = decrypt_token(oauth_account.refresh_token) if oauth_account.refresh_token else self.auth_context.refresh_token
+                if not refresh_token:
+                    raise PermanentAuthError("Google credentials expired or invalid. Refresh token missing. Re-authentication required.")
+
+                # Sandbox / Mock Token handling
+                if "mock_refresh_token" in refresh_token:
+                    new_access_token = "mock_access_token_refreshed_" + str(int(datetime.datetime.now(timezone.utc).timestamp()))
+                    expires_in = 3600
+                    new_refresh_token = refresh_token
+                else:
+                    url = "https://oauth2.googleapis.com/token"
+                    data = {
+                        "refresh_token": refresh_token,
+                        "client_id": settings.GOOGLE_CLIENT_ID,
+                        "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                        "grant_type": "refresh_token"
+                    }
                     
-                token_data = response.json()
-                new_access_token = token_data["access_token"]
-                new_refresh_token = token_data.get("refresh_token", refresh_token)
-                expires_in = token_data.get("expires_in", 3600)
+                    async with httpx.AsyncClient() as client:
+                        response = await client.post(url, data=data)
+                        
+                    if response.status_code != 200:
+                        err_text = response.text
+                        if "invalid_grant" in err_text.lower() or "revoke" in err_text.lower():
+                            # Permanent OAuth revocation detected
+                            raise PermanentAuthError(f"Google credentials permanently revoked or invalid: {err_text}")
+                        raise Exception(f"Failed to refresh token: {err_text}")
+                        
+                    token_data = response.json()
+                    new_access_token = token_data["access_token"]
+                    new_refresh_token = token_data.get("refresh_token", refresh_token)
+                    expires_in = token_data.get("expires_in", 3600)
 
-            new_expiry = datetime.datetime.now(timezone.utc) + datetime.timedelta(seconds=expires_in)
+                new_expiry = datetime.datetime.now(timezone.utc) + datetime.timedelta(seconds=expires_in)
 
-            # 4. Save and release lock
-            oauth_account.provider = "gbp"
-            oauth_account.access_token = encrypt_token(new_access_token)
-            if new_refresh_token:
-                oauth_account.refresh_token = encrypt_token(new_refresh_token)
-            oauth_account.expires_at = new_expiry
-            new_db.commit()
+                # 4. Save and release lock
+                oauth_account.provider = "gbp"
+                oauth_account.access_token = encrypt_token(new_access_token)
+                if new_refresh_token:
+                    oauth_account.refresh_token = encrypt_token(new_refresh_token)
+                oauth_account.expires_at = new_expiry
+                new_db.commit()
 
-            # 5. Sync in-memory context
-            self.auth_context.access_token = new_access_token
-            if new_refresh_token:
-                self.auth_context.refresh_token = new_refresh_token
-            self.auth_context.expires_at = new_expiry
+                # 5. Sync in-memory context
+                self.auth_context.access_token = new_access_token
+                if new_refresh_token:
+                    self.auth_context.refresh_token = new_refresh_token
+                self.auth_context.expires_at = new_expiry
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass

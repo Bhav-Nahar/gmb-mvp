@@ -20,6 +20,7 @@ C:\Users\Shubham\Documents\GitHub\gmb-mvp\
 │   │   │   ├── auth.py     # Auth & Google OAuth routes
 │   │   │   ├── deps.py     # API dependencies (security, auth)
 │   │   │   ├── locations.py # Location routes
+│   │   │   ├── posts.py    # Posts creation, media, and launch routes [NEW]
 │   │   │   ├── reviews.py  # Review listing, sync, and reply routes [NEW]
 │   │   │   └── users.py    # User routes
 │   │   ├── core\           # Core logic (Config, Security, GBP Client)
@@ -34,6 +35,11 @@ C:\Users\Shubham\Documents\GitHub\gmb-mvp\
 │   │   │   ├── location.py
 │   │   │   ├── oauth_account.py
 │   │   │   ├── organization.py
+│   │   │   ├── post.py     # Core GBP Post metadata [NEW]
+│   │   │   ├── post_variant.py # Per-location localized post [NEW]
+│   │   │   ├── post_media.py # Post attachments [NEW]
+│   │   │   ├── publish_job.py # Job state machine [NEW]
+│   │   │   ├── post_audit_log.py # Append-only state transitions [NEW]
 │   │   │   ├── review.py   # SQLAlchemy Review model [NEW]
 │   │   │   ├── sync_log.py
 │   │   │   └── user.py
@@ -54,11 +60,13 @@ C:\Users\Shubham\Documents\GitHub\gmb-mvp\
 │   │   │   └── registry.py # Provider registry
 │   │   ├── schemas\        # Pydantic Schemas
 │   │   │   ├── invite.py
+│   │   │   ├── posts.py    # Post schemas (CampaignLaunchRequest, etc.) [NEW]
 │   │   │   ├── review.py   # Review schemas (ReviewResponse, ReviewReplyRequest) [NEW]
 │   │   │   └── schemas.py
 │   │   ├── services\       # Business logic
 │   │   │   ├── ai_reply_service.py # AI-assisted review reply generator
 │   │   │   ├── invite_service.py
+│   │   │   ├── post_service.py # Post CRUD and transactional job creation [NEW]
 │   │   │   └── review_sync_service.py # Review sync service using batch upserts [NEW]
 │   │   ├── main.py         # FastAPI Entry point
 │   │   ├── tasks.py        # Celery background tasks (sync_reviews_task)
@@ -195,6 +203,14 @@ All tables reside in a PostgreSQL database and are managed using SQLAlchemy mode
 - **Sorted Composite Index (`idx_reviews_location_created_at_desc`):** Defined over `(location_id, review_created_at DESC)` for O(1) page lookups on sorting.
 - **SLA Optimizations:** Includes `ix_reviews_sla_lookup` covering `(organization_id, location_id, is_deleted, is_replied, review_created_at)` to support rapid SLA grouping and time-based filtering.
 
+#### GBP Local Posts Foundation (New in Phase 1)
+- **`Campaign`**: Aggregates multi-location post deployments and tracks success/failure metrics.
+- **`Post`**: The canonical representation of the post metadata (`title`, `summary`, `post_type`, `cta_url`) before localization.
+- **`PostVariant`**: Links a `Post` to a specific `Location`, storing computed text/URLs after substituting per-location variables. Unique constraint on `(post_id, location_id)`.
+- **`PostMedia`**: Handles attachments (Photos/Videos) with `sha256_hash` for deduplication.
+- **`PublishJob`**: Represents the state machine for the physical delivery of a variant to GBP (`PENDING`, `RUNNING`, `SUCCESS`, `FAILED`).
+- **`PostAuditLog`**: Append-only log capturing all status changes for compliance and debugging.
+
 ---
 
 ### 5.2 Abstraction Layer Data Models
@@ -315,6 +331,13 @@ Reviews are kept in sync continuously using Celery background tasks or manual cl
 - **N+1 Query Avoidance:** `get_organization_sla_summary` computes metrics for all locations belonging to an organization at once by utilizing SQLAlchemy `group_by` and aggregate functions (`func.sum`, `func.avg`, `case`), completely avoiding per-location N+1 iteration.
 - **Tiers:** Time cutoffs (e.g. Best < 12h, Good < 24h) are defined exclusively in `app/constants/sla.py`. Tiers dynamically categorize response speed (based on `reply_created_at` - `review_created_at`).
 
+### 6.8 GBP Local Posts (Phase 1)
+- **Transactional Job Creation**: The `/api/v1/posts/{id}/publish` endpoint triggers bulk deployment across multiple locations via a strict "all-or-nothing" transaction (`PostService.create_publish_jobs`). If any location fails validation (e.g., location not found, job already exists), it raises an `HTTPException` resulting in a full rollback, ensuring jobs are either created for *all* requested locations or *none*.
+- **Async Execution Backbone**: 
+  - The API synchronously evaluates data integrity, creates the `PublishJob` rows in `PENDING` state, and immediately dispatches an async Celery worker (`process_publish_job_task`) for each individual job.
+  - The worker retrieves the job, acquires a Redis Distributed Lock (`lock:publish_job:{organization_id}:{job_id}`) to prevent race conditions during retries, and transitions the state from `PENDING` -> `RUNNING` -> `SUCCESS`/`FAILED`.
+- **Strict Validation**: All API inputs strictly utilize Enums (`PostType`, `PostStatus`, `CallToActionType`) and native Pydantic V2 URL validators (`AnyHttpUrl`) to fail fast on invalid parameters.
+
 ---
 
 ## 7. Development Operations
@@ -382,6 +405,22 @@ Any new agent working on this project must be aware of these historical bug fixe
 ### 9.9 SLA Time Handling and Filter Gating
 - **Quirk:** Pre-SLA historical reviews can get accidentally caught in SLA aggregations (e.g., "Overdue" metrics) if boundary conditions aren't strictly joined. Moreover, using Python's naive `datetime.utcnow()` instead of the database's `func.now()` can introduce skew and boundary errors during evaluation.
 - **Fix:** All SLA time filtering strictly joins the `Location` table and filters by `review_created_at >= Location.sla_tracking_started_at`. Additionally, writing SLA-critical timestamps to the DB must universally use `func.now()` to guarantee correct PostgreSQL evaluation. The endpoint to enable SLA is also explicitly locked to `admin_required`.
+
+### 9.10 True Atomic Batch Publishing
+- **Quirk:** Looping over locations and committing per-location inside a `publish_post_to_location` method breaks transactionality. If a batch publish fails halfway through, previous locations are already committed and cannot be rolled back, leading to partial states.
+- **Fix:** Split the logic into two phases. Phase 1 runs read-only pre-flight validation on all locations. Phase 2 stages flush-only ORM objects (e.g., `_stage_publish_job`) without committing. Finally, a single `db.commit()` at the endpoint level ensures the entire batch is saved or rolled back atomically. Background tasks (like Celery delays) must ONLY be dispatched *after* the successful commit loop closes.
+
+### 9.11 Frontend FormData Authentication & Base URL Fetching
+- **Quirk:** Using raw `fetch` for `multipart/form-data` uploads in Next.js bypasses the application's global API client, frequently missing the `credentials: 'include'` cookie auth, mis-prefixing the API URL path (`/api/v1/api/v1`), and manually reading from `localStorage` which might not have the token stored.
+- **Fix:** Always use the centralized `api.post()` client even for file uploads. The `api` client handles base URL resolution, cookie-based authentication, and automatically strips the `Content-Type` header when detecting a `FormData` payload so the browser can accurately set the multipart boundary.
+
+### 9.12 Enum vs String Validation in Pydantic Updates
+- **Quirk:** Pydantic v2 `model_dump()` can return Enum objects (e.g., `<PostStatus.Draft>`) instead of their raw string `.value`, even if the Enum inherits from `str`. Comparing this directly against a raw database string will silently fail validation dict checks (e.g. `new_status not in allowed_transitions`).
+- **Fix:** Always manually normalize status values to raw strings (e.g., `new_status.value if hasattr(new_status, "value") else str(new_status)`) before evaluating state machine transition rules (`_ALLOWED_PATCH_TRANSITIONS`).
+
+### 9.13 N+1 Query in Bulk Jobs Endpoint
+- **Quirk:** Querying relational entities sequentially within a mapping loop (e.g., `db.query(Location).filter(id==job.location_id).first()` inside a `for job in jobs` loop) scales linearly and bogs down the database.
+- **Fix:** Pre-aggregate all unique foreign keys (e.g., `location_ids`) and execute a single batch query (`Location.id.in_(location_ids)`). Build a Python dictionary lookup table before running the O(N) mapping loop in memory.
 
 ---
 

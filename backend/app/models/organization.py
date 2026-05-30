@@ -14,3 +14,6 @@ class Organization(Base):
     sync_logs = relationship("SyncLog", back_populates="organization", cascade="all, delete-orphan")
     invites = relationship("Invite", back_populates="organization", cascade="all, delete-orphan")
     reviews = relationship("Review", back_populates="organization", cascade="all, delete-orphan")
+    campaigns = relationship("Campaign", back_populates="organization", cascade="all, delete-orphan")
+    posts = relationship("Post", back_populates="organization", cascade="all, delete-orphan")
+    publish_jobs = relationship("PublishJob", back_populates="organization", cascade="all, delete-orphan")

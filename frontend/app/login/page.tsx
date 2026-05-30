@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { RefreshCw, AlertTriangle, ArrowRight } from 'lucide-react'
 import { api } from '@/lib/api'
 
-export default function LoginPage() {
+function LoginContent() {
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -88,7 +88,7 @@ export default function LoginPage() {
           <button
             onClick={handleContinueWithGoogle}
             disabled={loading}
-            className="w-full flex justify-center items-center gap-3 rounded-lg py-3 px-4 text-sm font-semibold text-white bg-white hover:bg-gray-50 border border-gray-200 text-gray-900 shadow-sm cursor-pointer disabled:opacity-50 transition-colors"
+            className="w-full flex justify-center items-center gap-3 rounded-lg py-3 px-4 text-sm font-semibold text-white bg-white hover:bg-gray-50 border border-gray-200 text-gray-950 shadow-sm cursor-pointer disabled:opacity-50 transition-colors"
           >
             {loading ? (
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent"></div>
@@ -113,7 +113,7 @@ export default function LoginPage() {
                     d="M13.99 24c3.045 0 5.81-1.233 7.82-3.225l-3.22-3.22A5.99 5.99 0 0 1 13.99 18.5a5.99 5.99 0 0 1-5.99-6.015c0-.46.057-.905.158-1.332L4.938 7.913A10.97 10.97 0 0 0 13.99 24Z"
                   />
                 </svg>
-                <span className="font-semibold text-gray-800">Continue with Google</span>
+                <span className="font-semibold text-gray-805">Continue with Google</span>
               </>
             )}
           </button>
@@ -126,5 +126,17 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <RefreshCw className="h-8 w-8 text-indigo-500 animate-spin" />
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   )
 }

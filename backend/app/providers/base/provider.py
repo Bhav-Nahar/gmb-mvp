@@ -32,5 +32,12 @@ class BaseProvider(ABC):
 
     @abstractmethod
     async def create_post(self, location_id: str, payload: Dict[str, Any]) -> PostModel:
-        """Create a new post for a specific location."""
+        """
+        Create a new post for a specific location.
+        
+        Note: Phase 3 workers may invoke provider publishing synchronously (e.g. using asyncio.run) 
+        for operational simplicity. However, provider implementations must remain async-capable 
+        internally, and future providers may use async execution patterns. Do NOT tightly couple 
+        the architecture to sync-only assumptions.
+        """
         ...

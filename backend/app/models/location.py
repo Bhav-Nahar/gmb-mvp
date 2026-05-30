@@ -25,7 +25,8 @@ class Location(Base):
     organization = relationship("Organization", back_populates="locations")
     sync_logs = relationship("SyncLog", back_populates="location", cascade="all, delete-orphan")
     reviews = relationship("Review", back_populates="location", cascade="all, delete-orphan")
-
+    post_variants = relationship("PostVariant", back_populates="location", cascade="all, delete-orphan")
+    publish_jobs = relationship("PublishJob", back_populates="location", cascade="all, delete-orphan")
     __table_args__ = (
         Index("ix_locations_sla_tracking_started_at", "sla_tracking_started_at"),
     )

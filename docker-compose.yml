@@ -70,7 +70,7 @@ services:
       dockerfile: Dockerfile
     container_name: gmb_celery_worker
     restart: always
-    command: celery -A app.worker.celery worker --loglevel=info
+    command: celery -A app.worker.celery worker --pool=threads --concurrency=10 --loglevel=info
     volumes:
       - ./backend:/app
     environment:

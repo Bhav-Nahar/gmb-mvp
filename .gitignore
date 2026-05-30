@@ -45,3 +45,7 @@ celerybeat.pid
 
 # Docker
 .docker/
+
+# Uploads
+backend/app/static/uploads/
+

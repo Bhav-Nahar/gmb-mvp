@@ -10,6 +10,8 @@ from .client import GBPAsyncClient
 from .schemas import GBPLocationRaw, GBPReviewRaw
 from .mapper import GBPLocationMapper, GBPReviewMapper
 import datetime
+from datetime import timezone
+import httpx
 
 class GBPProvider(BaseProvider):
     provider_name = "gbp"
@@ -312,12 +314,64 @@ class GBPProvider(BaseProvider):
         return await self.reply_to_review(location.google_location_id, review_id, reply_text)
 
     async def create_post(self, location_id: str, payload: Dict[str, Any]) -> PostModel:
-        # Implementation for creating a post
+        # Validate/refresh token (will raise PermanentAuthError if credentials are revoked)
+        access_token = await self._auth.get_valid_token()
+        
+        # Sandbox mode
+        if "mock_access_token" in access_token:
+            return PostModel(
+                id=f"simulated_gmb_post_{int(datetime.datetime.now(timezone.utc).timestamp())}",
+                location_id=location_id,
+                title="Mock Post",
+                body=payload.get("summary", ""),
+                state="PUBLISHED",
+                provider="gbp"
+            )
+
+        # 1. Resolve Account ID from DB (Bug Fix: V4 requires accounts/{accId}/locations/{locId}/localPosts)
+        from app.models.location import Location
+        loc_record = self.db.query(Location).filter(
+            Location.google_location_id == location_id,
+            Location.organization_id == self.auth_context.organization_id
+        ).first()
+        
+        account_id = loc_record.google_account_id if loc_record else None
+        
+        if not account_id:
+            # Fallback discovery if not in DB
+            async with GBPAsyncClient(self.auth_context.organization_id) as client:
+                accounts_url = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
+                acc_resp = await client.request("GET", accounts_url, headers={"Authorization": f"Bearer {access_token}"})
+                accounts = acc_resp.json().get("accounts", [])
+                for account in accounts:
+                    account_id = account["name"]
+                    break # Just use first for now if discovery is needed
+        
+        if not account_id:
+             raise Exception(f"Could not resolve account ID for location {location_id}")
+
+        # Google API: POST https://mybusiness.googleapis.com/v4/{account_id}/{location_id}/localPosts
+        headers = {"Authorization": f"Bearer {access_token}"}
+        url = f"https://mybusiness.googleapis.com/v4/{account_id}/{location_id}/localPosts"
+        
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            resp = await client.request("POST", url, headers=headers, json=payload)
+            
+        if resp.status_code not in [200, 201]:
+            # Raise exception containing raw text and status code so Celery backoff retry can parse it
+            raise httpx.HTTPStatusError(
+                message=f"Google API publish failed with status {resp.status_code}: {resp.text}",
+                request=resp.request,
+                response=resp
+            )
+            
+        resp_data = resp.json()
         return PostModel(
-            id="mock-post-1",
+            id=resp_data.get("name", f"gmb_post_{int(datetime.datetime.now(timezone.utc).timestamp())}"),
             location_id=location_id,
-            title="Mock Post",
-            body="Mock body",
+            title="GMB Post",
+            body=payload.get("summary", ""),
             state="PUBLISHED",
-            provider="gbp"
+            provider="gbp",
+            provider_metadata=resp_data
         )

@@ -7,13 +7,15 @@ import time
 class GBPAsyncClient:
     def __init__(self, organization_id: int):
         self.organization_id = organization_id
-        self.client = httpx.AsyncClient(timeout=30.0)
+        self.client = None
         
     async def __aenter__(self):
+        self.client = httpx.AsyncClient(timeout=30.0)
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.client.aclose()
+        if self.client:
+            await self.client.aclose()
 
     async def request(self, method: str, url: str, headers: Optional[dict] = None, **kwargs) -> httpx.Response:
         base_delay = 1.0

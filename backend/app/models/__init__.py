@@ -8,6 +8,17 @@ from app.models.invite import Invite
 from app.models.review import Review
 from app.models.user_location_access import UserLocationAccess
 from app.models.audit_log import AuditLog
+from app.models.campaign import Campaign
+from app.models.post import Post
+from app.models.post_variant import PostVariant
+from app.models.post_media import PostMedia
+from app.models.publish_job import PublishJob
+from app.models.post_audit_log import PostAuditLog
+from app.models.campaign_audit_log import CampaignAuditLog
 
-__all__ = ["Base", "Organization", "User", "OAuthAccount", "Location", "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog"]
-
+__all__ = [
+    "Base", "Organization", "User", "OAuthAccount", "Location", 
+    "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
+    "Campaign", "Post", "PostVariant", "PostMedia", "PublishJob", "PostAuditLog",
+    "CampaignAuditLog"
+]

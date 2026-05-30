@@ -73,6 +73,12 @@ export default function Navbar() {
               Reviews
             </Link>
             <Link
+              href="/dashboard/posts"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+            >
+              Posts & Media
+            </Link>
+            <Link
               href="/dashboard/settings"
               className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
             >

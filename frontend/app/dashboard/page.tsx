@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import AuthGuard from '@/components/AuthGuard'
 import Navbar from '@/components/Navbar'
@@ -68,7 +68,7 @@ interface LocationSLASummary {
   pending_count: number
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   
@@ -762,5 +762,17 @@ export default function DashboardPage() {
         </main>
       </div>
     </AuthGuard>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <RefreshCw className="h-8 w-8 text-indigo-500 animate-spin" />
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   )
 }

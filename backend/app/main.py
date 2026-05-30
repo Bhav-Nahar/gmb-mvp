@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
-from app.api import auth, locations, users, reviews
+from app.api import auth, locations, users, reviews, posts, media
+import os
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
     title="Google Business Profile Sync Service",
@@ -29,12 +31,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount local uploads directory for static file serving in development
+static_uploads_path = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "uploads")
+)
+os.makedirs(static_uploads_path, exist_ok=True)
+app.mount("/static/uploads", StaticFiles(directory=static_uploads_path), name="static_uploads")
+
 # Register routers under api/v1 prefix
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(locations.router, prefix="/api/v1/locations", tags=["Locations"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(reviews.router, prefix="/api/v1/reviews", tags=["Reviews"])
-
+app.include_router(posts.router, prefix="/api/v1/posts", tags=["Posts"])
+app.include_router(media.router, prefix="/api/v1/media", tags=["Media"])
 @app.get("/")
 def health_check(db: Session = Depends(get_db)):
     """Health check endpoint validating service and database status."""
