@@ -12,6 +12,16 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@db:5432/gmb_db"
 
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        """Fixes 'postgres://' to 'postgresql://' and ensures psycopg2 driver is used."""
+        url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        if "postgresql://" in url and "+psycopg2" not in url:
+            url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return url
+
     # Redis & Celery
     REDIS_URL: str = "redis://redis:6379/0"
 
