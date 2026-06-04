@@ -1,7 +1,8 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.providers.base.provider import BaseProvider
-from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel
+from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric
+from app.providers.base.exceptions import ProviderAPIError, ProviderError
 from app.providers.base.auth import AuthContext
 from app.core.config import settings
 from app.core.gbp_client import http_request_with_retry
@@ -123,7 +124,7 @@ class GBPProvider(BaseProvider):
                 while True:
                     locations_url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_name}/locations"
                     params = {
-                        "readMask": "name,title,categories,storefrontAddress,phoneNumbers,websiteUri,metadata",
+                        "readMask": "name,title,categories,storefrontAddress,phoneNumbers,websiteUri,regularHours,profile,metadata",
                         "pageSize": 100
                     }
                     if next_page_token:
@@ -136,25 +137,6 @@ class GBPProvider(BaseProvider):
                     for loc_dict in batch:
                         loc_name = loc_dict["name"]
                         
-                        # 3. Fetch summary ratings (this endpoint doesn't require pagination for summaries)
-                        metadata = loc_dict.get("metadata", {})
-                        
-                        # Check Verification Status: Only attempt to fetch reviews if the location metadata shows it is verified.
-                        is_verified = metadata.get("hasVoiceOfMerchant", False) or metadata.get("isVerified", False)
-                        
-                        if is_verified:
-                            reviews_url = f"https://mybusiness.googleapis.com/v4/{account_name}/{loc_name}/reviews"
-                            try:
-                                rev_resp = await client.request("GET", reviews_url, headers=headers)
-                                if rev_resp.status_code == 200:
-                                    rev_data = rev_resp.json()
-                                    loc_dict["rating"] = rev_data.get("averageRating")
-                                    loc_dict["reviewCount"] = rev_data.get("totalReviewCount")
-                            except Exception as e:
-                                import logging
-                                logging.error(f"Failed to fetch reviews summary for {loc_name} via V4 API. Error: {str(e)}")
-                                # Do NOT continue; we still want to sync the location itself even if rating fetch fails
-                            
                         try:
                             raw_model = GBPLocationRaw(**loc_dict)
                             all_locations.append(GBPLocationMapper.to_model(raw_model, account_name=account_name))
@@ -375,3 +357,178 @@ class GBPProvider(BaseProvider):
             provider="gbp",
             provider_metadata=resp_data
         )
+
+    async def patch_location(self, google_location_id: str, payload: Dict[str, Any], update_mask: str) -> Dict[str, Any]:
+        access_token = await self._auth.get_valid_token()
+        
+        # Sandbox mode
+        if "mock_access_token" in access_token:
+            return {"name": google_location_id, "status": "simulated_success"}
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{google_location_id}"
+        
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            resp = await client.request(
+                "PATCH", 
+                url, 
+                headers=headers, 
+                json=payload, 
+                params={"updateMask": update_mask}
+            )
+            
+        if resp.status_code not in [200, 201]:
+            raise httpx.HTTPStatusError(
+                message=f"Google API patch failed with status {resp.status_code}: {resp.text}",
+                request=resp.request,
+                response=resp
+            )
+            
+        return resp.json()
+
+    async def get_insights(self, location_id: str, start_date: datetime.date, end_date: datetime.date, account_id: Optional[str] = None) -> List[DailyInsightMetric]:
+        """
+        Fetch performance metrics from Google Business Profile Performance API v1.
+        Uses POST fetchMultiDailyMetricsTimeSeries.
+        """
+        from typing import Optional
+        access_token = await self._auth.get_valid_token()
+        
+        expected_dates = []
+        curr_date = start_date
+        while curr_date <= end_date:
+            expected_dates.append(curr_date)
+            curr_date += datetime.timedelta(days=1)
+            
+        if "mock_access_token" in access_token:
+            import random
+            insights = []
+            for dt in expected_dates:
+                profile_views = random.randint(150, 450)
+                search_views = int(profile_views * random.uniform(0.6, 0.8))
+                map_views = profile_views - search_views
+                phone_calls = random.randint(5, 25)
+                website_clicks = random.randint(10, 50)
+                direction_requests = random.randint(15, 60)
+                search_queries_direct = int(search_views * random.uniform(0.25, 0.35))
+                search_queries_indirect = int(search_views * random.uniform(0.50, 0.60))
+                search_queries_chain = search_views - search_queries_direct - search_queries_indirect
+                insights.append(DailyInsightMetric(
+                    date=dt, search_views=search_views, map_views=map_views,
+                    website_clicks=website_clicks, phone_calls=phone_calls,
+                    direction_requests=direction_requests, search_queries_direct=search_queries_direct,
+                    search_queries_indirect=search_queries_indirect, search_queries_chain=search_queries_chain
+                ))
+            return insights
+
+        METRIC_COLUMN_MAP = {
+            "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH": "search_views",
+            "BUSINESS_IMPRESSIONS_MOBILE_SEARCH": "search_views",
+            "BUSINESS_IMPRESSIONS_DESKTOP_MAPS": "map_views",
+            "BUSINESS_IMPRESSIONS_MOBILE_MAPS": "map_views",
+            "WEBSITE_CLICKS": "website_clicks",
+            "CALL_CLICKS": "phone_calls",
+            "BUSINESS_DIRECTION_REQUESTS": "direction_requests",
+        }
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        loc_path = location_id.strip("/")
+        if not loc_path.startswith("locations/"):
+            loc_path = f"locations/{loc_path}"
+
+        # FALLBACK STRATEGY: Try full path then short path
+        # 1. Full Path (accounts/ACC/locations/LOC)
+        full_path = loc_path
+        if account_id:
+            acc_clean = account_id.strip("/")
+            if not acc_clean.startswith("accounts/"):
+                acc_clean = f"accounts/{acc_clean}"
+            full_path = f"{acc_clean}/{loc_path}"
+
+        import logging
+        logger = logging.getLogger(__name__)
+
+        params = []
+        for metric in METRIC_COLUMN_MAP.keys():
+            params.append(("dailyMetrics", metric))
+        
+        params.extend([
+            ("dailyRange.startDate.year", str(start_date.year)),
+            ("dailyRange.startDate.month", str(start_date.month)),
+            ("dailyRange.startDate.day", str(start_date.day)),
+            ("dailyRange.endDate.year", str(end_date.year)),
+            ("dailyRange.endDate.month", str(end_date.month)),
+            ("dailyRange.endDate.day", str(end_date.day)),
+        ])
+
+        async def _try_fetch(target_path):
+            url = f"https://businessprofileperformance.googleapis.com/v1/{target_path}:fetchMultiDailyMetricsTimeSeries"
+            logger.info(f"Attempting insights fetch via: {url}")
+            async with GBPAsyncClient(self.auth_context.organization_id) as client:
+                return await client.request("GET", url, headers=headers, params=params)
+
+        try:
+            try:
+                resp = await _try_fetch(full_path)
+            except ProviderError as e:
+                if e.status_code == 404 and account_id:
+                    logger.warning(f"Performance API full path failed (404) for {full_path}. Retrying with short path: {loc_path}")
+                    resp = await _try_fetch(loc_path)
+                else:
+                    raise e
+        except ProviderError as e:
+            if e.status_code == 404:
+                raise ProviderAPIError(
+                    self.provider_name, 404, 
+                    f"Performance API returned 404. Ensure 'Business Profile Performance API' is enabled and location {loc_path} is verified."
+                )
+            raise e
+        except Exception as e:
+            logger.error(f"Network error during insights fetch: {str(e)}")
+            raise ProviderAPIError(self.provider_name, 500, f"Network error during insights fetch: {str(e)}")
+            
+        if resp.status_code != 200:
+            logger.error(f"GBP Performance API call failed: {resp.status_code} - {resp.text}")
+            raise ProviderAPIError(self.provider_name, resp.status_code, resp.text)
+            
+        resp_data = resp.json()
+        day_data = {dt: DailyInsightMetric(date=dt) for dt in expected_dates}
+        
+        multi_series = resp_data.get("multiDailyMetricTimeSeries", [])
+        for entry in multi_series:
+            series_list = entry.get("dailyMetricTimeSeries", [])
+            for ts in series_list:
+                metric_name = ts.get("dailyMetric")
+                col_name = METRIC_COLUMN_MAP.get(metric_name)
+                
+                if not col_name:
+                    import logging
+                    logging.warning(f"Unmapped metric '{metric_name}' received from GBP Performance API.")
+                    continue
+                    
+                time_series = ts.get("timeSeries", {})
+                dated_values = time_series.get("datedValues", [])
+                
+                for dv in dated_values:
+                    d_dict = dv.get("date", {})
+                    if not d_dict:
+                        continue
+                    try:
+                        dt = datetime.date(d_dict.get("year"), d_dict.get("month"), d_dict.get("day"))
+                        val = int(dv.get("value", 0))
+                        
+                        if dt in day_data:
+                            # Accumulate metric values (handles desktop/mobile searches aggregation)
+                            current_val = getattr(day_data[dt], col_name)
+                            setattr(day_data[dt], col_name, current_val + val)
+                    except Exception as ex:
+                        import logging
+                        logging.error(f"Error parsing dated value {dv} for metric {metric_name}: {str(ex)}")
+                        continue
+                        
+        return sorted(day_data.values(), key=lambda x: x.date)
+

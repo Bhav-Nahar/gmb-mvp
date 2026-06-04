@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any
 from pydantic import BaseModel, EmailStr
 
 # Organization schemas
@@ -68,6 +68,8 @@ class LocationOut(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     website: Optional[str] = None
+    description: Optional[str] = None
+    business_hours: Optional[Any] = None
     average_rating: Optional[float] = None
     total_reviews: Optional[int] = None
     sync_status: str

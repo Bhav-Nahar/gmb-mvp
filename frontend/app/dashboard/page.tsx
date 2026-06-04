@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import AuthGuard from '@/components/AuthGuard'
 import Navbar from '@/components/Navbar'
+import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import {
   RefreshCw,
@@ -21,6 +22,7 @@ import {
   ChevronRight,
   PlusCircle
 } from 'lucide-react'
+import Link from 'next/link'
 
 interface Location {
   id: number
@@ -93,7 +95,8 @@ function DashboardContent() {
   const [errorAlert, setErrorAlert] = useState('')
   const [successAlert, setSuccessAlert] = useState('')
 
-  const [userRole, setUserRole] = useState('Viewer')
+  const { user } = useAuth()
+  const userRole = user?.role || 'Viewer'
 
   useEffect(() => {
     const onboardingParam = searchParams.get('onboarding')
@@ -109,14 +112,6 @@ function DashboardContent() {
       setSuccessAlert('Google Business Profile successfully synced!')
     } else if (errorParam) {
       setErrorAlert(`Google authentication failed: ${detailParam || errorParam}`)
-    }
-
-    const userStr = localStorage.getItem('gmb_user')
-    if (userStr) {
-      try {
-        const u = JSON.parse(userStr)
-        setUserRole(u.role || 'Viewer')
-      } catch (e) {}
     }
 
     // Load initial data
@@ -141,15 +136,13 @@ function DashboardContent() {
         setSyncLogs(logsData)
         setTokenStatus(statusData)
 
-        // Check if sync completed by finding the specific org-level location sync log
-        const locationSyncLog = logsData.find(log => 
-          log.location_id === null && 
-          log.error_message && 
-          (log.error_message.includes('Synchronized') || log.error_message.includes('Sync Failed'))
+        // Check if any org-level sync log (location_id === null) has reached a terminal state.
+        // BUG-013 fix: Don't rely on error_message string content — just check the status field.
+        const terminalLog = logsData.find(log =>
+          log.location_id === null &&
+          (log.status === 'Success' || log.status === 'Failed')
         )
-        const hasFinished = !!locationSyncLog && (
-          locationSyncLog.status === 'Success' || locationSyncLog.status === 'Failed'
-        )
+        const hasFinished = !!terminalLog
 
         // If succeeded or failed, or max poll duration (30 seconds) reached, resolve onboarding overlay
         if (hasFinished || pollCount >= 15) {
@@ -311,14 +304,13 @@ function DashboardContent() {
   }
 
   const loadDashboardData = async () => {
-    try {
-      loadTokenStatus()
-      loadLocations()
-      loadSyncLogs()
-      loadSlaSummary()
-    } catch (e) {
-      console.error(e)
-    }
+    // Run all loaders in parallel — errors are handled inside each loader
+    await Promise.allSettled([
+      loadTokenStatus(),
+      loadLocations(),
+      loadSyncLogs(),
+      loadSlaSummary(),
+    ])
   }
 
   const loadSlaSummary = async () => {
@@ -626,11 +618,14 @@ function DashboardContent() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {locations.map((loc) => (
-                  <div key={loc.id} className="interactive-card glass-panel border border-border rounded-xl p-5 flex flex-col justify-between space-y-4">
+                  <Link href={`/dashboard/locations/${loc.id}`} key={loc.id} className="interactive-card glass-panel border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 hover:border-indigo-500/50 transition-colors group block">
                     <div className="space-y-2">
                       <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h4 className="text-base font-bold text-white leading-tight">{loc.location_name}</h4>
+                        <div className="flex-1">
+                          <h4 className="text-base font-bold text-white leading-tight group-hover:text-indigo-400 transition-colors flex items-center gap-2">
+                            {loc.location_name}
+                            <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </h4>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">{loc.primary_category || 'Storefront'}</span>
                             
@@ -677,10 +672,17 @@ function DashboardContent() {
                         </span>
                       )}
                       {loc.website && (
-                        <a href={loc.website} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300">
+                        <span
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            window.open(loc.website, '_blank', 'noopener,noreferrer');
+                          }}
+                          className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 cursor-pointer"
+                        >
                           <Globe className="h-3.5 w-3.5" />
                           <span>Website</span>
-                        </a>
+                        </span>
                       )}
                       {loc.last_synced_at && (
                         <span className="ml-auto text-[10px] text-muted-foreground/60 flex items-center gap-1">
@@ -689,7 +691,7 @@ function DashboardContent() {
                         </span>
                       )}
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}

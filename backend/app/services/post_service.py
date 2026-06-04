@@ -181,18 +181,35 @@ class PostService:
         return media
 
     @staticmethod
+    def _get_post_type_value(post: Post) -> str:
+        raw = post.post_type
+        if hasattr(raw, "value"):
+            raw = raw.value
+        return str(raw).lower()
+
+    @staticmethod
     def create_post_variant(db: Session, post_id: int, location_id: int, variables: dict, organization_id: int) -> PostVariant:
-        PostService._verify_ownership(db, Post, post_id, organization_id)
+        post = PostService._verify_ownership(db, Post, post_id, organization_id)
         PostService._verify_ownership(db, Location, location_id, organization_id)
         
         # Rendering logic would ideally happen here using variables
         # For Phase 1, we just store the variant record
+        rendered_cta_url = None
+        if post.cta_url:
+            from app.utils.utm_generator import generate_utm_link
+            touchpoint = PostService._get_post_type_value(post)
+            rendered_cta_url = generate_utm_link(
+                base_url=post.cta_url,
+                location_id=str(location_id),
+                touchpoint=touchpoint
+            )
+
         variant = PostVariant(
             organization_id=organization_id,
             post_id=post_id,
             location_id=location_id,
             rendered_summary="[Placeholder Rendered Summary]", 
-            rendered_cta_url=None,
+            rendered_cta_url=rendered_cta_url,
             rendering_variables=variables
         )
         db.add(variant)
@@ -263,8 +280,73 @@ class PostService:
         Flush-only: stages one PublishJob + audit log into the current transaction
         WITHOUT committing. The caller is responsible for the single final commit
         that covers all locations atomically.
+        Also instantiates a PostVariant record if one doesn't exist, rendering the 
+        summary and CTA URL (including UTM generator) for safety.
         """
         post.status = "PUBLISHING"
+
+        # 1. Ensure PostVariant exists and is rendered
+        variant = db.query(PostVariant).filter(
+            PostVariant.post_id == post.id,
+            PostVariant.location_id == location_id
+        ).first()
+
+        if not variant:
+            location = db.query(Location).filter(
+                Location.id == location_id,
+                Location.organization_id == organization_id
+            ).first()
+            if not location:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Location {location_id} not found."
+                )
+
+            # Determine city for template variables
+            import re
+            city = ""
+            if location.address:
+                try:
+                    import json
+                    addr_json = json.loads(location.address)
+                    city = addr_json.get("locality", "")
+                except Exception:
+                    parts = [p.strip() for p in location.address.split(',')]
+                    found_city = False
+                    for i, part in enumerate(parts):
+                        if re.search(r'\b\d{5}\b', part) or re.search(r'\b[A-Z]{2}\s\d{5}\b', part):
+                            if i > 0:
+                                city = parts[i-1]
+                                found_city = True
+                                break
+                    if not found_city and len(parts) >= 3:
+                        city = parts[-3]
+
+            summary_template = post.summary or ""
+            rendered_summary = summary_template.replace("{{location}}", location.location_name).replace("{{city}}", city).replace("{{phone}}", location.phone or "")
+
+            cta_template = post.cta_url or ""
+            rendered_cta_url = cta_template.replace("{{location_id}}", str(location.id)) if cta_template else None
+
+            if rendered_cta_url:
+                from app.utils.utm_generator import generate_utm_link
+                touchpoint = PostService._get_post_type_value(post)
+                rendered_cta_url = generate_utm_link(
+                    base_url=rendered_cta_url,
+                    location_id=str(location.id),
+                    touchpoint=touchpoint
+                )
+
+            variant = PostVariant(
+                organization_id=organization_id,
+                post_id=post.id,
+                location_id=location_id,
+                rendered_summary=rendered_summary,
+                rendered_cta_url=rendered_cta_url,
+                rendering_variables={"city": city}
+            )
+            db.add(variant)
+            db.flush()
 
         idempotency_key = f"post_{post.id}_loc_{location_id}_rev_1"
         job = PublishJob(
@@ -288,6 +370,67 @@ class PostService:
             log_metadata={"action": "published_to_location", "location_id": location_id},
         )
         db.add(audit_log)
+        return job
+
+    @staticmethod
+    def publish_post_to_location(
+        db: Session,
+        post_id: int,
+        location_id: int,
+        organization_id: int,
+        user_id: int
+    ) -> PublishJob:
+        """
+        Helper method to publish a post to a location.
+        Enforces post approval, media validation, concurrency checks, and dispatches Celery task.
+        """
+        post = PostService._verify_ownership(db, Post, post_id, organization_id)
+
+        # 1. Post Status Check
+        if post.status.upper() != "APPROVED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Only APPROVED posts can be published. Current status: {post.status}"
+            )
+
+        # 2. Media Check
+        media_list = db.query(PostMedia).filter(
+            PostMedia.post_id == post_id,
+            PostMedia.is_deleted == False
+        ).all()
+        if not media_list:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Post must have at least one validated media."
+            )
+        for m in media_list:
+            if m.validation_status != "Valid" or not m.optimized_url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Post media must be validated and optimized."
+                )
+
+        # 3. Concurrency check (return existing job if in-flight)
+        existing_job = db.query(PublishJob).filter(
+            PublishJob.post_id == post_id,
+            PublishJob.location_id == location_id
+        ).first()
+        if existing_job:
+            if existing_job.status.upper() in ["PENDING", "RUNNING", "RETRYING"]:
+                return existing_job
+
+        # 4. Standard validation check
+        PostService._validate_publish_eligibility(db, post, location_id, organization_id)
+
+        # 5. Stage, commit, and dispatch
+        job = PostService._stage_publish_job(db, post, location_id, organization_id, user_id)
+        db.commit()
+
+        # Dispatch task
+        from app.tasks import process_publish_job_task
+        process_publish_job_task.delay(job.id, organization_id)
+
+        db.refresh(job)
         return job
 
 

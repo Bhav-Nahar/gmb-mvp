@@ -15,10 +15,16 @@ from app.models.post_media import PostMedia
 from app.models.publish_job import PublishJob
 from app.models.post_audit_log import PostAuditLog
 from app.models.campaign_audit_log import CampaignAuditLog
+from app.models.location_edit import LocationEdit
+from app.models.activity_log import ActivityLog
+from app.models.activity_log_archive import ActivityLogArchive
+from app.models.location_daily_insights import LocationDailyInsight
 
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location", 
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
     "Campaign", "Post", "PostVariant", "PostMedia", "PublishJob", "PostAuditLog",
-    "CampaignAuditLog"
+    "CampaignAuditLog", "LocationEdit", "ActivityLog", "ActivityLogArchive",
+    "LocationDailyInsight"
 ]
+

@@ -211,6 +211,10 @@ All tables reside in a PostgreSQL database and are managed using SQLAlchemy mode
 - **`PublishJob`**: Represents the state machine for the physical delivery of a variant to GBP (`PENDING`, `RUNNING`, `SUCCESS`, `FAILED`).
 - **`PostAuditLog`**: Append-only log capturing all status changes for compliance and debugging.
 
+#### Listing Profile Edits & Activity Log (New)
+- **`LocationEdit`**: Tracks granular field-level edits to locations (e.g. `businessHours`, `description`). Implements a state machine (`Draft`, `Pending`, `Approved`, `Publishing`, `Published`, `Failed`, `Rejected`). Supports granular versioning, warnings, and retry attempts.
+- **`ActivityLog`**: A centralized, append-only log capturing all operational and entity-level activity (e.g. "Location created", "Review Replied"). Links to `organization_id`, `location_id`, and `actor_user_id`.
+
 ---
 
 ### 5.2 Abstraction Layer Data Models
@@ -331,12 +335,23 @@ Reviews are kept in sync continuously using Celery background tasks or manual cl
 - **N+1 Query Avoidance:** `get_organization_sla_summary` computes metrics for all locations belonging to an organization at once by utilizing SQLAlchemy `group_by` and aggregate functions (`func.sum`, `func.avg`, `case`), completely avoiding per-location N+1 iteration.
 - **Tiers:** Time cutoffs (e.g. Best < 12h, Good < 24h) are defined exclusively in `app/constants/sla.py`. Tiers dynamically categorize response speed (based on `reply_created_at` - `review_created_at`).
 
-### 6.8 GBP Local Posts (Phase 1)
-- **Transactional Job Creation**: The `/api/v1/posts/{id}/publish` endpoint triggers bulk deployment across multiple locations via a strict "all-or-nothing" transaction (`PostService.create_publish_jobs`). If any location fails validation (e.g., location not found, job already exists), it raises an `HTTPException` resulting in a full rollback, ensuring jobs are either created for *all* requested locations or *none*.
-- **Async Execution Backbone**: 
-  - The API synchronously evaluates data integrity, creates the `PublishJob` rows in `PENDING` state, and immediately dispatches an async Celery worker (`process_publish_job_task`) for each individual job.
-  - The worker retrieves the job, acquires a Redis Distributed Lock (`lock:publish_job:{organization_id}:{job_id}`) to prevent race conditions during retries, and transitions the state from `PENDING` -> `RUNNING` -> `SUCCESS`/`FAILED`.
-- **Strict Validation**: All API inputs strictly utilize Enums (`PostType`, `PostStatus`, `CallToActionType`) and native Pydantic V2 URL validators (`AnyHttpUrl`) to fail fast on invalid parameters.
+### 6.8 GBP Local Posts (Phase 4B: SaaS Scale & Throughput Hardening)
+The posts architecture has been extensively hardened to support high-volume safe throughput, burst protection, and operational scalability.
+- **Chunked Campaign Shards**: Campaigns are processed in batches (chunks of 50 locations) via `orchestrate_campaign_task` which delegates to `process_campaign_shard_task` to prevent queue congestion and database lock contention.
+- **Queue Jitter & Adaptive Pacing**: Inside each shard processor, adaptive randomized jitter (e.g., 0.8s to 1.5s) is injected between sequential Google API requests to prevent ingestion spikes and `429 Too Many Requests` storms.
+- **Redis Aggregate Counters & Circuit Breakers**: 
+  - Campaign metrics (`success`, `failed`, `pending_shards`) are aggregated natively in Redis to bypass PostgreSQL row-lock contention. 
+  - A pre-flight and mid-shard Circuit Breaker reads `campaign:{id}:status`. If a campaign is `Paused` or `Cancelled`, remaining jobs are instantly drained/aborted, allowing rapid scaling down of rogue campaigns.
+- **Advanced Retry Idempotency**: Single jobs that fail transiently are retried via `process_campaign_shard_task.apply_async`. A Redis lock (`retry_registered:{job_id}:{attempt}`) guarantees jobs can never be double-registered in the queue on worker crashes.
+- **Storage Abstraction Layer**: Media processing utilizes an abstract `StorageProviderFactory` supporting `local`, `s3`, and `r2`. Media payloads are entirely optional for posts. If present, background tasks (`optimize_media_task`, `generate_thumbnail_task`) handle compression before publishing.
+- **Explicit Primary Post Linkage**: Campaigns strictly track their root post via `campaign.primary_post_id` as the source of truth, avoiding fragile `.order_by` heuristics.
+- **Scheduled Post Polling**: A Celery beat task (`check_scheduled_posts_task`) sweeps the database for `SCHEDULED` posts whose `scheduled_at` timestamp has matured, atomically locking and converting them to `QUEUED`/`PROCESSING` campaigns.
+
+### 6.9 Listing Profile Edits & Moderation
+- **State Machine**: The `LocationEdit` model manages field updates with states: `Draft` -> `Pending` -> `Approved` -> `Publishing` -> `Published`. Staff create drafts, and Admins can approve/publish.
+- **Stale Publishing Recovery**: A safety mechanism built into `list_edits` dynamically checks for edits stuck in `Publishing` for >5 minutes. If found, they are automatically marked as `Failed` with reason `"Publishing timeout: stale recovery triggered"`, preventing hanging records if a Celery worker crashes mid-publish.
+- **Activity Logging**: All edits, approvals, rejections, and publications generate corresponding immutable events in the `ActivityLog` table.
+- **Field Configuration**: Field permissions (e.g. `is_staff_editable`, `is_admin_editable`, `is_critical`) are controlled exclusively by `LISTING_FIELDS` constants logic.
 
 ---
 

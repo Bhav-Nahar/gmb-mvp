@@ -5,14 +5,16 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
-from app.api import auth, locations, users, reviews, posts, media
+from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights
+from app.api.deps import check_csrf
 import os
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
     title="Google Business Profile Sync Service",
     description="Backend service managing GMB OAuth, scheduled metadata synchronization, and team roles.",
-    version="1.0.0"
+    version="1.0.0",
+    dependencies=[Depends(check_csrf)]
 )
 
 # CORS configurations to support Next.js frontend
@@ -45,6 +47,8 @@ app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(reviews.router, prefix="/api/v1/reviews", tags=["Reviews"])
 app.include_router(posts.router, prefix="/api/v1/posts", tags=["Posts"])
 app.include_router(media.router, prefix="/api/v1/media", tags=["Media"])
+app.include_router(listing_edits.router, prefix="/api/v1", tags=["Listing Edits"])
+app.include_router(insights.router, prefix="/api/v1/insights", tags=["Insights"])
 @app.get("/")
 def health_check(db: Session = Depends(get_db)):
     """Health check endpoint validating service and database status."""

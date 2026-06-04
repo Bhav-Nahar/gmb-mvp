@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # Security
     JWT_SECRET: str = "4f7a2b9c78d4e5a6b7c8d9e0f1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     ENCRYPTION_KEY: str = "yP3qCea34Z4K2ZtM1V8-x5Zt3B3-5pWk_N6s7pXv1vY="
 
     # Google OAuth

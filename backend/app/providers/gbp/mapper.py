@@ -6,11 +6,9 @@ from .schemas import GBPLocationRaw, GBPReviewRaw
 class GBPLocationMapper:
     @staticmethod
     def to_model(raw: GBPLocationRaw, account_name: Optional[str] = None) -> LocationModel:
+        import json
         addr = raw.storefrontAddress or {}
-        lines = addr.get("addressLines", [])
-        locality = addr.get("locality", "")
-        region = addr.get("administrativeArea", "")
-        full_address = ", ".join(lines + [locality, region]).strip(", ")
+        full_address = json.dumps(addr) if addr else None
         
         category = None
         if raw.categories and "primaryCategory" in raw.categories:
@@ -28,6 +26,8 @@ class GBPLocationMapper:
             address=full_address,
             phone=phone,
             website=raw.websiteUri,
+            description=raw.profile.get("description") if raw.profile else None,
+            business_hours=raw.regularHours.get("periods") if raw.regularHours else None,
             provider="gbp",
             provider_metadata=raw.metadata or {},
             synced_at=datetime.utcnow(),

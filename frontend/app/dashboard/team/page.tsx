@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import AuthGuard from '@/components/AuthGuard'
 import Navbar from '@/components/Navbar'
 import InviteMember from '@/components/InviteMember'
+import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import { Users, RefreshCw, AlertTriangle, Shield, Calendar, User as UserIcon, Mail, Copy, Check } from 'lucide-react'
 
@@ -27,10 +28,10 @@ interface InviteProfile {
 }
 
 export default function TeamSettingsPage() {
+  const { user } = useAuth()
   const [users, setUsers] = useState<UserProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [canManageTeam, setCanManageTeam] = useState(false)
 
   const [invites, setInvites] = useState<InviteProfile[]>([])
   const [invitesLoading, setInvitesLoading] = useState(false)
@@ -38,24 +39,14 @@ export default function TeamSettingsPage() {
   const [tempInviteUrl, setTempInviteUrl] = useState('')
   const [tempInviteCopied, setTempInviteCopied] = useState(false)
 
-  useEffect(() => {
-    // Resolve role from localStorage user profile
-    const userStr = localStorage.getItem('gmb_user')
-    if (userStr) {
-      try {
-        const profile = JSON.parse(userStr)
-        const canManage = ['Owner', 'Admin', 'Regional Manager'].includes(profile.role)
-        setCanManageTeam(canManage)
-        if (canManage) {
-           loadTeamInvites()
-        }
-      } catch (e) {
-        console.error('Error parsing profile', e)
-      }
-    }
+  const canManageTeam = user ? ['Owner', 'Admin', 'Regional Manager'].includes(user.role) : false
 
+  useEffect(() => {
+    if (canManageTeam) {
+      loadTeamInvites()
+    }
     loadTeamUsers()
-  }, [])
+  }, [canManageTeam])
 
   const loadTeamInvites = async () => {
     setInvitesLoading(true)

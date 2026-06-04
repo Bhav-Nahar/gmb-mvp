@@ -8,6 +8,8 @@ class GBPLocationRaw(BaseModel):
     storefrontAddress: Optional[Dict[str, Any]] = None
     phoneNumbers: Optional[Dict[str, Any]] = None
     websiteUri: Optional[str] = None
+    regularHours: Optional[Dict[str, Any]] = None
+    profile: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     
     # These fields are fetched separately but appended internally

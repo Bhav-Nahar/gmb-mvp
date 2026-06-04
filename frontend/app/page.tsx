@@ -2,18 +2,21 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function RootPage() {
   const router = useRouter()
+  const { user, loading } = useAuth()
 
   useEffect(() => {
-    const loggedIn = localStorage.getItem('gmb_logged_in')
-    if (loggedIn) {
-      router.replace('/dashboard')
-    } else {
-      router.replace('/login')
+    if (!loading) {
+      if (user) {
+        router.replace('/dashboard')
+      } else {
+        router.replace('/login')
+      }
     }
-  }, [router])
+  }, [user, loading, router])
 
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-background">

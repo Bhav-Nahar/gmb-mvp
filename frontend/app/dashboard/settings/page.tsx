@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AuthGuard from '@/components/AuthGuard'
 import Navbar from '@/components/Navbar'
+import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import { Settings, Shield, AlertTriangle, User as UserIcon, Trash2, X } from 'lucide-react'
 
@@ -20,6 +21,7 @@ interface UserProfile {
 
 export default function SettingsPage() {
   const router = useRouter()
+  const { logout } = useAuth()
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   
@@ -52,9 +54,8 @@ export default function SettingsPage() {
     
     try {
       await api.delete('/users/me')
-      // Successfully deleted. Clear local storage and redirect.
-      localStorage.removeItem('gmb_logged_in')
-      localStorage.removeItem('gmb_user')
+      // Successfully deleted. Clear auth context and redirect.
+      await logout()
       router.push('/login?deleted=true')
     } catch (err: any) {
       setDeleteError(err.message || 'Failed to delete account. Please try again.')

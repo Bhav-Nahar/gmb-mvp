@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import AuthGuard from '@/components/AuthGuard'
 import Navbar from '@/components/Navbar'
+import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import {
   Star,
@@ -53,7 +54,8 @@ interface ReviewListResponse {
   pages: number
 }
 
-export default function ReviewsPage() {
+export default function ReviewsPage(props: any) {
+  const locationId = props.locationId;
   const [reviews, setReviews] = useState<Review[]>([])
   const [locations, setLocations] = useState<Location[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,7 +68,7 @@ export default function ReviewsPage() {
   // Filters
   const [filterRating, setFilterRating] = useState<number | ''>('')
   const [filterReplied, setFilterReplied] = useState<'all' | 'replied' | 'unreplied'>('all')
-  const [filterLocation, setFilterLocation] = useState<number | ''>('')
+  const [filterLocation, setFilterLocation] = useState<number | ''>(locationId || '')
   const [filterSentiment, setFilterSentiment] = useState<string>('')
   const [filterCategory, setFilterCategory] = useState<string>('')
   const [filterSlaTier, setFilterSlaTier] = useState<string>('')
@@ -95,18 +97,18 @@ export default function ReviewsPage() {
   const [errorAlert, setErrorAlert] = useState('')
   const [successAlert, setSuccessAlert] = useState('')
   
-  const [userRole, setUserRole] = useState('Viewer')
+  const { user } = useAuth()
+  const userRole = user?.role || 'Viewer'
 
   useEffect(() => {
-    const userStr = localStorage.getItem('gmb_user')
-    if (userStr) {
-      try {
-        const u = JSON.parse(userStr)
-        setUserRole(u.role || 'Viewer')
-      } catch (e) {}
-    }
     loadLocations()
   }, [])
+
+  useEffect(() => {
+    if (locationId) {
+      setFilterLocation(locationId)
+    }
+  }, [locationId])
 
   useEffect(() => {
     if (filterLocation !== '') {
@@ -316,19 +318,19 @@ export default function ReviewsPage() {
 
   return (
     <AuthGuard>
-      <div className="min-h-screen bg-background">
-        <Navbar />
+      <div className={locationId ? "" : "min-h-screen bg-background"}>
+        {!locationId && <Navbar />}
         
-        <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+        <main className={locationId ? "space-y-6" : "mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8"}>
           
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div>
+            {!locationId && (<div>
               <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-2">
                 <MessageSquare className="h-8 w-8 text-indigo-400" />
                 Customer Reviews
               </h1>
               <p className="text-muted-foreground mt-2">Manage and respond to Google Business Profile reviews.</p>
-            </div>
+            </div>)}
             
             {userRole !== 'Viewer' && (
               <div className="flex items-center gap-2">
@@ -399,7 +401,7 @@ export default function ReviewsPage() {
               </select>
             </div>
             
-            <div className="flex flex-col gap-1.5">
+            {!locationId && (<div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Location</label>
               <select 
                 className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
@@ -411,7 +413,7 @@ export default function ReviewsPage() {
                   <option key={loc.id} value={loc.id}>{loc.location_name}</option>
                 ))}
               </select>
-            </div>
+            </div>)}
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Sentiment</label>
@@ -574,7 +576,7 @@ export default function ReviewsPage() {
 
                   {review.comment && (
                     <p className="text-sm text-white/90 leading-relaxed bg-muted/10 p-4 rounded-lg border border-border/50">
-                      "{review.comment}"
+                      &ldquo;{review.comment}&rdquo;
                     </p>
                   )}
 

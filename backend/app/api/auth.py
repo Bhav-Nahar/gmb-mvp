@@ -4,9 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from app.db.session import get_db
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.security import (
     create_access_token,
+    create_refresh_token,
+    decode_access_token_payload,
     encrypt_token
 )
 from app.models.user import User
@@ -277,21 +280,45 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         # 4. Trigger Celery Task to sync locations immediately for both new and existing users
         celery.send_task("app.tasks.sync_locations_task", args=[user.organization_id, user.id, "Manual"])
 
-        # 5. Generate local JWT access token
+        # 5. Generate local JWT access token and refresh token
         local_token = create_access_token(subject=user.email, token_version=user.token_version)
+        refresh_token = create_refresh_token(subject=user.email, token_version=user.token_version)
         
         # Redirect to frontend success page that will save credentials
         redirect_url = f"{settings.FRONTEND_URL}/login/success?token={local_token}&onboarding={'true' if is_new_user else 'false'}"
         response = RedirectResponse(url=redirect_url)
         
         secure_cookie = settings.FRONTEND_URL.startswith("https://")
+        
+        # Set short-lived access cookie (15 mins)
         response.set_cookie(
             key="gmb_auth_token",
             value=local_token,
             httponly=True,
             secure=secure_cookie,
             samesite="lax",
-            max_age=3600 * 24 * 7
+            max_age=15 * 60  # 15 minutes
+        )
+        
+        # Set long-lived refresh cookie (7 days)
+        response.set_cookie(
+            key="gmb_refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=secure_cookie,
+            samesite="lax",
+            max_age=3600 * 24 * 7  # 7 days
+        )
+        
+        # Set long-lived CSRF cookie (7 days, httponly=False so JS can read it)
+        csrf_token = secrets.token_urlsafe(32)
+        response.set_cookie(
+            key="gmb_csrf_token",
+            value=csrf_token,
+            httponly=False,
+            secure=secure_cookie,
+            samesite="lax",
+            max_age=3600 * 24 * 7  # 7 days
         )
         return response
         
@@ -306,14 +333,87 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         logging.exception("Unhandled exception during Google OAuth callback")
         return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=oauth_failed")
 
-@router.post("/logout")
-def logout(response: Response):
+@router.post("/refresh")
+def refresh(request: Request, response: Response, db: Session = Depends(get_db)):
     """
-    Clear the secure httpOnly authentication cookie.
+    Refresh the access token using the long-lived refresh token cookie.
     """
-    response.delete_cookie(
+    refresh_token = request.cookies.get("gmb_refresh_token")
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token missing"
+        )
+        
+    payload = decode_access_token_payload(refresh_token)
+    if payload is None or payload.get("sub") is None or payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token"
+        )
+        
+    email = payload.get("sub")
+    token_version = payload.get("ver", 1)
+    
+    user = db.query(User).filter(User.email == email).first()
+    if user is None or not user.is_active or user.token_version != token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User session invalidated"
+        )
+        
+    # Generate new access token
+    new_access_token = create_access_token(subject=user.email, token_version=user.token_version)
+    
+    secure_cookie = settings.FRONTEND_URL.startswith("https://")
+    response.set_cookie(
         key="gmb_auth_token",
-        path="/",
-        samesite="lax"
+        value=new_access_token,
+        httponly=True,
+        secure=secure_cookie,
+        samesite="lax",
+        max_age=15 * 60  # 15 minutes
     )
+    
+    # Generate and set new CSRF cookie on refresh
+    csrf_token = secrets.token_urlsafe(32)
+    response.set_cookie(
+        key="gmb_csrf_token",
+        value=csrf_token,
+        httponly=False,
+        secure=secure_cookie,
+        samesite="lax",
+        max_age=3600 * 24 * 7  # 7 days
+    )
+    return {"status": "success", "message": "Token refreshed successfully"}
+
+@router.post("/logout")
+def logout(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Clear all secure auth and CSRF cookies and invalidate session on server.
+    """
+    # Invalidate all existing tokens for this user (security hardening)
+    current_user.token_version += 1
+    db.commit()
+    
+    secure_cookie = settings.FRONTEND_URL.startswith("https://")
+    
+    cookie_params = {
+        "path": "/",
+        "httponly": True,
+        "secure": secure_cookie,
+        "samesite": "lax"
+    }
+    
+    response.delete_cookie(key="gmb_auth_token", **cookie_params)
+    response.delete_cookie(key="gmb_refresh_token", **cookie_params)
+    
+    # CSRF cookie is not httponly
+    cookie_params["httponly"] = False
+    response.delete_cookie(key="gmb_csrf_token", **cookie_params)
+    
     return {"message": "Successfully logged out"}

@@ -112,6 +112,18 @@ class ReviewSyncService:
             
             location.total_reviews = stats.count
             location.average_rating = float(stats.avg) if stats.avg else 0.0
+            
+            from app.services.activity_log_service import ActivityLogService
+            ActivityLogService.log(
+                db,
+                organization_id=organization_id,
+                location_id=location_id,
+                actor_user_id=None,
+                entity_type="system",
+                action="reviews_synced",
+                payload={"synced_count": synced_count}
+            )
+            
             db.commit()
 
             # Log successful sync

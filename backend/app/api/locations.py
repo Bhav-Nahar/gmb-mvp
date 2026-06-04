@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, outerjoin
 from app.db.session import get_db
@@ -153,6 +153,59 @@ def get_location(
         raise HTTPException(status_code=404, detail="Location not found")
         
     return location
+
+@router.get("/categories/search")
+async def search_categories(
+    query: str = Query("", min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required),
+):
+    """
+    Search the Google Business Profile categories API dynamically.
+    """
+    from app.providers.factory import ProviderFactory
+    from app.providers.gbp.client import GBPAsyncClient
+    
+    provider = ProviderFactory.get_provider("gbp", current_user.organization_id, db)
+    access_token = await provider._auth.get_valid_token()
+    
+    # Sandbox mode fallback
+    if "mock_access_token" in access_token:
+        mock_cats = [
+            {"name": "categories/gcid:jewelry_store", "displayName": "Jewellery Store"},
+            {"name": "categories/gcid:jeweler", "displayName": "Jeweller"},
+            {"name": "categories/gcid:gemstone_jeweler", "displayName": "Gemstone Jeweler"},
+            {"name": "categories/gcid:goldsmith", "displayName": "Goldsmith"},
+            {"name": "categories/gcid:gold_dealer", "displayName": "Gold dealer"},
+            {"name": "categories/gcid:silversmith", "displayName": "Silversmith"}
+        ]
+        return [c for c in mock_cats if query.lower() in c["displayName"].lower()]
+        
+    headers = {"Authorization": f"Bearer {access_token}"}
+    url = "https://mybusinessbusinessinformation.googleapis.com/v1/categories"
+    
+    params = {
+        "regionCode": "IN",
+        "languageCode": "en",
+        "filter": f"displayName={query}",
+        "view": "BASIC",
+        "pageSize": 20
+    }
+    
+    async with GBPAsyncClient(current_user.organization_id) as client:
+        resp = await client.request("GET", url, headers=headers, params=params)
+        if resp.status_code != 200:
+            cats = []
+        else:
+            cats = resp.json().get("categories", [])
+            
+    return [
+        {
+            "name": c.get("name"),
+            "displayName": c.get("displayName")
+        }
+        for c in cats
+    ]
 
 @router.post("/sync", status_code=status.HTTP_202_ACCEPTED)
 def trigger_sync(

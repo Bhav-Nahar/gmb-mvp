@@ -10,37 +10,48 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
+# Map PostgreSQL JSONB to SQLite TEXT for in-memory test compilation compatibility
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.dialects.postgresql import JSONB
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(element, compiler, **kw):
+    return "TEXT"
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Allow tests to import API modules even when celery is not installed locally.
-if "celery" not in sys.modules:
-    celery_stub = types.ModuleType("celery")
-    celery_schedules_stub = types.ModuleType("celery.schedules")
+try:
+    import celery
+except ImportError:
+    if "celery" not in sys.modules:
+        celery_stub = types.ModuleType("celery")
+        celery_schedules_stub = types.ModuleType("celery.schedules")
 
-    class _StubCelery:
-        def __init__(self, *args, **kwargs):
-            self.conf = types.SimpleNamespace(beat_schedule={}, timezone="UTC")
+        class _StubCelery:
+            def __init__(self, *args, **kwargs):
+                self.conf = types.SimpleNamespace(beat_schedule={}, timezone="UTC")
 
-        def send_task(self, *args, **kwargs):
-            return type("T", (), {"id": "stub-task"})()
+            def send_task(self, *args, **kwargs):
+                return type("T", (), {"id": "stub-task"})()
 
-        def autodiscover_tasks(self, *args, **kwargs):
+            def autodiscover_tasks(self, *args, **kwargs):
+                return None
+
+        def _shared_task(*args, **kwargs):
+            def _decorator(fn):
+                return fn
+
+            return _decorator
+
+        def _crontab(*args, **kwargs):
             return None
 
-    def _shared_task(*args, **kwargs):
-        def _decorator(fn):
-            return fn
-
-        return _decorator
-
-    def _crontab(*args, **kwargs):
-        return None
-
-    celery_stub.Celery = _StubCelery
-    celery_stub.shared_task = _shared_task
-    celery_schedules_stub.crontab = _crontab
-    sys.modules["celery"] = celery_stub
-    sys.modules["celery.schedules"] = celery_schedules_stub
+        celery_stub.Celery = _StubCelery
+        celery_stub.shared_task = _shared_task
+        celery_schedules_stub.crontab = _crontab
+        sys.modules["celery"] = celery_stub
+        sys.modules["celery.schedules"] = celery_schedules_stub
 
 from app.db.session import Base
 from app.models.organization import Organization

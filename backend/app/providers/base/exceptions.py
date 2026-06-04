@@ -24,3 +24,8 @@ class ProviderValidationError(ProviderError):
 class ProviderTemporaryError(ProviderError):
     """Raised on 500, 503, or network timeouts."""
     pass
+
+class ProviderAPIError(ProviderError):
+    """Raised when the provider API returns a general error."""
+    pass
+

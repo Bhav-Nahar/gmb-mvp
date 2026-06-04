@@ -5,35 +5,18 @@ import { LogOut, User as UserIcon, RefreshCw, Layers } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function Navbar() {
   const router = useRouter()
-  const [userName, setUserName] = useState<string>('')
-  const [userRole, setUserRole] = useState<string>('')
-  const [userAvatar, setUserAvatar] = useState<string | null>(null)
-
-  useEffect(() => {
-    const userStr = localStorage.getItem('gmb_user')
-    if (userStr) {
-      try {
-        const u = JSON.parse(userStr)
-        setUserName(u.name || 'Google User')
-        setUserRole(u.role || '')
-        setUserAvatar(u.avatar || null)
-      } catch (e) {
-        console.error(e)
-      }
-    }
-  }, [])
+  const { user, logout } = useAuth()
+  
+  const userName = user?.name || 'Google User'
+  const userRole = user?.role || ''
+  const userAvatar = user?.avatar || null
 
   const handleLogout = async () => {
-    try {
-      await api.post('/auth/logout')
-    } catch (e) {
-      console.error('Logout error', e)
-    }
-    localStorage.removeItem('gmb_logged_in')
-    localStorage.removeItem('gmb_user')
+    await logout()
     router.push('/login')
   }
 
@@ -57,6 +40,12 @@ export default function Navbar() {
               className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
             >
               Dashboard
+            </Link>
+            <Link
+              href="/dashboard/insights"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+            >
+              Insights
             </Link>
             {['Owner', 'Admin', 'Regional Manager'].includes(userRole) && (
               <Link

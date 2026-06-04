@@ -1,23 +1,20 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/useAuth'
+import { useEffect } from 'react'
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const { user, loading } = useAuth()
 
   useEffect(() => {
-    const loggedIn = localStorage.getItem('gmb_logged_in')
-    if (!loggedIn) {
-      setIsAuthenticated(false)
-      router.replace('/login')
-    } else {
-      setIsAuthenticated(true)
+    if (!loading && !user) {
+      router.replace('/login?expired=true')
     }
-  }, [router])
+  }, [user, loading, router])
 
-  if (isAuthenticated === null) {
+  if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
@@ -28,7 +25,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (!isAuthenticated) return null
+  if (!user) return null
 
   return <>{children}</>
 }

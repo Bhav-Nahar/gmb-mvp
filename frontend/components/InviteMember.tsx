@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { api } from '@/lib/api'
+import { useAuth } from '@/hooks/useAuth'
 import { Mail, Shield, Send, CheckCircle2, AlertTriangle, Copy, Check, MapPin, Eye } from 'lucide-react'
 
 interface InviteMemberProps {
@@ -11,31 +12,28 @@ interface InviteMemberProps {
 export default function InviteMember({ onInviteCreated }: InviteMemberProps = {}) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState('Store Manager')
+  const { user } = useAuth()
   const [locationIds, setLocationIds] = useState<number[]>([])
   const [viewerScope, setViewerScope] = useState('assigned')
   
   const [locations, setLocations] = useState<any[]>([])
-  const [currentUserRole, setCurrentUserRole] = useState('Viewer')
   
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [inviteUrl, setInviteUrl] = useState('')
   const [copied, setCopied] = useState(false)
 
+  const currentUserRole = user?.role || 'Viewer'
+
   useEffect(() => {
-    const userStr = localStorage.getItem('gmb_user')
-    if (userStr) {
-      try {
-        const u = JSON.parse(userStr)
-        setCurrentUserRole(u.role || 'Viewer')
-        if (u.role === 'Regional Manager') {
-            setRole('Store Manager')
-        } else {
-            setRole('Admin')
-        }
-      } catch (e) {}
+    if (currentUserRole === 'Regional Manager') {
+      setRole('Store Manager')
+    } else {
+      setRole('Admin')
     }
-    
+  }, [currentUserRole])
+
+  useEffect(() => {
     // Fetch locations to allow assignment
     api.get('/locations/')
        .then((res: any) => setLocations(res))
@@ -116,7 +114,7 @@ export default function InviteMember({ onInviteCreated }: InviteMemberProps = {}
             Invite Team Member
           </h3>
           <p className="text-xs text-muted-foreground">
-            Add team members to your organization's workspace.
+            Add team members to your organization&apos;s workspace.
           </p>
         </div>
 

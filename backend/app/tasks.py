@@ -136,8 +136,12 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 existing_loc.address = p_loc.address
                 existing_loc.phone = p_loc.phone
                 existing_loc.website = p_loc.website
-                existing_loc.average_rating = p_loc.average_rating
-                existing_loc.total_reviews = p_loc.total_reviews
+                existing_loc.description = p_loc.description
+                existing_loc.business_hours = p_loc.business_hours
+                if p_loc.average_rating is not None:
+                    existing_loc.average_rating = p_loc.average_rating
+                if p_loc.total_reviews is not None:
+                    existing_loc.total_reviews = p_loc.total_reviews
                 existing_loc.sync_status = "Synced"
                 existing_loc.last_synced_at = datetime.datetime.utcnow()
                 db.flush()
@@ -153,6 +157,8 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     address=p_loc.address,
                     phone=p_loc.phone,
                     website=p_loc.website,
+                    description=p_loc.description,
+                    business_hours=p_loc.business_hours,
                     average_rating=p_loc.average_rating,
                     total_reviews=p_loc.total_reviews,
                     sync_status="Synced",
@@ -426,6 +432,19 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
             }
         )
         db.add(audit_log)
+        
+        from app.services.activity_log_service import ActivityLogService
+        ActivityLogService.log(
+            db,
+            organization_id=organization_id,
+            location_id=location.id,
+            actor_user_id=None,
+            entity_type="post",
+            entity_id=post.id,
+            action="post_published",
+            payload={"google_post_id": res.id}
+        )
+        
         db.commit()
         
         return {"status": "completed", "google_post_id": job.google_post_id}
@@ -658,25 +677,46 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
             if not loc:
                 continue
                 
-            # City Parser fallback logic
+            # City Parser logic (supporting JSON address)
             city = loc.location_name
             if loc.address:
-                parts = [p.strip() for p in loc.address.split(',')]
-                found_city = False
-                for i, part in enumerate(parts):
-                    if re.search(r'\b\d{5}\b', part) or re.search(r'\b[A-Z]{2}\s\d{5}\b', part):
-                        if i > 0:
-                            city = parts[i-1]
-                            found_city = True
-                            break
-                if not found_city and len(parts) >= 3:
-                    city = parts[-3]
+                try:
+                    import json
+                    if loc.address.startswith("{"):
+                        addr_dict = json.loads(loc.address)
+                        city = addr_dict.get("locality") or loc.location_name
+                    else:
+                        raise ValueError()
+                except Exception:
+                    parts = [p.strip() for p in loc.address.split(',')]
+                    found_city = False
+                    for i, part in enumerate(parts):
+                        if re.search(r'\b\d{5}\b', part) or re.search(r'\b[A-Z]{2}\s\d{5}\b', part):
+                            if i > 0:
+                                city = parts[i-1]
+                                found_city = True
+                                break
+                    if not found_city and len(parts) >= 3:
+                        city = parts[-3]
             
             summary_template = post.summary or ""
             rendered_summary = summary_template.replace("{{location}}", loc.location_name).replace("{{city}}", city).replace("{{phone}}", loc.phone or "")
             
             cta_template = post.cta_url or ""
             rendered_cta_url = cta_template.replace("{{location_id}}", str(loc.id)) if cta_template else None
+            
+            if rendered_cta_url:
+                from app.utils.utm_generator import generate_utm_link
+                raw_type = post.post_type
+                if hasattr(raw_type, "value"):
+                    raw_type = raw_type.value
+                touchpoint = str(raw_type).lower()
+                
+                rendered_cta_url = generate_utm_link(
+                    base_url=rendered_cta_url,
+                    location_id=str(loc.id),
+                    touchpoint=touchpoint
+                )
             
             variant = PostVariant(
                 organization_id=organization_id,
@@ -1425,3 +1465,301 @@ def check_scheduled_posts_task() -> dict:
             
     db.close()
     return {"status": "success", "processed_count": processed_count}
+
+@shared_task(bind=True, name="app.tasks.publish_listing_edit_task", max_retries=3)
+def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
+    import redis
+    import logging
+    import httpx
+    import asyncio
+    from app.core.config import settings
+    from app.core.listing_fields import FIELD_MAP
+    from app.db.session import SessionLocal
+    from sqlalchemy.orm import Session
+    from app.services.listing_edit_service import ListingEditService
+    from app.services.payload_transformers import PayloadTransformer
+    from app.models.location_edit import LocationEdit
+    from app.models.location import Location
+    from app.providers.factory import ProviderFactory
+    from app.providers.gbp.auth import PermanentAuthError
+    
+    logger = logging.getLogger(__name__)
+    
+    r = redis.Redis.from_url(settings.REDIS_URL)
+    lock_key = f"lock:publish_edit:{edit_id}"
+    lock = r.lock(lock_key, timeout=120)
+    
+    if not lock.acquire(blocking=False):
+        return {"status": "skipped", "reason": "Edit is currently being published by another worker"}
+        
+    db = SessionLocal()
+    try:
+        edit = db.query(LocationEdit).filter(
+            LocationEdit.id == edit_id,
+            LocationEdit.organization_id == organization_id
+        ).first()
+        
+        if not edit:
+            return {"status": "skipped", "reason": "Edit not found"}
+            
+        if edit.status == "Published" or edit.published_at is not None:
+            return {"status": "skipped", "reason": "Idempotency guard: Edit is already published"}
+            
+        if edit.status != "Publishing":
+            return {"status": "skipped", "reason": f"Edit not in Publishing state: {edit.status}"}
+
+        location = db.query(Location).filter(Location.id == edit.location_id).first()
+        if not location:
+            raise Exception("Location not found.")
+            
+        edit.publish_attempts += 1
+        db.commit()
+        
+        gbp_payload = PayloadTransformer.to_gbp_payload(edit.field_name, edit.new_value)
+        update_mask = FIELD_MAP[edit.field_name].gbp_field_mask
+        
+        provider = ProviderFactory.get_provider("gbp", organization_id, db)
+        
+        try:
+            res = asyncio.run(provider.patch_location(location.google_location_id, gbp_payload, update_mask))
+            ListingEditService.mark_published(db, edit_id=edit.id, organization_id=organization_id)
+            db.commit()
+            return {"status": "completed"}
+            
+        except Exception as e:
+            logger.error(f"PublishListingEdit {edit_id} failed: {str(e)}")
+            is_retryable = True
+            google_error_code = None
+            
+            if isinstance(e, PermanentAuthError):
+                is_retryable = False
+                google_error_code = "AUTH_REVOKED"
+            elif isinstance(e, httpx.HTTPStatusError):
+                if e.response.status_code in [400, 401, 403, 404, 409]:
+                    is_retryable = False
+                google_error_code = str(e.response.status_code)
+            elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
+                is_retryable = False
+                
+            if is_retryable and self.request.retries < self.max_retries:
+                # Let celery handle retry; leave it in Publishing state
+                countdown = 60 * (2 ** self.request.retries)
+                db.close()
+                raise self.retry(exc=e, countdown=countdown)
+            else:
+                ListingEditService.mark_failed(
+                    db,
+                    edit_id=edit.id,
+                    organization_id=organization_id,
+                    failure_reason=str(e),
+                    google_error_code=google_error_code
+                )
+                db.commit()
+                return {"status": "failed", "reason": str(e)}
+                
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
+        db.close()
+
+@shared_task(name="app.tasks.archive_old_activity_logs_task")
+def archive_old_activity_logs_task() -> dict:
+    from app.db.session import SessionLocal
+    from datetime import datetime, timezone, timedelta
+    from app.models.activity_log import ActivityLog
+    from app.models.activity_log_archive import ActivityLogArchive
+    
+    db = SessionLocal()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    
+    try:
+        # We process in batches to avoid locking the table for too long
+        batch_size = 500
+        total_archived = 0
+        
+        while True:
+            # Find old logs
+            old_logs = db.query(ActivityLog).filter(
+                ActivityLog.created_at < cutoff
+            ).limit(batch_size).all()
+            
+            if not old_logs:
+                break
+                
+            # Create archive copies
+            archives = []
+            for log in old_logs:
+                arch = ActivityLogArchive(
+                    id=log.id,
+                    organization_id=log.organization_id,
+                    location_id=log.location_id,
+                    actor_user_id=log.actor_user_id,
+                    entity_type=log.entity_type,
+                    entity_id=log.entity_id,
+                    action=log.action,
+                    payload=log.payload,
+                    correlation_id=log.correlation_id,
+                    created_at=log.created_at
+                )
+                archives.append(arch)
+            
+            db.add_all(archives)
+            
+            # Delete originals
+            log_ids = [l.id for l in old_logs]
+            db.query(ActivityLog).filter(ActivityLog.id.in_(log_ids)).delete(synchronize_session=False)
+            
+            db.commit()
+            total_archived += len(old_logs)
+            
+        return {"status": "success", "archived_count": total_archived}
+        
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+
+@shared_task(name="app.tasks.sync_insights_task")
+def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str, run_type: str = "Scheduled") -> dict:
+    """
+    Celery task to synchronize daily performance insights for a location.
+    Enforces Redis locking to prevent concurrent synchronizations.
+    """
+    import redis
+    import datetime
+    import logging
+    from app.core.config import settings
+    from app.services.insight_sync_service import InsightSyncService
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting sync_insights_task for location_id={location_id}, range={start_date_str} to {end_date_str}, type={run_type}")
+    
+    db: Session = SessionLocal()
+    try:
+        location = db.query(Location).filter(Location.id == location_id).first()
+        if not location:
+            logger.error(f"Location {location_id} not found for insights sync")
+            return {"status": "error", "reason": f"Location {location_id} not found"}
+
+        organization_id = location.organization_id
+        start_date = datetime.date.fromisoformat(start_date_str)
+        end_date = datetime.date.fromisoformat(end_date_str)
+
+        r = redis.Redis.from_url(settings.REDIS_URL)
+        lock_key = f"lock:sync_insights:{organization_id}:{location_id}"
+        lock = r.lock(lock_key, timeout=300)
+
+        if not lock.acquire(blocking=False):
+            logger.warning(f"Skipping insights sync for location {location_id}: lock already held")
+            return {"status": "skipped", "reason": "insights sync already in progress"}
+
+        try:
+            logger.info(f"Executing InsightSyncService for location {location_id}...")
+            # Import and run async function inside Celery worker thread
+            res_msg = asyncio.run(InsightSyncService.sync_location_insights(
+                db=db,
+                location_id=location_id,
+                start_date=start_date,
+                end_date=end_date,
+                run_type=run_type
+            ))
+            logger.info(f"Insights sync completed for location {location_id}: {res_msg}")
+            return {"status": "success", "message": res_msg}
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
+    except Exception as e:
+        import logging
+        logging.error(f"Failed sync_insights_task for location {location_id}: {str(e)}")
+        return {"status": "failed", "reason": str(e)}
+    finally:
+        db.close()
+
+@shared_task(name="app.tasks.evaluate_attention_flags_task")
+def evaluate_attention_flags_task(organization_id: int) -> dict:
+    """
+    Celery task to evaluate reputation and performance attention flags for an organization.
+    """
+    import redis
+    from app.core.config import settings
+    from app.services.insight_sync_service import InsightSyncService
+
+    db: Session = SessionLocal()
+    try:
+        r = redis.Redis.from_url(settings.REDIS_URL)
+        lock_key = f"lock:attention_eval:{organization_id}"
+        lock = r.lock(lock_key, timeout=300)
+
+        if not lock.acquire(blocking=False):
+            return {"status": "skipped", "reason": "attention evaluation already in progress"}
+
+        try:
+            InsightSyncService.evaluate_attention_flags(db, organization_id)
+            return {"status": "success"}
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
+    except Exception as e:
+        import logging
+        logging.error(f"Failed evaluate_attention_flags_task for org {organization_id}: {str(e)}")
+        return {"status": "failed", "reason": str(e)}
+    finally:
+        db.close()
+
+@shared_task(name="app.tasks.sync_all_insights_beat_task")
+def sync_all_insights_beat_task() -> dict:
+    """
+    Nightly Celery beat task to sync insights incrementally for all active locations
+    and evaluate attention flags.
+    """
+    import datetime
+    db: Session = SessionLocal()
+    try:
+        locations = db.query(Location).filter(Location.sync_status != "Failed").all()
+        today = datetime.date.today()
+        yesterday = today - datetime.timedelta(days=1)
+        
+        synced_orgs = set()
+        enqueued_count = 0
+        
+        for loc in locations:
+            # Check if synced in the last 18 hours to avoid redundant API hits
+            if loc.last_insights_sync_at:
+                cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=18)
+                if loc.last_insights_sync_at.replace(tzinfo=datetime.timezone.utc) > cutoff:
+                    continue
+            
+            # Range logic: 90 days for new locations, 7 days for incremental
+            if not loc.last_insights_sync_at:
+                start_date = today - datetime.timedelta(days=90)
+            else:
+                start_date = today - datetime.timedelta(days=7)
+                
+            sync_insights_task.delay(
+                location_id=loc.id,
+                start_date_str=start_date.isoformat(),
+                end_date_str=yesterday.isoformat(),
+                run_type="Scheduled"
+            )
+            synced_orgs.add(loc.organization_id)
+            enqueued_count += 1
+            
+        # Trigger attention flags evaluation for all organizations that synced
+        for org_id in synced_orgs:
+            evaluate_attention_flags_task.delay(org_id)
+            
+        return {"status": "success", "enqueued_locations": enqueued_count, "triggered_orgs": len(synced_orgs)}
+    except Exception as e:
+        import logging
+        logging.error(f"Failed sync_all_insights_beat_task: {str(e)}")
+        raise e
+    finally:
+        db.close()
+

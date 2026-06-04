@@ -35,14 +35,14 @@ class GBPPostMapper:
                 "SHOP": "SHOP",
                 "LEARN_MORE": "LEARN_MORE",
                 "SIGN_UP": "SIGN_UP",
-                "CALL": "CALL_ACTION"
+                "CALL": "CALL"
             }
             mapped_action = action_map.get(cta_type_value.upper(), "LEARN_MORE")
             
             payload["callToAction"] = {
                 "actionType": mapped_action
             }
-            if mapped_action != "CALL_ACTION" and cta_url:
+            if mapped_action != "CALL" and cta_url:
                 payload["callToAction"]["url"] = str(cta_url)
 
         # 4. Add Media URL if present

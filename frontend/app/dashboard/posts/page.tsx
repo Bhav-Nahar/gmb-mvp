@@ -42,7 +42,8 @@ interface Campaign {
   audit_logs?: any[]
 }
 
-export default function PostsPage() {
+export default function PostsPage(props: any) {
+  const locationId = props.locationId;
   const [locations, setLocations] = useState<Location[]>([])
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
 
@@ -54,7 +55,7 @@ export default function PostsPage() {
   const [ctaType, setCtaType] = useState('NONE')
   const [ctaUrl, setCtaUrl] = useState('')
   const [locationSearch, setLocationSearch] = useState('')
-  const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>([])
+  const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>(locationId ? [locationId] : [])
 
   // Media
   const [uploading, setUploading] = useState(false)
@@ -154,6 +155,13 @@ export default function PostsPage() {
   }, [])
 
   useEffect(() => {
+    if (locationId) {
+      setSelectedLocationIds([locationId])
+      loadCampaigns()
+    }
+  }, [locationId])
+
+  useEffect(() => {
     if (!selectedCampaignId) {
       setPollingActive(false)
       return
@@ -177,7 +185,26 @@ export default function PostsPage() {
   const loadCampaigns = async () => {
     try {
       const data: any = await api.get('/posts/campaigns?size=50')
-      setCampaigns(data.campaigns || [])
+      const allCampaigns = data.campaigns || []
+      
+      if (locationId) {
+        const filtered: Campaign[] = []
+        for (const camp of allCampaigns) {
+          try {
+            const detail: Campaign = await api.get(`/posts/campaigns/${camp.id}/progress`)
+            const hasJob = detail.jobs?.some((j: any) => j.location_id === Number(locationId))
+            if (hasJob) {
+              filtered.push({ ...camp, jobs: detail.jobs, audit_logs: detail.audit_logs })
+            }
+          } catch (err) {}
+        }
+        setCampaigns(filtered)
+        if (filtered.length > 0 && !selectedCampaignId) {
+          setSelectedCampaignId(filtered[0].id)
+        }
+      } else {
+        setCampaigns(allCampaigns)
+      }
     } catch (e: any) {}
   }
 
@@ -223,12 +250,14 @@ export default function PostsPage() {
   }
 
   const handleCreateCampaign = async () => {
-    if (!campaignName || !summary || selectedLocationIds.length === 0 || !mediaPayload) {
-      setErrorAlert('Please fill out all fields, select a media file, and at least one location.')
+    if (!campaignName || !summary || selectedLocationIds.length === 0) {
+      setErrorAlert('Please provide a campaign name, post summary, and select at least one location.')
       return
     }
     setSubmitting(true)
     setErrorAlert('')
+    setSuccessAlert('')
+
     try {
       // 1. Create Campaign
       const camp: any = await api.post('/posts/campaigns', {
@@ -242,35 +271,52 @@ export default function PostsPage() {
         summary,
         post_type: 'UPDATE',
         cta_type: ctaType !== 'NONE' ? ctaType : null,
-        cta_url: ctaType !== 'NONE' ? ctaUrl : null,
+        cta_url: ctaType !== 'NONE' && ctaUrl ? ctaUrl : null,
         is_bulk_post: true,
         campaign_id: camp.id
       })
 
-      // 3. Attach Media
-      await api.post(`/posts/${post.id}/media`, {
-        storage_provider: mediaPayload.storage_provider,
-        storage_key: mediaPayload.storage_key || null,
-        media_type: 'PHOTO',
-        original_filename: mediaPayload.original_filename,
-        mime_type: mediaPayload.mime_type,
-        file_size: mediaPayload.file_size,
-        width: mediaPayload.width,
-        height: mediaPayload.height,
-        sha256_hash: mediaPayload.sha256_hash,
-        cdn_url: mediaPayload.cdn_url
-      })
+      // 3. Attach Media (ONLY if mediaPayload is present)
+      if (mediaPayload) {
+        await api.post(`/posts/${post.id}/media`, {
+          storage_provider: mediaPayload.storage_provider,
+          storage_key: mediaPayload.storage_key || null,
+          media_type: 'PHOTO',
+          original_filename: mediaPayload.original_filename,
+          mime_type: mediaPayload.mime_type,
+          file_size: mediaPayload.file_size,
+          width: mediaPayload.width,
+          height: mediaPayload.height,
+          sha256_hash: mediaPayload.sha256_hash,
+          cdn_url: mediaPayload.cdn_url
+        })
+      }
 
-      // 4. Launch Campaign via the Campaign Orchestrator endpoint
+      // 4. Launch Campaign
       await api.post(`/posts/campaigns/${camp.id}/launch`, {
         location_ids: selectedLocationIds
       })
 
       setSuccessAlert('Campaign launched successfully!')
-      setIsModalOpen(false)
-      loadCampaigns()
-      setSelectedCampaignId(camp.id)
+      
+      // Reset form
+      setCampaignName('')
+      setTitle('')
+      setSummary('')
+      setCtaType('NONE')
+      setCtaUrl('')
+      setMediaUrl('')
+      setMediaPayload(null)
+      setSelectedLocationIds(locationId ? [locationId] : [])
+      
+      // Close modal and refresh after a short delay
+      setTimeout(() => {
+        setIsModalOpen(false)
+        loadCampaigns()
+        setSelectedCampaignId(camp.id)
+      }, 1000)
     } catch (e: any) {
+      console.error('Campaign creation error:', e)
       setErrorAlert(e.message || 'Failed to launch campaign.')
     } finally {
       setSubmitting(false)
@@ -293,11 +339,11 @@ export default function PostsPage() {
 
   return (
     <AuthGuard>
-      <div className="min-h-screen bg-background text-white pb-20">
-        <Navbar />
-        <main className="mx-auto max-w-7xl px-4 py-8 space-y-8">
+      <div className={locationId ? "pb-20" : "min-h-screen bg-background text-white pb-20"}>
+        {!locationId && <Navbar />}
+        <main className={locationId ? "" : "mx-auto max-w-7xl px-4 py-8 space-y-8"}>
           
-          <div className="flex justify-between items-center glass-panel border border-border p-6 rounded-2xl relative overflow-hidden">
+          {!locationId && (<div className="flex justify-between items-center glass-panel border border-border p-6 rounded-2xl relative overflow-hidden">
             <div className="absolute -top-12 -right-12 w-32 h-32 rounded-full bg-indigo-500/5 blur-2xl"></div>
             <div>
               <h2 className="text-2xl font-bold flex items-center gap-2">
@@ -313,6 +359,23 @@ export default function PostsPage() {
               <Plus className="h-4 w-4" /> New Campaign
             </button>
           </div>
+
+          )}
+
+          {locationId && (
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold flex items-center gap-2 text-white">
+                <FileText className="h-5 w-5 text-indigo-400" />
+                Location Posts
+              </h2>
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <Plus className="h-4 w-4" /> New Post
+              </button>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-1 glass-panel border border-border rounded-2xl p-5 h-fit">
@@ -614,32 +677,42 @@ export default function PostsPage() {
                   )}
                 </div>
 
-                <div className="space-y-4">
-                  <h4 className="text-sm font-bold text-muted-foreground uppercase border-b border-border pb-2 flex justify-between items-center">
-                    <span>3. Target Locations</span>
-                    <div className="flex items-center gap-4">
-                      <button onClick={handleToggleSelectAll} className="text-xs text-indigo-400 hover:text-indigo-300 font-bold cursor-pointer transition-colors">
-                        {selectedLocationIds.length === filteredLocations.length && filteredLocations.length > 0 ? 'Deselect All' : 'Select All'}
-                      </button>
-                      <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-xs">{selectedLocationIds.length} Selected</span>
+                {!locationId ? (
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-bold text-muted-foreground uppercase border-b border-border pb-2 flex justify-between items-center">
+                      <span>3. Target Locations</span>
+                      <div className="flex items-center gap-4">
+                        <button onClick={handleToggleSelectAll} className="text-xs text-indigo-400 hover:text-indigo-300 font-bold cursor-pointer transition-colors">
+                          {selectedLocationIds.length === filteredLocations.length && filteredLocations.length > 0 ? 'Deselect All' : 'Select All'}
+                        </button>
+                        <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-xs">{selectedLocationIds.length} Selected</span>
+                      </div>
+                    </h4>
+                    <div className="relative">
+                      <Search className="w-4 h-4 absolute left-3 top-3.5 text-muted-foreground" />
+                      <input type="text" placeholder="Search locations..." value={locationSearch} onChange={e => setLocationSearch(e.target.value)} className="w-full bg-muted/20 border border-border rounded-xl pl-10 p-3 text-sm focus:border-indigo-500 outline-none transition-colors" />
                     </div>
-                  </h4>
-                  <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3 top-3.5 text-muted-foreground" />
-                    <input type="text" placeholder="Search locations..." value={locationSearch} onChange={e => setLocationSearch(e.target.value)} className="w-full bg-muted/20 border border-border rounded-xl pl-10 p-3 text-sm focus:border-indigo-500 outline-none transition-colors" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1">
+                      {filteredLocations.map(loc => (
+                        <button key={loc.id} onClick={() => setSelectedLocationIds(p => p.includes(loc.id) ? p.filter(id => id !== loc.id) : [...p, loc.id])} className={`flex items-start text-left p-3 rounded-xl border transition-colors cursor-pointer ${selectedLocationIds.includes(loc.id) ? 'bg-indigo-600/10 border-indigo-500' : 'bg-muted/10 border-border hover:bg-muted/20'}`}>
+                          <input type="checkbox" checked={selectedLocationIds.includes(loc.id)} readOnly className="mt-1 mr-3 rounded text-indigo-600 bg-muted/50 border-border cursor-pointer" />
+                          <div>
+                            <div className="text-sm font-bold text-white">{loc.location_name}</div>
+                            <div className="text-xs text-muted-foreground truncate max-w-[200px]">{loc.address}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1">
-                    {filteredLocations.map(loc => (
-                      <button key={loc.id} onClick={() => setSelectedLocationIds(p => p.includes(loc.id) ? p.filter(id => id !== loc.id) : [...p, loc.id])} className={`flex items-start text-left p-3 rounded-xl border transition-colors cursor-pointer ${selectedLocationIds.includes(loc.id) ? 'bg-indigo-600/10 border-indigo-500' : 'bg-muted/10 border-border hover:bg-muted/20'}`}>
-                        <input type="checkbox" checked={selectedLocationIds.includes(loc.id)} readOnly className="mt-1 mr-3 rounded text-indigo-600 bg-muted/50 border-border cursor-pointer" />
-                        <div>
-                          <div className="text-sm font-bold text-white">{loc.location_name}</div>
-                          <div className="text-xs text-muted-foreground truncate max-w-[200px]">{loc.address}</div>
-                        </div>
-                      </button>
-                    ))}
+                ) : (
+                  <div className="space-y-2 bg-indigo-500/5 border border-indigo-500/10 p-4 rounded-xl">
+                    <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider block">Target Location</span>
+                    <div className="text-sm font-bold text-white mt-1">
+                      {locations.find(l => l.id === Number(locationId))?.location_name || `Storefront Location ID: ${locationId}`}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">Creating this post from the storefront profile scopes it strictly to this location.</p>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="p-5 border-t border-border flex justify-end gap-3 sticky bottom-0 bg-background/95 backdrop-blur z-10">

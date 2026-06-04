@@ -18,6 +18,8 @@ class LocationModel(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     website: Optional[str] = None
+    description: Optional[str] = None
+    business_hours: Optional[Any] = None
     provider: str
     provider_metadata: Dict[str, Any] = {}
     synced_at: datetime
@@ -56,3 +58,17 @@ class PostModel(BaseModel):
     published_at: Optional[datetime] = None
     provider: str
     provider_metadata: Dict[str, Any] = {}
+
+from datetime import date
+
+class DailyInsightMetric(BaseModel):
+    date: date
+    search_views: int = 0
+    map_views: int = 0
+    website_clicks: int = 0
+    phone_calls: int = 0
+    direction_requests: int = 0
+    search_queries_direct: int = 0
+    search_queries_indirect: int = 0
+    search_queries_chain: int = 0
+

@@ -142,7 +142,7 @@ def trigger_reviews_sync(
         return {"message": f"Sync tasks have been queued for {len(locations)} locations.", "task_ids": task_ids}
 
 @router.post("/{id}/reply", response_model=ReviewResponse)
-def reply_to_review(
+async def reply_to_review(
     id: int,
     payload: ReviewReplyRequest,
     db: Session = Depends(get_db),
@@ -167,7 +167,7 @@ def reply_to_review(
     provider = ProviderFactory.get_provider(review.provider, current_user.organization_id, db)
     
     try:
-        asyncio.run(provider.reply_review(review.provider_review_id, payload.reply_text))
+        await provider.reply_review(review.provider_review_id, payload.reply_text)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to post reply to provider: {str(e)}")
         
@@ -176,6 +176,19 @@ def reply_to_review(
     review.is_replied = True
     review.reply_text = payload.reply_text
     review.review_updated_at = func.now()
+    
+    from app.services.activity_log_service import ActivityLogService
+    ActivityLogService.log(
+        db,
+        organization_id=current_user.organization_id,
+        location_id=review.location_id,
+        actor_user_id=current_user.id,
+        entity_type="review",
+        entity_id=review.id,
+        action="review_replied",
+        payload={"rating": review.rating}
+    )
+    
     db.commit()
     db.refresh(review)
     

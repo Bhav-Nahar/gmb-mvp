@@ -180,7 +180,7 @@ class GBPClient:
             while True:
                 locations_url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_name}/locations"
                 params = {
-                    "readMask": "name,title,categories,storefrontAddress,phoneNumbers,websiteUri,metadata",
+                    "readMask": "name,title,categories,storefrontAddress,phoneNumbers,websiteUri,regularHours,profile,metadata",
                     "pageSize": 100
                 }
                 if next_page_token:
@@ -196,23 +196,6 @@ class GBPClient:
                 print(f"DEBUG: Found {len(batch)} locations in account {account_name}")
                 
                 for loc in batch:
-                    # 3. Fetch Aggregate Ratings & Review Count
-                    # Endpoint: https://mybusiness.googleapis.com/v4/{account_name}/{location_name}/reviews
-                    loc_id_path = loc["name"]  # Format: "locations/67890"
-                    reviews_url = f"https://mybusiness.googleapis.com/v4/{account_name}/{loc_id_path}/reviews"
-                    
-                    try:
-                        # We only need the top-level summary, no need to paginate reviews here
-                        rev_resp = http_request_with_retry("GET", reviews_url, client=self.client)
-                        if rev_resp.status_code == 200:
-                            rev_data = rev_resp.json()
-                            loc["rating"] = rev_data.get("averageRating")
-                            loc["reviewCount"] = rev_data.get("totalReviewCount")
-                        else:
-                            print(f"Could not fetch reviews for {loc_id_path}: {rev_resp.text}")
-                    except Exception as e:
-                        print(f"Exception fetching reviews for {loc_id_path}: {str(e)}")
-                    
                     all_locations.append(loc)
                 
                 next_page_token = data.get("nextPageToken")

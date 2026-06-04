@@ -279,18 +279,8 @@ def launch_publish_jobs(
             detail=f"Only APPROVED posts can be published. Current status: {post.status}"
         )
 
-    # At least one validated media record with an optimized URL
-    valid_media = [
-        m for m in post.media
-        if m.organization_id == current_user.organization_id
-        and m.validation_status and m.validation_status.upper() == "VALID"
-        and m.optimized_url is not None
-    ]
-    if not valid_media:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Post must have at least one validated media record with an optimized URL before publishing."
-        )
+    # Note: Media is optional for GMB posts according to project standards and GMB API.
+    # The mapper in gbp/post_mapper.py handles the conditional inclusion of media.
 
     # ── Phase 1: pre-flight (pure reads, zero DB writes) ──────────────────────
     # Fail fast with a clear error if ANY location is invalid or already

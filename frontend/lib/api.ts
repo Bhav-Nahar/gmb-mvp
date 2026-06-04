@@ -2,6 +2,54 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/a
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>
+  _retry?: boolean
+}
+
+let refreshPromise: Promise<boolean> | null = null
+
+async function refreshSession(): Promise<boolean> {
+  if (refreshPromise) {
+    return refreshPromise
+  }
+  
+  refreshPromise = (async () => {
+    try {
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+      
+      const csrfToken = getCookie('gmb_csrf_token')
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken
+      }
+
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers
+      })
+      return response.ok
+    } catch (e) {
+      return false
+    } finally {
+      refreshPromise = null
+    }
+  })()
+  
+  return refreshPromise
+}
+
+function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null
+  const matches = document.cookie.match(new RegExp(
+    "(?:^|; )" + name.replace(/([\.$?*|{}\(\)\[\]\\\/\+^])/g, '\\$1') + "=([^;]*)"
+  ))
+  return matches ? decodeURIComponent(matches[1]) : null
+}
+
+function isPublicPath(path: string): boolean {
+  return path === '/login' || path.startsWith('/invite/') || path === '/login/success' || path === '/'
 }
 
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
@@ -10,6 +58,15 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   
   if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
+  }
+
+  // Inject CSRF Token on all mutating requests
+  const method = options.method?.toUpperCase() || 'GET'
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const csrfToken = getCookie('gmb_csrf_token')
+    if (csrfToken) {
+      headers.set('X-CSRF-Token', csrfToken)
+    }
   }
 
   let url = `${API_BASE_URL}${endpoint}`
@@ -27,18 +84,47 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   try {
     const response = await fetch(url, config)
     
-    if (response.status === 401) {
+    // Transparently refresh token for any 401 except for the refresh endpoint itself
+    if (response.status === 401 && endpoint !== '/auth/refresh' && !options._retry) {
+      const refreshed = await refreshSession()
+      if (refreshed) {
+        // Retry the original request exactly once
+        return await request<T>(endpoint, { ...options, _retry: true })
+      }
+      
       if (typeof window !== 'undefined') {
-        localStorage.removeItem('gmb_logged_in')
-        localStorage.removeItem('gmb_user')
-        window.location.href = '/login?expired=true'
+        if (!isPublicPath(window.location.pathname)) {
+          window.location.href = '/login?expired=true'
+        }
+      }
+      throw new Error('Unauthorized session expired')
+    }
+
+    if (response.status === 401 && endpoint === '/auth/refresh') {
+      if (typeof window !== 'undefined') {
+        if (!isPublicPath(window.location.pathname)) {
+          window.location.href = '/login?expired=true'
+        }
       }
       throw new Error('Unauthorized session expired')
     }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.detail || 'An unexpected error occurred')
+      let errorMessage = 'An unexpected error occurred'
+      
+      if (typeof errorData.detail === 'string') {
+        errorMessage = errorData.detail
+      } else if (Array.isArray(errorData.detail)) {
+        // Handle FastAPI validation errors
+        errorMessage = errorData.detail.map((err: any) => `${err.loc?.join('.') || 'error'}: ${err.msg}`).join(', ')
+      } else if (errorData.detail && typeof errorData.detail === 'object') {
+        errorMessage = JSON.stringify(errorData.detail)
+      } else if (errorData.message) {
+        errorMessage = errorData.message
+      }
+      
+      throw new Error(errorMessage)
     }
 
     // Return empty object on 204 or empty response

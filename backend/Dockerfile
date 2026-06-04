@@ -14,4 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Create a non-root user and group
+RUN groupadd -g 10001 appgroup && \
+    useradd -r -u 10001 -g appgroup -m -d /home/appuser -s /bin/bash appuser && \
+    chown -R appuser:appgroup /app
+
+USER appuser
+
 EXPOSE 8000

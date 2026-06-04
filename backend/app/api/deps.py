@@ -31,7 +31,7 @@ def get_current_user(
         raise credentials_exception
     
     payload = decode_access_token_payload(token)
-    if payload is None or payload.get("sub") is None:
+    if payload is None or payload.get("sub") is None or payload.get("type") == "refresh":
         raise credentials_exception
         
     email = payload.get("sub")
@@ -102,3 +102,30 @@ def verify_location_access(location_id: int):
             
         return location_id
     return _verify
+
+def check_csrf(request: Request):
+    """
+    Stateless Double-Submit Cookie CSRF Defense.
+    Validates X-CSRF-Token header against gmb_csrf_token cookie for mutating requests.
+    """
+    if request.method in ["GET", "HEAD", "OPTIONS"]:
+        return
+        
+    # Exclude OAuth and Refresh endpoints (exact match on trailing part of path)
+    path = request.url.path
+    if any(path.endswith(p) for p in [
+        "/auth/google/callback",
+        "/auth/google/login",
+        "/auth/refresh",
+        "/api/v1/" # health check endpoint might be just / or /api/v1/
+    ]) or path == "/":
+        return
+        
+    csrf_cookie = request.cookies.get("gmb_csrf_token")
+    csrf_header = request.headers.get("X-CSRF-Token")
+    
+    if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF validation failed"
+        )

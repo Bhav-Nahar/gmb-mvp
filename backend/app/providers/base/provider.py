@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, ClassVar, Dict, Any
-from .models import LocationModel, ReviewModel, ReviewReplyModel, PostModel
+from datetime import date
+from .models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric
 
 class BaseProvider(ABC):
     provider_name: ClassVar[str]
@@ -41,3 +42,9 @@ class BaseProvider(ABC):
         the architecture to sync-only assumptions.
         """
         ...
+
+    @abstractmethod
+    async def get_insights(self, location_id: str, start_date: date, end_date: date) -> List[DailyInsightMetric]:
+        """Fetch performance insights for a location for a date range."""
+        ...
+

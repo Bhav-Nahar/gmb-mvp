@@ -4,10 +4,12 @@ import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { RefreshCw, CheckCircle2 } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useAuth } from '@/hooks/useAuth'
 
 function LoginSuccessContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { refresh } = useAuth()
   const [statusMessage, setStatusMessage] = useState('Securing connection...')
 
   useEffect(() => {
@@ -18,16 +20,12 @@ function LoginSuccessContent() {
       router.replace('/login?error=token_missing')
       return
     }
-
-    // Save token-like flag, not the actual secret
-    localStorage.setItem('gmb_logged_in', 'true')
     
     // Fetch profile and store
     const fetchAndRedirect = async () => {
       try {
         setStatusMessage('Establishing workspace...')
-        const userProfile = await api.get('/users/me')
-        localStorage.setItem('gmb_user', JSON.stringify(userProfile))
+        await refresh()
         
         setStatusMessage('Onboarding workspace...')
         // Short delay for sleek feel
@@ -39,7 +37,6 @@ function LoginSuccessContent() {
           }
         }, 1000)
       } catch (e) {
-        localStorage.removeItem('gmb_logged_in')
         router.replace('/login?error=profile_fetch_failed')
       }
     }
