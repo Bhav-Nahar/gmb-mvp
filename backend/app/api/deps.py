@@ -125,7 +125,14 @@ def check_csrf(request: Request):
     csrf_header = request.headers.get("X-CSRF-Token")
     
     if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+        detail_msg = "CSRF validation failed: "
+        if not csrf_cookie:
+            detail_msg += "Cookie 'gmb_csrf_token' is missing. "
+        if not csrf_header:
+            detail_msg += "Header 'X-CSRF-Token' is missing. "
+        if csrf_cookie and csrf_header and csrf_cookie != csrf_header:
+            detail_msg += "Cookie and Header tokens do not match. "
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="CSRF validation failed"
+            detail=detail_msg.strip()
         )
