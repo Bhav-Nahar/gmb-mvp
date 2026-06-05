@@ -60,13 +60,13 @@ function LoginContent() {
         {/* Brand Header */}
         <div className="flex flex-col items-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-xl shadow-indigo-500/20">
-            <RefreshCw className="h-6 w-6 text-white" />
+            <RefreshCw className="h-6 w-6 text-white animate-pulse" />
           </div>
           <h2 className="mt-6 text-center text-3xl font-bold tracking-tight text-white font-sans">
-            GMB Sync Engine
+            GBP Manager Pro
           </h2>
-          <p className="mt-2 text-center text-sm text-muted-foreground">
-            Synchronize your storefronts instantly with Google Business Profile
+          <p className="mt-2 text-center text-xs text-muted-foreground max-w-xs leading-relaxed">
+            Centralize reviews, posts, analytics, and multi-location operations in one premium platform.
           </p>
         </div>
 
