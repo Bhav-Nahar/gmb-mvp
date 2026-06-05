@@ -59,13 +59,6 @@ def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: in
             
             result = asyncio.run(ReviewSyncService.sync_location_reviews(db, location_id, run_type, sync_log_id=sync_log.id))
 
-            # Fire-and-forget: enqueue sentiment tagging after a successful sync.
-            # Only fires on success — never on failure.
-            tag_reviews_sentiment_task.delay(
-                location_id=location_id,
-                organization_id=organization_id
-            )
-
             return {"status": "success", "result": result}
         except Exception as e:
             db.rollback()
@@ -92,16 +85,37 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
     """
     import redis
     from app.core.config import settings
+    from app.models.organization_sync_state import OrganizationSyncState
     
     db: Session = SessionLocal()
     
     r = redis.Redis.from_url(settings.REDIS_URL)
-    lock_key = f"lock:sync_all:{organization_id}"
-    lock = r.lock(lock_key, timeout=300)
+    lock_key = f"lock:sync_locations:org_{organization_id}"
+    lock = r.lock(lock_key, timeout=3600)  # 1-hour lease to protect sync window
     
     if not lock.acquire(blocking=False):
         db.close()
         return {"status": "skipped", "reason": "sync already in progress"}
+    
+    # Locate or create sync state within the lock
+    sync_state = db.query(OrganizationSyncState).filter(
+        OrganizationSyncState.organization_id == organization_id
+    ).first()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    if not sync_state:
+        sync_state = OrganizationSyncState(
+            organization_id=organization_id,
+            sync_in_progress=True,
+            sync_started_at=now_utc,
+            last_sync_status="Pending"
+        )
+        db.add(sync_state)
+    else:
+        sync_state.sync_in_progress = True
+        sync_state.sync_started_at = now_utc
+        sync_state.last_sync_status = "Pending"
+    db.commit()
+    db.refresh(sync_state)
     
     try:
         sync_log = SyncLog(
@@ -143,7 +157,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 if p_loc.total_reviews is not None:
                     existing_loc.total_reviews = p_loc.total_reviews
                 existing_loc.sync_status = "Synced"
-                existing_loc.last_synced_at = datetime.datetime.utcnow()
+                existing_loc.last_synced_at = datetime.datetime.now(datetime.timezone.utc)
                 db.flush()
                 loc_id = existing_loc.id
             else:
@@ -162,7 +176,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     average_rating=p_loc.average_rating,
                     total_reviews=p_loc.total_reviews,
                     sync_status="Synced",
-                    last_synced_at=datetime.datetime.utcnow()
+                    last_synced_at=datetime.datetime.now(datetime.timezone.utc)
                 )
                 db.add(new_loc)
                 db.flush()
@@ -182,6 +196,14 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         log_message = f"Synchronized {synced_count} locations successfully."
         sync_log.status = "Success"
         sync_log.error_message = log_message
+        
+        # Update organization sync state
+        sync_state.sync_in_progress = False
+        sync_state.sync_started_at = None  # Clear: no sync in flight
+        sync_state.last_sync_status = "Success"
+        sync_state.last_location_sync_at = datetime.datetime.now(datetime.timezone.utc)
+        sync_state.last_sync_error = None
+        
         db.commit()
         
         return {"status": "success", "result": log_message}
@@ -212,6 +234,13 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         db.query(Location).filter(Location.organization_id == organization_id).update({
             Location.sync_status: "Failed"
         })
+        
+        # Update organization sync state on failure
+        sync_state.sync_in_progress = False
+        sync_state.sync_started_at = None  # Clear: no sync in flight
+        sync_state.last_sync_status = "Failed"
+        sync_state.last_sync_error = error_msg
+        
         db.commit()
         
         raise e
@@ -313,6 +342,30 @@ def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> 
             lock.release()
         except Exception:
             pass
+        db.close()
+
+@shared_task(bind=True, name="app.tasks.process_review_sentiment_task", max_retries=2)
+def process_review_sentiment_task(self, review_id: int) -> dict:
+    import asyncio
+    import logging
+    from app.db.session import SessionLocal
+    from app.models.review import Review
+    from app.services.sentiment_service import tag_reviews_sentiment
+
+    logger = logging.getLogger(__name__)
+
+    db = SessionLocal()
+    try:
+        review = db.query(Review).filter(Review.id == review_id, Review.is_deleted == False).first()
+        if not review or review.sentiment_tagged_at is not None:
+            return {"status": "skipped", "reason": "Review not found or already tagged"}
+            
+        asyncio.run(tag_reviews_sentiment([review], db))
+        return {"status": "completed", "review_id": review_id}
+    except Exception as e:
+        logger.error(f"process_review_sentiment_task failed for review {review_id}: {e}")
+        raise self.retry(exc=e, countdown=60)
+    finally:
         db.close()
 
 @shared_task(bind=True, name="app.tasks.process_publish_job_task", max_retries=3)
@@ -1713,49 +1766,149 @@ def evaluate_attention_flags_task(organization_id: int) -> dict:
     finally:
         db.close()
 
+@shared_task(name="app.tasks.sync_organization_insights_task")
+def sync_organization_insights_task(organization_id: int, start_date_str: str, end_date_str: str, run_type: str = "Scheduled", force: bool = False) -> dict:
+    """
+    Celery task to orchestrate insights synchronization for an entire organization.
+    Uses organization-level Redis lock and OrganizationSyncState.
+    """
+    import redis
+    import datetime
+    import logging
+    from app.core.config import settings
+    from app.models.organization_sync_state import OrganizationSyncState
+    from app.models.location import Location
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting sync_organization_insights_task for org={organization_id}, force={force}")
+
+    db: Session = SessionLocal()
+    r = redis.Redis.from_url(settings.REDIS_URL)
+    lock_key = f"insights_sync:org_{organization_id}"
+    lock = r.lock(lock_key, timeout=3600)  # 1 hour lease
+
+    try:
+        # Acquire lock first before database state mutations
+        if not lock.acquire(blocking=False):
+            logger.warning(f"Skipping organization insights sync for org={organization_id}: Redis lock already held")
+            return {"status": "skipped", "reason": "sync already in progress"}
+
+        try:
+            # Upsert sync state inside the lock
+            sync_state = db.query(OrganizationSyncState).filter(
+                OrganizationSyncState.organization_id == organization_id
+            ).first()
+            if not sync_state:
+                sync_state = OrganizationSyncState(
+                    organization_id=organization_id,
+                    insights_sync_in_progress=True,
+                    last_insights_sync_started_at=datetime.datetime.now(datetime.timezone.utc),
+                    last_insights_sync_status="in_progress"
+                )
+                db.add(sync_state)
+            else:
+                sync_state.insights_sync_in_progress = True
+                sync_state.last_insights_sync_started_at = datetime.datetime.now(datetime.timezone.utc)
+                sync_state.last_insights_sync_status = "in_progress"
+                sync_state.last_insights_sync_error = None
+            db.commit()
+
+            # Query all active locations
+            locations = db.query(Location).filter(
+                Location.organization_id == organization_id,
+                Location.sync_status != "Failed"
+            ).all()
+
+            logger.info(f"Syncing insights for {len(locations)} locations in org={organization_id}")
+            errors = []
+            for loc in locations:
+                try:
+                    # Execute synchronous subtask for each location sequentially inside this thread to avoid queue congestion
+                    sync_insights_task(
+                        location_id=loc.id,
+                        start_date_str=start_date_str,
+                        end_date_str=end_date_str,
+                        run_type=run_type
+                    )
+                except Exception as ex:
+                    errors.append(f"Location {loc.id}: {str(ex)}")
+
+            # Update final state inside the lock
+            sync_state = db.query(OrganizationSyncState).filter(
+                OrganizationSyncState.organization_id == organization_id
+            ).first()
+
+            if errors:
+                sync_state.insights_sync_in_progress = False
+                sync_state.last_insights_sync_status = "failed"
+                sync_state.last_insights_sync_error = "; ".join(errors)
+            else:
+                now_time = datetime.datetime.now(datetime.timezone.utc)
+                sync_state.insights_sync_in_progress = False
+                sync_state.last_insights_sync_status = "success"
+                sync_state.last_insights_sync_at = now_time
+                sync_state.last_insights_sync_completed_at = now_time
+                sync_state.last_insights_sync_error = None
+
+            db.commit()
+
+            # Trigger flags evaluation
+            try:
+                from app.services.insight_sync_service import InsightSyncService
+                InsightSyncService.evaluate_attention_flags(db, organization_id)
+            except Exception as flag_ex:
+                logger.error(f"Failed to evaluate attention flags for org={organization_id}: {str(flag_ex)}")
+
+            return {"status": "success", "errors": errors}
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f"General error in sync_organization_insights_task for org={organization_id}: {str(e)}")
+        # Attempt fallback status update
+        try:
+            sync_state = db.query(OrganizationSyncState).filter(
+                OrganizationSyncState.organization_id == organization_id
+            ).first()
+            if sync_state:
+                sync_state.insights_sync_in_progress = False
+                sync_state.last_insights_sync_status = "failed"
+                sync_state.last_insights_sync_error = str(e)
+                db.commit()
+        except Exception:
+            pass
+        return {"status": "failed", "reason": str(e)}
+    finally:
+        db.close()
+
+
 @shared_task(name="app.tasks.sync_all_insights_beat_task")
 def sync_all_insights_beat_task() -> dict:
     """
     Nightly Celery beat task to sync insights incrementally for all active locations
-    and evaluate attention flags.
     """
     import datetime
+    from app.models.organization import Organization
     db: Session = SessionLocal()
     try:
-        locations = db.query(Location).filter(Location.sync_status != "Failed").all()
+        orgs = db.query(Organization).all()
         today = datetime.date.today()
         yesterday = today - datetime.timedelta(days=1)
+        start_date = today - datetime.timedelta(days=7)
         
-        synced_orgs = set()
         enqueued_count = 0
-        
-        for loc in locations:
-            # Check if synced in the last 18 hours to avoid redundant API hits
-            if loc.last_insights_sync_at:
-                cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=18)
-                if loc.last_insights_sync_at.replace(tzinfo=datetime.timezone.utc) > cutoff:
-                    continue
-            
-            # Range logic: 90 days for new locations, 7 days for incremental
-            if not loc.last_insights_sync_at:
-                start_date = today - datetime.timedelta(days=90)
-            else:
-                start_date = today - datetime.timedelta(days=7)
-                
-            sync_insights_task.delay(
-                location_id=loc.id,
+        for org in orgs:
+            sync_organization_insights_task.delay(
+                organization_id=org.id,
                 start_date_str=start_date.isoformat(),
                 end_date_str=yesterday.isoformat(),
                 run_type="Scheduled"
             )
-            synced_orgs.add(loc.organization_id)
             enqueued_count += 1
             
-        # Trigger attention flags evaluation for all organizations that synced
-        for org_id in synced_orgs:
-            evaluate_attention_flags_task.delay(org_id)
-            
-        return {"status": "success", "enqueued_locations": enqueued_count, "triggered_orgs": len(synced_orgs)}
+        return {"status": "success", "triggered_orgs": enqueued_count}
     except Exception as e:
         import logging
         logging.error(f"Failed sync_all_insights_beat_task: {str(e)}")
@@ -1763,3 +1916,32 @@ def sync_all_insights_beat_task() -> dict:
     finally:
         db.close()
 
+@shared_task(name="app.tasks.retry_failed_sentiment_beat_task")
+def retry_failed_sentiment_beat_task() -> dict:
+    """
+    Periodic beat task to find any reviews that missed their event-driven sentiment tagging 
+    (e.g., worker crashed or LLM timed out) and enqueue them.
+    """
+    from app.db.session import SessionLocal
+    from app.models.review import Review
+    import logging
+    
+    db = SessionLocal()
+    try:
+        # Find untagged reviews. Limit to 1000 per run to avoid overwhelming the queue.
+        untagged_reviews = db.query(Review.id).filter(
+            Review.sentiment_tagged_at == None,  # noqa: E711
+            Review.is_deleted == False
+        ).limit(1000).all()
+        
+        enqueued = 0
+        for (rid,) in untagged_reviews:
+            process_review_sentiment_task.delay(rid)
+            enqueued += 1
+            
+        return {"status": "success", "enqueued": enqueued}
+    except Exception as e:
+        logging.error(f"Failed retry_failed_sentiment_beat_task: {str(e)}")
+        raise e
+    finally:
+        db.close()

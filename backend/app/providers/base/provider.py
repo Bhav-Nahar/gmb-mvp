@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, ClassVar, Dict, Any
+import datetime
 from datetime import date
 from .models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric
 
@@ -22,7 +23,7 @@ class BaseProvider(ABC):
         ...
 
     @abstractmethod
-    async def get_reviews(self, location_id: str) -> List[ReviewModel]:
+    async def get_reviews(self, location_id: str, safe_cutoff_time: datetime.datetime = None) -> List[ReviewModel]:
         """Fetch all reviews for a specific location."""
         ...
 

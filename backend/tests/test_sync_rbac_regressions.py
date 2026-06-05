@@ -59,6 +59,7 @@ from app.models.user import User
 from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
 from app.models.user_location_access import UserLocationAccess
+from app.models.organization_sync_state import OrganizationSyncState
 from app.api import locations as locations_api
 from app.api import auth as auth_api
 
@@ -214,7 +215,240 @@ class SyncAndRbacRegressionTests(unittest.TestCase):
         task_args = send_task.call_args.kwargs["args"]
         self.assertEqual(task_args[0], self.org.id)
         self.assertEqual(task_args[1], user.id)
-        self.assertEqual(task_args[2], "Manual")
+        self.assertEqual(task_args[2], "Onboarding")
+
+    def test_login_does_not_queue_sync_when_fresh(self):
+        user = User(
+            email="fresh@acme.com",
+            name="Fresh User",
+            google_id="google_id_fresh",
+            role="Owner",
+            is_active=True,
+            organization_id=self.org.id,
+        )
+        self.db.add(user)
+        # Create a fresh sync state (sync completed 1 hour ago)
+        sync_state = OrganizationSyncState(
+            organization_id=self.org.id,
+            last_location_sync_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            sync_in_progress=False,
+            last_sync_status="Success"
+        )
+        self.db.add(sync_state)
+        self.db.commit()
+
+        self.db.add(
+            OAuthAccount(
+                user_id=user.id,
+                provider="gbp",
+                provider_account_id="google_id_fresh",
+                access_token="enc-old",
+                refresh_token="enc-old-refresh",
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            )
+        )
+        self.db.commit()
+
+        with patch.object(auth_api.ProviderFactory, "exchange_code_for_tokens") as exchange_tokens, patch.object(
+            auth_api, "encrypt_token"
+        ) as encrypt_token, patch.object(auth_api.celery, "send_task") as send_task:
+            exchange_tokens.return_value = {
+                "access_token": "mock_access_token_abc",
+                "refresh_token": "mock_refresh_token_def",
+                "expires_in": 3600,
+                "email": "fresh@acme.com",
+            }
+            encrypt_token.side_effect = lambda v: f"enc:{v}" if v else None
+            send_task.return_value = type("T", (), {"id": "task-3"})()
+
+            request = build_request_with_cookie("csrf123")
+            result = auth_api.google_callback(
+                request=request,
+                code="dummy-code",
+                state="csrf123:",
+                db=self.db,
+            )
+
+        self.assertEqual(result.status_code, 307)
+        send_task.assert_not_called()
+
+    def test_login_queues_sync_when_stale(self):
+        user = User(
+            email="stale@acme.com",
+            name="Stale User",
+            google_id="google_id_stale",
+            role="Owner",
+            is_active=True,
+            organization_id=self.org.id,
+        )
+        self.db.add(user)
+        # Create a stale sync state (sync completed 13 hours ago)
+        sync_state = OrganizationSyncState(
+            organization_id=self.org.id,
+            last_location_sync_at=datetime.now(timezone.utc) - timedelta(hours=13),
+            sync_in_progress=False,
+            last_sync_status="Success"
+        )
+        self.db.add(sync_state)
+        self.db.commit()
+
+        self.db.add(
+            OAuthAccount(
+                user_id=user.id,
+                provider="gbp",
+                provider_account_id="google_id_stale",
+                access_token="enc-old",
+                refresh_token="enc-old-refresh",
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            )
+        )
+        self.db.commit()
+
+        with patch.object(auth_api.ProviderFactory, "exchange_code_for_tokens") as exchange_tokens, patch.object(
+            auth_api, "encrypt_token"
+        ) as encrypt_token, patch.object(auth_api.celery, "send_task") as send_task:
+            exchange_tokens.return_value = {
+                "access_token": "mock_access_token_abc",
+                "refresh_token": "mock_refresh_token_def",
+                "expires_in": 3600,
+                "email": "stale@acme.com",
+            }
+            encrypt_token.side_effect = lambda v: f"enc:{v}" if v else None
+            send_task.return_value = type("T", (), {"id": "task-4"})()
+
+            request = build_request_with_cookie("csrf123")
+            result = auth_api.google_callback(
+                request=request,
+                code="dummy-code",
+                state="csrf123:",
+                db=self.db,
+            )
+
+        self.assertEqual(result.status_code, 307)
+        send_task.assert_called_once()
+        task_args = send_task.call_args.kwargs["args"]
+        self.assertEqual(task_args[0], self.org.id)
+        self.assertEqual(task_args[1], user.id)
+        self.assertEqual(task_args[2], "Auto-Refresh")
+
+    def test_login_does_not_queue_sync_when_already_in_progress(self):
+        """Guard: if sync_in_progress=True and NOT stuck, login must NOT dispatch a new task."""
+        user = User(
+            email="inprogress@acme.com",
+            name="InProgress User",
+            google_id="google_id_inprogress",
+            role="Owner",
+            is_active=True,
+            organization_id=self.org.id,
+        )
+        self.db.add(user)
+        # Sync started just 30 minutes ago — still within the 2h stuck threshold.
+        sync_state = OrganizationSyncState(
+            organization_id=self.org.id,
+            last_location_sync_at=datetime.now(timezone.utc) - timedelta(hours=13),
+            sync_in_progress=True,
+            sync_started_at=datetime.now(timezone.utc) - timedelta(minutes=30),
+            last_sync_status="Pending"
+        )
+        self.db.add(sync_state)
+        self.db.commit()
+
+        self.db.add(
+            OAuthAccount(
+                user_id=user.id,
+                provider="gbp",
+                provider_account_id="google_id_inprogress",
+                access_token="enc-old",
+                refresh_token="enc-old-refresh",
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            )
+        )
+        self.db.commit()
+
+        with patch.object(auth_api.ProviderFactory, "exchange_code_for_tokens") as exchange_tokens, \
+             patch.object(auth_api, "encrypt_token") as encrypt_token, \
+             patch.object(auth_api.celery, "send_task") as send_task:
+            exchange_tokens.return_value = {
+                "access_token": "mock_access_token_abc",
+                "refresh_token": "mock_refresh_token_def",
+                "expires_in": 3600,
+                "email": "inprogress@acme.com",
+            }
+            encrypt_token.side_effect = lambda v: f"enc:{v}" if v else None
+
+            request = build_request_with_cookie("csrf123")
+            result = auth_api.google_callback(
+                request=request,
+                code="dummy-code",
+                state="csrf123:",
+                db=self.db,
+            )
+
+        self.assertEqual(result.status_code, 307)
+        # Must NOT dispatch — a healthy sync is already running.
+        send_task.assert_not_called()
+
+    def test_login_resets_stuck_sync_and_queues_new_task(self):
+        """Recovery: if sync_in_progress=True but sync_started_at is >2h ago (worker crashed),
+        login must auto-recover and dispatch a fresh Auto-Refresh task."""
+        user = User(
+            email="stuck@acme.com",
+            name="Stuck User",
+            google_id="google_id_stuck",
+            role="Owner",
+            is_active=True,
+            organization_id=self.org.id,
+        )
+        self.db.add(user)
+        # Simulate a worker crash: sync_in_progress=True but started 3 hours ago.
+        sync_state = OrganizationSyncState(
+            organization_id=self.org.id,
+            last_location_sync_at=datetime.now(timezone.utc) - timedelta(hours=13),
+            sync_in_progress=True,
+            sync_started_at=datetime.now(timezone.utc) - timedelta(hours=3),
+            last_sync_status="Pending"
+        )
+        self.db.add(sync_state)
+        self.db.commit()
+
+        self.db.add(
+            OAuthAccount(
+                user_id=user.id,
+                provider="gbp",
+                provider_account_id="google_id_stuck",
+                access_token="enc-old",
+                refresh_token="enc-old-refresh",
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            )
+        )
+        self.db.commit()
+
+        with patch.object(auth_api.ProviderFactory, "exchange_code_for_tokens") as exchange_tokens, \
+             patch.object(auth_api, "encrypt_token") as encrypt_token, \
+             patch.object(auth_api.celery, "send_task") as send_task:
+            exchange_tokens.return_value ={
+                "access_token": "mock_access_token_abc",
+                "refresh_token": "mock_refresh_token_def",
+                "expires_in": 3600,
+                "email": "stuck@acme.com",
+            }
+            encrypt_token.side_effect = lambda v: f"enc:{v}" if v else None
+            send_task.return_value = type("T", (), {"id": "task-stuck"})()
+
+            request = build_request_with_cookie("csrf123")
+            result = auth_api.google_callback(
+                request=request,
+                code="dummy-code",
+                state="csrf123:",
+                db=self.db,
+            )
+
+        self.assertEqual(result.status_code, 307)
+        # Must dispatch — the orphaned state was detected and auto-recovered.
+        send_task.assert_called_once()
+        task_args = send_task.call_args.kwargs["args"]
+        self.assertEqual(task_args[2], "Auto-Refresh")
+
 
     def test_store_manager_location_scope_enforced(self):
         store = User(

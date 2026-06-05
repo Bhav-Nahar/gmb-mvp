@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from app.db.session import get_db
 from app.api.deps import get_current_user
 from app.core.config import settings
@@ -17,8 +18,15 @@ from app.models.organization import Organization
 from app.models.oauth_account import OAuthAccount
 from app.models.sync_log import SyncLog
 from app.models.audit_log import AuditLog
+from app.models.organization_sync_state import OrganizationSyncState
 from app.providers.factory import ProviderFactory
 from app.worker import celery
+
+# If sync_in_progress=True but sync_started_at is older than this threshold,
+# the Celery worker almost certainly crashed (Redis lock TTL is 1h).
+# It is safe to treat this as a stuck state and reset it.
+SYNC_STUCK_THRESHOLD = timedelta(hours=2)
+
 
 router = APIRouter()
 
@@ -258,6 +266,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             
             db.commit()
 
+            # Batch AuditLog + SyncLog in one commit (was previously 3 separate commits)
             db.add(AuditLog(
                 organization_id=user.organization_id,
                 user_id=user.id,
@@ -266,20 +275,75 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                 action="google_connected",
                 details=f"Connected Google Business Profile integration for existing user: {email}"
             ))
-            db.commit()
-
-            # Log login
-            log = SyncLog(
+            db.add(SyncLog(
                 organization_id=user.organization_id,
                 status="Success",
                 run_type="Manual",
                 error_message=f"Logged in via Google Account: {email}"
-            )
-            db.add(log)
+            ))
             db.commit()
 
-        # 4. Trigger Celery Task to sync locations immediately for both new and existing users
-        celery.send_task("app.tasks.sync_locations_task", args=[user.organization_id, user.id, "Manual"])
+
+        # 4. State-Aware Background Synchronization check
+        sync_state = db.query(OrganizationSyncState).filter(
+            OrganizationSyncState.organization_id == user.organization_id
+        ).first()
+
+        if not sync_state:
+            # First-time onboarding sync: create the state record and immediately trigger.
+            # Guard against a rare race condition (two simultaneous first-logins for the
+            # same brand-new org) by catching a PK conflict gracefully.
+            try:
+                sync_state = OrganizationSyncState(
+                    organization_id=user.organization_id,
+                    sync_in_progress=True,
+                    sync_started_at=datetime.now(timezone.utc),
+                    last_sync_status="Pending"
+                )
+                db.add(sync_state)
+                db.commit()
+                celery.send_task(
+                    "app.tasks.sync_locations_task",
+                    args=[user.organization_id, user.id, "Onboarding"]
+                )
+            except IntegrityError:
+                # Another concurrent login already created the record. Roll back
+                # and continue — login itself must still succeed.
+                db.rollback()
+        else:
+            # Check if last sync is stale (older than 12h) and a sync isn't safely in flight.
+            threshold_time = datetime.now(timezone.utc) - timedelta(hours=12)
+            is_stale = False
+            if sync_state.last_location_sync_at is None:
+                is_stale = True
+            else:
+                last_sync_dt = sync_state.last_location_sync_at
+                if last_sync_dt.tzinfo is None:
+                    last_sync_dt = last_sync_dt.replace(tzinfo=timezone.utc)
+                if last_sync_dt < threshold_time:
+                    is_stale = True
+
+            # Detect orphaned stuck state: sync_in_progress=True but the worker
+            # crashed (Redis lock TTL has passed) so the flag was never cleared.
+            is_stuck = (
+                sync_state.sync_in_progress
+                and sync_state.sync_started_at is not None
+                and (datetime.now(timezone.utc) - sync_state.sync_started_at.replace(
+                    tzinfo=timezone.utc if sync_state.sync_started_at.tzinfo is None else sync_state.sync_started_at.tzinfo
+                )) > SYNC_STUCK_THRESHOLD
+            )
+
+            # Trigger only when stale AND (not currently syncing OR stuck/orphaned)
+            if is_stale and (not sync_state.sync_in_progress or is_stuck):
+                sync_state.sync_in_progress = True
+                sync_state.sync_started_at = datetime.now(timezone.utc)
+                sync_state.last_sync_status = "Pending"
+                db.commit()
+                celery.send_task(
+                    "app.tasks.sync_locations_task",
+                    args=[user.organization_id, user.id, "Auto-Refresh"]
+                )
+
 
         # 5. Generate local JWT access token and refresh token
         local_token = create_access_token(subject=user.email, token_version=user.token_version)

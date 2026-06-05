@@ -1,7 +1,7 @@
 import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import func, text
+from sqlalchemy import func, text, case
 from app.models.location import Location
 from app.models.review import Review
 from app.models.location_daily_insights import LocationDailyInsight
@@ -206,39 +206,91 @@ class InsightSyncService:
     def evaluate_attention_flags(db: Session, organization_id: int) -> None:
         """
         Evaluate and update attention flags for all locations under an organization based on predefined thresholds.
+        Uses a single batch aggregation query to eliminate N+1 database operations.
         """
         locations = db.query(Location).filter(Location.organization_id == organization_id).all()
+        if not locations:
+            return
+
         today = datetime.date.today()
         
+        # Calculate date boundaries
+        last_30_start = today - datetime.timedelta(days=AttentionThresholds.EVALUATION_WINDOW_DAYS)
+        prior_30_start = last_30_start - datetime.timedelta(days=AttentionThresholds.EVALUATION_WINDOW_DAYS)
+        last_60_start = today - datetime.timedelta(days=AttentionThresholds.NO_REVIEWS_DAYS)
+        
+        min_date = min(prior_30_start, last_60_start)
+
+        # Build cases for current 30 days
+        case_last_30_reviews = case((LocationDailyInsight.date >= last_30_start, LocationDailyInsight.reviews_received), else_=0)
+        case_last_30_negative = case((LocationDailyInsight.date >= last_30_start, LocationDailyInsight.negative_review_count), else_=0)
+        case_last_30_replied = case(
+            (LocationDailyInsight.date >= last_30_start, LocationDailyInsight.reviews_received * (LocationDailyInsight.response_rate / 100.0)),
+            else_=0.0
+        )
+        case_last_30_calls = case((LocationDailyInsight.date >= last_30_start, LocationDailyInsight.phone_calls), else_=0)
+        case_last_30_clicks = case((LocationDailyInsight.date >= last_30_start, LocationDailyInsight.website_clicks), else_=0)
+
+        # Build cases for prior 30 days (MoM comparison)
+        case_prior_30_calls = case(
+            ((LocationDailyInsight.date >= prior_30_start) & (LocationDailyInsight.date < last_30_start), LocationDailyInsight.phone_calls),
+            else_=0
+        )
+        case_prior_30_clicks = case(
+            ((LocationDailyInsight.date >= prior_30_start) & (LocationDailyInsight.date < last_30_start), LocationDailyInsight.website_clicks),
+            else_=0
+        )
+
+        # Build cases for last 60 days
+        case_60_reviews = case((LocationDailyInsight.date >= last_60_start, LocationDailyInsight.reviews_received), else_=0)
+
+        # Single batch aggregation query returning lightweight rows (no ORM hydration)
+        agg_results = (
+            db.query(
+                LocationDailyInsight.location_id,
+                func.coalesce(func.sum(case_last_30_reviews), 0).label("total_reviews"),
+                func.coalesce(func.sum(case_last_30_negative), 0).label("total_negative"),
+                func.coalesce(func.sum(case_last_30_replied), 0.0).label("replied_reviews"),
+                func.coalesce(func.sum(case_last_30_calls), 0).label("total_calls"),
+                func.coalesce(func.sum(case_last_30_clicks), 0).label("total_clicks"),
+                func.coalesce(func.sum(case_prior_30_calls), 0).label("prior_calls"),
+                func.coalesce(func.sum(case_prior_30_clicks), 0).label("prior_clicks"),
+                func.coalesce(func.sum(case_60_reviews), 0).label("total_reviews_60")
+            )
+            .filter(
+                LocationDailyInsight.organization_id == organization_id,
+                LocationDailyInsight.date >= min_date
+            )
+            .group_by(LocationDailyInsight.location_id)
+            .all()
+        )
+
+        # Map results to location_id
+        agg_map = {row.location_id: row for row in agg_results}
+
         for loc in locations:
             reasons = []
             
-            # Retrieve metrics for the last 30 days
-            last_30_start = today - datetime.timedelta(days=AttentionThresholds.EVALUATION_WINDOW_DAYS)
-            curr_insights = db.query(LocationDailyInsight).filter(
-                LocationDailyInsight.location_id == loc.id,
-                LocationDailyInsight.date >= last_30_start
-            ).all()
-
-            # Retrieve metrics for the prior 30 days (MoM comparison window)
-            prior_30_start = last_30_start - datetime.timedelta(days=AttentionThresholds.EVALUATION_WINDOW_DAYS)
-            prior_insights = db.query(LocationDailyInsight).filter(
-                LocationDailyInsight.location_id == loc.id,
-                LocationDailyInsight.date >= prior_30_start,
-                LocationDailyInsight.date < last_30_start
-            ).all()
-
-            # Aggregate current window
-            total_reviews = sum(i.reviews_received for i in curr_insights)
-            total_negative = sum(i.negative_review_count for i in curr_insights)
-            replied_reviews = sum(int(i.reviews_received * (i.response_rate / 100.0)) for i in curr_insights)
-            
-            total_calls = sum(i.phone_calls for i in curr_insights)
-            total_clicks = sum(i.website_clicks for i in curr_insights)
-
-            # Aggregate prior window
-            prior_calls = sum(i.phone_calls for i in prior_insights)
-            prior_clicks = sum(i.website_clicks for i in prior_insights)
+            # Fetch aggregates from map, or default to zero values if no daily insights exist
+            metrics = agg_map.get(loc.id)
+            if metrics:
+                total_reviews = metrics.total_reviews
+                total_negative = metrics.total_negative
+                replied_reviews = metrics.replied_reviews
+                total_calls = metrics.total_calls
+                total_clicks = metrics.total_clicks
+                prior_calls = metrics.prior_calls
+                prior_clicks = metrics.prior_clicks
+                total_reviews_60 = metrics.total_reviews_60
+            else:
+                total_reviews = 0
+                total_negative = 0
+                replied_reviews = 0.0
+                total_calls = 0
+                total_clicks = 0
+                prior_calls = 0
+                prior_clicks = 0
+                total_reviews_60 = 0
 
             # Check rule 1: Negative Sentiment Spike (> 40% of received reviews)
             if total_reviews > 0 and (total_negative / total_reviews) > AttentionThresholds.NEGATIVE_SENTIMENT_SPIKE_THRESHOLD:
@@ -251,11 +303,6 @@ class InsightSyncService:
                 reasons.append(f"Response rate warning: only {resp_pct:.1f}% of reviews replied to (threshold is {AttentionThresholds.RESPONSE_RATE_THRESHOLD}%)")
 
             # Check rule 3: No reviews received in the last 60 days
-            last_60_start = today - datetime.timedelta(days=AttentionThresholds.NO_REVIEWS_DAYS)
-            total_reviews_60 = db.query(func.sum(LocationDailyInsight.reviews_received)).filter(
-                LocationDailyInsight.location_id == loc.id,
-                LocationDailyInsight.date >= last_60_start
-            ).scalar() or 0
             if total_reviews_60 == 0:
                 reasons.append(f"No customer reviews received in the last {AttentionThresholds.NO_REVIEWS_DAYS} days")
 

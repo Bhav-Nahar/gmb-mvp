@@ -151,7 +151,7 @@ class GBPProvider(BaseProvider):
                         
         return all_locations
 
-    async def get_reviews(self, google_location_id: str) -> List[ReviewModel]:
+    async def get_reviews(self, google_location_id: str, safe_cutoff_time: datetime.datetime = None) -> List[ReviewModel]:
         # google_location_id is like "locations/12345"
         access_token = await self._auth.get_valid_token()
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -221,6 +221,7 @@ class GBPProvider(BaseProvider):
 
             # 3. Fetch reviews from the target account
             next_page_token = None
+            stop_fetching = False
             while True:
                 url = f"https://mybusiness.googleapis.com/v4/{target_account_name}/{google_location_id}/reviews"
                 params = {"pageSize": 50}
@@ -238,8 +239,13 @@ class GBPProvider(BaseProvider):
                         model.provider_metadata = rev_dict
                         all_reviews.append(model)
                         
+                        # Early exit based on safe_cutoff_time
+                        rev_updated_at = model.updated_at or model.created_at
+                        if safe_cutoff_time and rev_updated_at and rev_updated_at < safe_cutoff_time:
+                            stop_fetching = True
+                            
                     next_page_token = data.get("nextPageToken")
-                    if not next_page_token:
+                    if not next_page_token or stop_fetching:
                         break
                 except Exception as e:
                     import logging

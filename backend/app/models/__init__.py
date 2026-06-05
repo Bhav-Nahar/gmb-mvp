@@ -19,12 +19,13 @@ from app.models.location_edit import LocationEdit
 from app.models.activity_log import ActivityLog
 from app.models.activity_log_archive import ActivityLogArchive
 from app.models.location_daily_insights import LocationDailyInsight
+from app.models.organization_sync_state import OrganizationSyncState
 
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location", 
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
     "Campaign", "Post", "PostVariant", "PostMedia", "PublishJob", "PostAuditLog",
     "CampaignAuditLog", "LocationEdit", "ActivityLog", "ActivityLogArchive",
-    "LocationDailyInsight"
+    "LocationDailyInsight", "OrganizationSyncState"
 ]
 

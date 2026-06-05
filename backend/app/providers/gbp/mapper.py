@@ -45,6 +45,8 @@ class GBPReviewMapper:
                 # Basic parse (might need more robust RFC3339 parsing)
                 clean_time = raw.createTime.split('.')[0] + "Z" if '.' in raw.createTime else raw.createTime
                 create_time = datetime.strptime(clean_time, "%Y-%m-%dT%H:%M:%SZ")
+                from datetime import timezone
+                create_time = create_time.replace(tzinfo=timezone.utc)
             except Exception:
                 pass
                 
@@ -53,6 +55,8 @@ class GBPReviewMapper:
             try:
                 clean_time = raw.updateTime.split('.')[0] + "Z" if '.' in raw.updateTime else raw.updateTime
                 update_time = datetime.strptime(clean_time, "%Y-%m-%dT%H:%M:%SZ")
+                from datetime import timezone
+                update_time = update_time.replace(tzinfo=timezone.utc)
             except Exception:
                 pass
 
@@ -76,8 +80,18 @@ class GBPReviewMapper:
         rating = star_map.get(raw.starRating, None)
         
         reply = None
+        reply_created_at = None
         if raw.reviewReply and "comment" in raw.reviewReply:
             reply = raw.reviewReply["comment"]
+            reply_time_str = raw.reviewReply.get("updateTime")
+            if reply_time_str:
+                try:
+                    clean_time = reply_time_str.split('.')[0] + "Z" if '.' in reply_time_str else reply_time_str
+                    reply_created_at = datetime.strptime(clean_time, "%Y-%m-%dT%H:%M:%SZ")
+                    from datetime import timezone
+                    reply_created_at = reply_created_at.replace(tzinfo=timezone.utc)
+                except Exception:
+                    pass
             
         return ReviewModel(
             id=raw.reviewId,
@@ -87,6 +101,7 @@ class GBPReviewMapper:
             rating=rating,
             body=raw.comment,
             reply=reply,
+            reply_created_at=reply_created_at,
             created_at=create_time,
             updated_at=update_time,
             provider="gbp",

@@ -41,6 +41,10 @@ celery.conf.beat_schedule = {
     "sync-insights-daily": {
         "task": "app.tasks.sync_all_insights_beat_task",
         "schedule": crontab(hour=1, minute=0), # Daily at 1AM UTC
+    },
+    "retry-failed-sentiment-hourly": {
+        "task": "app.tasks.retry_failed_sentiment_beat_task",
+        "schedule": 3600.0, # Every hour
     }
 }
 

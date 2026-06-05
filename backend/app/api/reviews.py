@@ -226,6 +226,8 @@ async def generate_review_reply(
     try:
         result = await generate_reply(review, location)
     except LLMProviderError as e:
+        import logging
+        logging.getLogger(__name__).error(f"LLM Generation failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI service temporarily unavailable. Please write a manual reply."

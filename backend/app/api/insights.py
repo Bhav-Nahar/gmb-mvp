@@ -209,12 +209,21 @@ def get_insights_overview(
         attention_query = attention_query.filter(Location.id.in_(allowed_ids))
     attention_count = attention_query.scalar() or 0
 
+    # Auto-trigger synchronization if stale (cached-first logic)
+    try:
+        check_and_trigger_stale_insights_sync(current_user.organization_id, db)
+    except Exception as e:
+        # Prevent sync errors from blocking data display
+        import logging
+        logging.getLogger(__name__).error(f"Failed to check/trigger insights sync on overview load: {str(e)}")
+
     return InsightsOverviewResponse(
         kpis=kpis,
         trends=trends,
         leaderboard=leaderboard,
         attention_locations_count=attention_count
     )
+
 
 @router.get("/locations/{id}", response_model=LocationInsightsResponse)
 def get_location_insights(
@@ -399,6 +408,14 @@ def get_location_insights(
         for row in issues_res
     ]
 
+    # Auto-trigger synchronization if stale (cached-first logic)
+    try:
+        check_and_trigger_stale_insights_sync(current_user.organization_id, db)
+    except Exception as e:
+        # Prevent sync errors from blocking data display
+        import logging
+        logging.getLogger(__name__).error(f"Failed to check/trigger insights sync on location load: {str(e)}")
+
     return LocationInsightsResponse(
         location_id=location.id,
         location_name=location.location_name,
@@ -412,6 +429,95 @@ def get_location_insights(
         top_issue_categories=top_issues
     )
 
+
+@router.get("/sync-status")
+def get_insights_sync_status(
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    """
+    Get the synchronization status for the user's organization insights.
+    """
+    from app.models.organization_sync_state import OrganizationSyncState
+    state = db.query(OrganizationSyncState).filter(
+        OrganizationSyncState.organization_id == current_user.organization_id
+    ).first()
+    
+    if not state:
+        return {
+            "insights_sync_in_progress": False,
+            "last_insights_sync_status": "never_synced",
+            "last_insights_sync_at": None,
+            "last_insights_sync_started_at": None,
+            "last_insights_sync_completed_at": None,
+            "last_insights_sync_error": None
+        }
+        
+    return {
+        "insights_sync_in_progress": state.insights_sync_in_progress,
+        "last_insights_sync_status": state.last_insights_sync_status,
+        "last_insights_sync_at": state.last_insights_sync_at,
+        "last_insights_sync_started_at": state.last_insights_sync_started_at,
+        "last_insights_sync_completed_at": state.last_insights_sync_completed_at,
+        "last_insights_sync_error": state.last_insights_sync_error
+    }
+
+
+def check_and_trigger_stale_insights_sync(organization_id: int, db: Session, force: bool = False) -> dict:
+    """
+    Evaluate organization-level insights freshness and trigger background sync if stale or forced.
+    Returns a dict with 'triggered' bool and 'reason' string.
+    """
+    import datetime
+    from app.models.organization_sync_state import OrganizationSyncState
+
+    state = db.query(OrganizationSyncState).filter(
+        OrganizationSyncState.organization_id == organization_id
+    ).first()
+
+    stale = False
+    run_type = "State-Aware (On-Load)"
+    if force:
+        stale = True
+        run_type = "Manual"
+    elif not state or not state.last_insights_sync_at:
+        stale = True
+    else:
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)
+        sync_time = state.last_insights_sync_at
+        if sync_time.tzinfo is None:
+            sync_time = sync_time.replace(tzinfo=datetime.timezone.utc)
+        if sync_time < cutoff:
+            stale = True
+
+    # Do not trigger if already syncing and not stuck
+    if state and state.insights_sync_in_progress:
+        stale = False
+        # Stuck state detection (e.g. >2 hours since start)
+        if state.last_insights_sync_started_at:
+            started_time = state.last_insights_sync_started_at
+            if started_time.tzinfo is None:
+                started_time = started_time.replace(tzinfo=datetime.timezone.utc)
+            stuck_cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2)
+            if started_time < stuck_cutoff:
+                stale = True  # It's stuck, override and trigger
+                run_type = "Stuck Recovery"
+
+    if stale:
+        # Default start date is last 90 days, end date is yesterday
+        today = datetime.date.today()
+        yesterday = today - datetime.timedelta(days=1)
+        start_date = yesterday - datetime.timedelta(days=90)
+
+        celery.send_task(
+            "app.tasks.sync_organization_insights_task",
+            args=[organization_id, start_date.isoformat(), yesterday.isoformat(), run_type, force]
+        )
+        return {"triggered": True, "reason": run_type}
+
+    return {"triggered": False, "reason": "sync_already_in_progress" if (state and state.insights_sync_in_progress) else "data_is_fresh"}
+
+
 @router.post("/locations/{id}/sync", response_model=InsightsSyncPostResponse)
 def trigger_insights_sync(
     id: int,
@@ -421,80 +527,26 @@ def trigger_insights_sync(
     db: Session = Depends(deps.get_db)
 ):
     """
-    Manually trigger performance and reputation insights synchronization for a location.
+    Manually trigger performance and reputation insights synchronization for a location (now invokes organization-wide sync).
     """
-    # Enforce organization boundaries
-    location = db.query(Location).filter(
-        Location.id == id,
-        Location.organization_id == current_user.organization_id
-    ).first()
-    
-    if not location:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Location not found or access denied."
-        )
-
-    # Enforce granular permissions
-    allowed_ids = deps.get_user_location_ids(current_user, db)
-    if allowed_ids is not None and id not in allowed_ids:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to synchronize this location's insights."
-        )
-
-    # Setup date range (default to last 90 days for manual syncs)
-    if not end_date:
-        end_date = datetime.date.today() - datetime.timedelta(days=1)
-    if not start_date:
-        start_date = end_date - datetime.timedelta(days=90)
-
-    # Enqueue task
-    task = celery.send_task(
-        "app.tasks.sync_insights_task",
-        args=[id, start_date.isoformat(), end_date.isoformat(), "Manual"]
-    )
-
+    result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=True)
     return InsightsSyncPostResponse(
-        task_id=task.id,
-        status="Queued"
+        task_id="org-orchestrated",
+        status="Queued" if result["triggered"] else "AlreadyRunning"
     )
+
 
 @router.post("/sync-all", response_model=InsightsSyncPostResponse)
 def trigger_global_insights_sync(
+    force: bool = Query(True),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
     """
-    Manually trigger performance and reputation insights synchronization for ALL accessible locations.
+    Manually trigger performance and reputation insights synchronization for ALL locations of the organization.
     """
-    allowed_ids = deps.get_user_location_ids(current_user, db)
-    
-    query = db.query(Location).filter(Location.organization_id == current_user.organization_id)
-    if allowed_ids is not None:
-        query = query.filter(Location.id.in_(allowed_ids))
-        
-    locations = query.all()
-    if not locations:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No locations found to synchronize."
-        )
-
-    # Setup date range (last 90 days for manual syncs)
-    end_date = datetime.date.today() - datetime.timedelta(days=1)
-    start_date = end_date - datetime.timedelta(days=90)
-    
-    for loc in locations:
-        celery.send_task(
-            "app.tasks.sync_insights_task",
-            args=[loc.id, start_date.isoformat(), end_date.isoformat(), "Manual (Global)"]
-        )
-
-    # Trigger evaluation task for the organization
-    celery.send_task("app.tasks.evaluate_attention_flags_task", args=[current_user.organization_id])
-
+    result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=force)
     return InsightsSyncPostResponse(
-        task_id="bulk-dispatch",
-        status=f"Queued sync for {len(locations)} locations"
+        task_id="org-orchestrated",
+        status="Queued" if result["triggered"] else "AlreadyRunning"
     )

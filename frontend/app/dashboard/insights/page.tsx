@@ -77,9 +77,11 @@ export default function InsightsPage() {
   const [data, setData] = useState<InsightsOverviewData | null>(null)
   const [locationData, setLocationData] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  const [syncState, setSyncState] = useState<any>({
+    insights_sync_in_progress: false,
+    last_insights_sync_status: 'never_synced',
+    last_insights_sync_at: null
+  })
 
   useEffect(() => {
     fetchLocations()
@@ -88,6 +90,21 @@ export default function InsightsPage() {
   useEffect(() => {
     fetchOverviewData()
   }, [range, selectedLocation])
+
+  useEffect(() => {
+    // Check initial sync status on mount
+    fetchSyncStatus()
+  }, [])
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout
+    if (syncState.insights_sync_in_progress) {
+      interval = setInterval(fetchSyncStatus, 5000) // Poll every 5 seconds when active
+    }
+    return () => {
+      if (interval) clearInterval(interval)
+    }
+  }, [syncState.insights_sync_in_progress])
 
   const fetchLocations = async () => {
     try {
@@ -98,26 +115,44 @@ export default function InsightsPage() {
     }
   }
 
+  const fetchSyncStatus = async () => {
+    try {
+      const statusRes = await api.get<any>('/insights/sync-status')
+      setSyncState((prev: any) => {
+        // If it was in progress but now finished, reload the data
+        if (prev.insights_sync_in_progress && !statusRes.insights_sync_in_progress) {
+          fetchOverviewData()
+        }
+        return statusRes
+      })
+    } catch (err: any) {
+      console.error('Failed to fetch insights sync status:', err)
+    }
+  }
+
   const handleSyncNow = async () => {
-    setSyncing(true)
     setError('')
     setSuccess('')
     try {
+      let res: any
       if (selectedLocation === 'all') {
-        const res: any = await api.post('/insights/sync-all')
-        setSuccess(res.status || 'Global synchronization queued. This may take a minute.')
+        res = await api.post('/insights/sync-all?force=true')
       } else {
-        await api.post(`/insights/locations/${selectedLocation}/sync`)
-        setSuccess('Synchronization queued. Data will appear in a few moments.')
+        res = await api.post(`/insights/locations/${selectedLocation}/sync`)
       }
-      // Refresh after a delay
-      setTimeout(fetchOverviewData, 5000)
+      if (res?.status === 'AlreadyRunning') {
+        setSuccess('A sync is already in progress. Data will refresh automatically when complete.')
+      } else {
+        setSuccess('Synchronization started in the background.')
+        // Optimistically mark as syncing; polling will confirm
+        setSyncState((prev: any) => ({ ...prev, insights_sync_in_progress: true }))
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to trigger synchronization.')
-    } finally {
-      setSyncing(false)
     }
   }
+
+
 
   const fetchOverviewData = async () => {
     setLoading(true)
@@ -151,6 +186,7 @@ export default function InsightsPage() {
       setLoading(false)
     }
   }
+
 
   // Helper component to render KPI Card
   const KpiCard = ({
@@ -349,10 +385,30 @@ export default function InsightsPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
             <div>
               <h1 className="text-3xl font-extrabold tracking-tight text-white">Performance Insights</h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                Executive aggregation and visibility metrics across your active locations.
-              </p>
+              <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                {syncState.insights_sync_in_progress ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    Updating insights in background...
+                  </span>
+                ) : syncState.last_insights_sync_at ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-muted/40 text-[11px] font-medium text-muted-foreground">
+                    <Clock className="h-3 w-3 mr-0.5" />
+                    Last updated: {new Date(syncState.last_insights_sync_at).toLocaleString()}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-muted/40 text-[11px] font-medium text-muted-foreground">
+                    No sync records found
+                  </span>
+                )}
+                {syncState.last_insights_sync_status === 'failed' && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/10 text-[11px] font-semibold text-rose-400 border border-rose-500/20">
+                    Sync failed — showing latest cached data
+                  </span>
+                )}
+              </div>
             </div>
+
             
             <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
               {/* Location Dropdown Filter */}
@@ -395,19 +451,20 @@ export default function InsightsPage() {
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               </button>
 
-              <button
+               <button
                 onClick={handleSyncNow}
-                disabled={syncing || loading}
+                disabled={syncState.insights_sync_in_progress || loading}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
                 title={selectedLocation === 'all' ? "Sync All Locations from Google" : "Force Sync from Google"}
               >
-                {syncing ? (
+                {syncState.insights_sync_in_progress ? (
                   <RefreshCw className="h-3 w-3 animate-spin" />
                 ) : (
                   <TrendingUp className="h-3 w-3" />
                 )}
                 {selectedLocation === 'all' ? 'Sync All' : 'Sync Now'}
               </button>
+
             </div>
           </div>
 

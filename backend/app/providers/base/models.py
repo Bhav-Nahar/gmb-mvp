@@ -36,6 +36,7 @@ class ReviewModel(BaseModel):
     rating: Optional[int] = None
     body: Optional[str] = None
     reply: Optional[str] = None
+    reply_created_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     provider: str

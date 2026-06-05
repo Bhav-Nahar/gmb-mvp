@@ -51,5 +51,6 @@ class LocationDailyInsight(Base):
         UniqueConstraint("location_id", "date", "provider", name="uq_location_daily_provider"),
         Index("idx_insights_org_date", "organization_id", "date"),
         Index("idx_insights_location_date", "location_id", "date"),
+        Index("idx_insights_org_date_loc", "organization_id", "date", "location_id"),
         Index("idx_insights_provider", "provider"),
     )
