@@ -33,13 +33,14 @@ def google_login(response: Response, invite_token: str | None = None):
     oauth_url = ProviderFactory.get_oauth_url("gbp", state=state)
     # Secure cookie only over HTTPS (production/proxy) to avoid local development CSRF block
     secure_cookie = settings.FRONTEND_URL.startswith("https://")
+    samesite_val = "none" if secure_cookie else "lax"
     
     response.set_cookie(
         key="oauth_state",
         value=csrf_token,
         httponly=True,
         secure=secure_cookie,
-        samesite="lax",
+        samesite=samesite_val,
         max_age=3600
     )
     return {"url": oauth_url}
@@ -289,6 +290,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         response = RedirectResponse(url=redirect_url)
         
         secure_cookie = settings.FRONTEND_URL.startswith("https://")
+        samesite_val = "none" if secure_cookie else "lax"
         
         # Set short-lived access cookie (15 mins)
         response.set_cookie(
@@ -296,7 +298,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             value=local_token,
             httponly=True,
             secure=secure_cookie,
-            samesite="lax",
+            samesite=samesite_val,
             max_age=15 * 60  # 15 minutes
         )
         
@@ -306,7 +308,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             value=refresh_token,
             httponly=True,
             secure=secure_cookie,
-            samesite="lax",
+            samesite=samesite_val,
             max_age=3600 * 24 * 7  # 7 days
         )
         
@@ -317,7 +319,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             value=csrf_token,
             httponly=False,
             secure=secure_cookie,
-            samesite="lax",
+            samesite=samesite_val,
             max_age=3600 * 24 * 7  # 7 days
         )
         return response
@@ -366,12 +368,13 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
     new_access_token = create_access_token(subject=user.email, token_version=user.token_version)
     
     secure_cookie = settings.FRONTEND_URL.startswith("https://")
+    samesite_val = "none" if secure_cookie else "lax"
     response.set_cookie(
         key="gmb_auth_token",
         value=new_access_token,
         httponly=True,
         secure=secure_cookie,
-        samesite="lax",
+        samesite=samesite_val,
         max_age=15 * 60  # 15 minutes
     )
     
@@ -382,7 +385,7 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
         value=csrf_token,
         httponly=False,
         secure=secure_cookie,
-        samesite="lax",
+        samesite=samesite_val,
         max_age=3600 * 24 * 7  # 7 days
     )
     return {"status": "success", "message": "Token refreshed successfully"}
@@ -401,12 +404,13 @@ def logout(
     db.commit()
     
     secure_cookie = settings.FRONTEND_URL.startswith("https://")
+    samesite_val = "none" if secure_cookie else "lax"
     
     cookie_params = {
         "path": "/",
         "httponly": True,
         "secure": secure_cookie,
-        "samesite": "lax"
+        "samesite": samesite_val
     }
     
     response.delete_cookie(key="gmb_auth_token", **cookie_params)
