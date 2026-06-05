@@ -100,7 +100,7 @@ class ReviewSyncService:
                 if rev_updated_at > max_update_time:
                     max_update_time = rev_updated_at
                     
-                new_hash = generate_content_hash(pr.rating, pr.body, pr.reply, pr.updated_at)
+                new_hash = generate_content_hash(pr.rating, pr.body, pr.reply, pr.updated_at, pr.reply_created_at)
                 old_hash = existing_hashes.get(pr.id)
                 
                 if new_hash != old_hash:
