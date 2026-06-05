@@ -57,19 +57,23 @@ def get_locations(
         out.append(loc_out)
     return out
 
-@router.get("/sync-logs", response_model=List[SyncLogOut])
+@router.get("/sync-logs", response_model=SyncLogPaginated)
 def get_sync_logs(
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
     """Fetch the history of synchronization attempts for the organization."""
     query = db.query(SyncLog).filter(SyncLog.organization_id == current_user.organization_id)
-    
+
     allowed_location_ids = get_user_location_ids(current_user, db)
     if allowed_location_ids is not None:
         query = query.filter(SyncLog.location_id.in_(allowed_location_ids))
-        
-    return query.order_by(SyncLog.created_at.desc()).limit(50).all()
+
+    total = query.count()
+    logs = query.order_by(SyncLog.created_at.desc()).offset((page - 1) * size).limit(size).all()
+    return {"items": logs, "total": total, "page": page, "size": size}
 
 @router.get("/sla-summary", response_model=List[LocationSLASummary])
 async def get_locations_sla_summary(

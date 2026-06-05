@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import AuthGuard from '@/components/AuthGuard'
 import Navbar from '@/components/Navbar'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
-import { Settings, Shield, AlertTriangle, User as UserIcon, Trash2, X } from 'lucide-react'
+import { Settings, Shield, AlertTriangle, User as UserIcon, Trash2, X, Calendar, CheckCircle2, XCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface UserProfile {
   id: number
@@ -17,6 +17,22 @@ interface UserProfile {
   organization?: {
     name: string
   }
+}
+
+interface SyncLog {
+  id: number
+  location_id: number | null
+  status: string
+  error_message?: string
+  run_type: string
+  created_at: string
+}
+
+interface SyncLogResponse {
+  items: SyncLog[]
+  total: number
+  page: number
+  size: number
 }
 
 export default function SettingsPage() {
@@ -31,8 +47,17 @@ export default function SettingsPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
 
+  // Sync Log states
+  const [syncLogs, setSyncLogs] = useState<SyncLog[]>([])
+  const [loadingLogs, setLoadingLogs] = useState(true)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const PAGE_SIZE = 20
+
   useEffect(() => {
     loadProfile()
+    loadSyncLogs(1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadProfile = async () => {
@@ -45,6 +70,20 @@ export default function SettingsPage() {
       setLoading(false)
     }
   }
+
+  const loadSyncLogs = useCallback(async (page: number) => {
+    setLoadingLogs(true)
+    try {
+      const data = await api.get<SyncLogResponse>(`/locations/sync-logs?page=${page}&size=${PAGE_SIZE}`)
+      setSyncLogs(data.items)
+      setTotalPages(Math.ceil(data.total / data.size))
+      setCurrentPage(data.page)
+    } catch (e: any) {
+      console.error('Failed to load sync logs:', e)
+    } finally {
+      setLoadingLogs(false)
+    }
+  }, [PAGE_SIZE])
 
   const handleDeleteAccount = async () => {
     if (deleteConfirmationText !== 'DELETE') return
@@ -153,6 +192,102 @@ export default function SettingsPage() {
                   Delete Account
                 </button>
               </div>
+            </section>
+            {/* Sync logs Table */}
+            <section className="rounded-2xl border border-border glass-panel p-6 sm:p-8 space-y-4">
+              <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-indigo-400" />
+                Synchronization Audits
+              </h2>
+              <p className="text-sm font-medium text-muted-foreground mb-6">
+                History of backend synchronization tasks across all locations.
+              </p>
+
+              {loadingLogs ? (
+                <div className="flex h-36 w-full items-center justify-center rounded-2xl border border-border bg-muted/10">
+                  <RefreshCw className="h-5 w-5 animate-spin text-indigo-500" />
+                </div>
+              ) : syncLogs.length === 0 ? (
+                <div className="text-center p-8 border border-border rounded-xl bg-muted/10 text-xs text-muted-foreground">
+                  No logs generated yet.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto rounded-xl border border-border bg-black/40">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-border/70 text-[10px] uppercase font-bold tracking-wider text-muted-foreground/80 bg-muted/10">
+                          <th className="px-6 py-3">Timestamp</th>
+                          <th className="px-6 py-3">Run Type</th>
+                          <th className="px-6 py-3">Status</th>
+                          <th className="px-6 py-3">Audit Details / Diagnostics</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/40 text-xs font-medium">
+                        {syncLogs.map((log) => (
+                          <tr key={log.id} className="hover:bg-muted/5 transition-colors">
+                            <td className="px-6 py-4 whitespace-nowrap text-muted-foreground">
+                              {new Date(log.created_at).toLocaleString()}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                log.run_type === 'Scheduled' 
+                                  ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                  : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                              }`}>
+                                {log.run_type}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {log.status === 'Success' ? (
+                                <span className="flex items-center gap-1 text-emerald-400 font-bold text-[10px] uppercase">
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                                  Success
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-1 text-red-400 font-bold text-[10px] uppercase">
+                                  <XCircle className="h-3.5 w-3.5 text-red-500" />
+                                  Failed
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-muted-foreground/90 font-mono text-[11px] leading-normal break-all">
+                              {log.error_message || 'N/A'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-2">
+                      <span className="text-xs text-muted-foreground">
+                        Page {currentPage} of {totalPages}
+                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => loadSyncLogs(currentPage - 1)}
+                          disabled={currentPage === 1 || loadingLogs}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-muted/20 text-xs font-bold text-white hover:bg-muted/40 disabled:opacity-50 transition-colors"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Previous
+                        </button>
+                        <button
+                          onClick={() => loadSyncLogs(currentPage + 1)}
+                          disabled={currentPage === totalPages || loadingLogs}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-muted/20 text-xs font-bold text-white hover:bg-muted/40 disabled:opacity-50 transition-colors"
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           </div>
         </main>

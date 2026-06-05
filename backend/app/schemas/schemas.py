@@ -94,3 +94,9 @@ class SyncLogOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class SyncLogPaginated(BaseModel):
+    items: List[SyncLogOut]
+    total: int
+    page: int
+    size: int

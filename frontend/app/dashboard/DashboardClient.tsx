@@ -129,7 +129,8 @@ function DashboardContent() {
       try {
         // Query database state
         const locationsData = await api.get<Location[]>('/locations/')
-        const logsData = await api.get<SyncLog[]>('/locations/sync-logs')
+        const logsRes = await api.get<{ items: SyncLog[] }>('/locations/sync-logs?page=1&size=10')
+        const logsData = logsRes.items
         const statusData = await api.get<TokenStatus>('/users/me/token-status')
         
         setLocations(locationsData)
@@ -376,8 +377,8 @@ function DashboardContent() {
   const loadSyncLogs = async () => {
     setLoadingLogs(true)
     try {
-      const data = await api.get<SyncLog[]>('/locations/sync-logs')
-      setSyncLogs(data)
+      const data = await api.get<{ items: SyncLog[] }>('/locations/sync-logs?page=1&size=10')
+      setSyncLogs(data.items)
     } catch (e: any) {
       console.error(e)
     } finally {
@@ -693,71 +694,6 @@ function DashboardContent() {
                     </div>
                   </Link>
                 ))}
-              </div>
-            )}
-          </section>
-
-          {/* Sync logs Table */}
-          <section className="space-y-4">
-            <h3 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-indigo-400" />
-              Synchronization Audits
-            </h3>
-
-            {loadingLogs ? (
-              <div className="flex h-36 w-full items-center justify-center rounded-2xl border border-border glass-panel">
-                <RefreshCw className="h-5 w-5 animate-spin text-indigo-500" />
-              </div>
-            ) : syncLogs.length === 0 ? (
-              <div className="text-center p-8 border border-border rounded-xl glass-panel text-xs text-muted-foreground">
-                No logs generated yet.
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-border glass-panel">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-border/70 text-[10px] uppercase font-bold tracking-wider text-muted-foreground/80 bg-muted/10">
-                      <th className="px-6 py-3">Timestamp</th>
-                      <th className="px-6 py-3">Run Type</th>
-                      <th className="px-6 py-3">Status</th>
-                      <th className="px-6 py-3">Audit Details / Diagnostics</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/40 text-xs font-medium">
-                    {syncLogs.map((log) => (
-                      <tr key={log.id} className="hover:bg-muted/5 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap text-muted-foreground">
-                          {new Date(log.created_at).toLocaleString()}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                            log.run_type === 'Scheduled' 
-                              ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                              : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                          }`}>
-                            {log.run_type}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {log.status === 'Success' ? (
-                            <span className="flex items-center gap-1 text-emerald-400 font-bold text-[10px] uppercase">
-                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                              Success
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1 text-red-400 font-bold text-[10px] uppercase">
-                              <XCircle className="h-3.5 w-3.5 text-red-500" />
-                              Failed
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-muted-foreground/90 font-mono text-[11px] leading-normal break-all">
-                          {log.error_message || 'N/A'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
             )}
           </section>
