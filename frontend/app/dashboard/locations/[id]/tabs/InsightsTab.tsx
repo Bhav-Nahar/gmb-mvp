@@ -96,6 +96,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
 
   useEffect(() => {
     fetchLocationInsights()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range])
 
   const fetchLocationInsights = async () => {

@@ -152,6 +152,7 @@ export default function PostsPage(props: any) {
   useEffect(() => {
     loadLocations()
     loadCampaigns()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -159,6 +160,7 @@ export default function PostsPage(props: any) {
       setSelectedLocationIds([locationId])
       loadCampaigns()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationId])
 
   useEffect(() => {
@@ -173,6 +175,7 @@ export default function PostsPage(props: any) {
       clearInterval(interval)
       setPollingActive(false)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCampaignId])
 
   const loadLocations = async () => {

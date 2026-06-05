@@ -77,6 +77,8 @@ export default function InsightsPage() {
   const [data, setData] = useState<InsightsOverviewData | null>(null)
   const [locationData, setLocationData] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [syncState, setSyncState] = useState<any>({
     insights_sync_in_progress: false,
     last_insights_sync_status: 'never_synced',
@@ -85,15 +87,18 @@ export default function InsightsPage() {
 
   useEffect(() => {
     fetchLocations()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     fetchOverviewData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, selectedLocation])
 
   useEffect(() => {
     // Check initial sync status on mount
     fetchSyncStatus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
