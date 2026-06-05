@@ -8,7 +8,7 @@ from app.models.user import User
 from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
 from app.models.sync_log import SyncLog
-from app.schemas.schemas import LocationOut, SyncLogOut
+from app.schemas.schemas import LocationOut, SyncLogOut, SyncLogPaginated
 from app.schemas.location import LocationSyncStatus
 from app.schemas.sla import LocationSLAMetrics, LocationSLASummary
 from app.services.sla_service import get_location_sla_metrics, get_organization_sla_summary
