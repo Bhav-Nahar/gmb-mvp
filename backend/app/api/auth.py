@@ -286,7 +286,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         refresh_token = create_refresh_token(subject=user.email, token_version=user.token_version)
         
         # Redirect to frontend success page that will save credentials
-        redirect_url = f"{settings.FRONTEND_URL}/login/success?token={local_token}&onboarding={'true' if is_new_user else 'false'}"
+        redirect_url = f"{settings.FRONTEND_URL}/login/success?token={local_token}&csrf={csrf_token}&onboarding={'true' if is_new_user else 'false'}"
         response = RedirectResponse(url=redirect_url)
         
         secure_cookie = settings.FRONTEND_URL.startswith("https://")
@@ -388,7 +388,7 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
         samesite=samesite_val,
         max_age=3600 * 24 * 7  # 7 days
     )
-    return {"status": "success", "message": "Token refreshed successfully"}
+    return {"status": "success", "message": "Token refreshed successfully", "csrf_token": csrf_token}
 
 @router.post("/logout")
 def logout(

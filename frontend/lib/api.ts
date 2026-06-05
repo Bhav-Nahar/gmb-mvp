@@ -29,7 +29,14 @@ async function refreshSession(): Promise<boolean> {
         credentials: 'include',
         headers
       })
-      return response.ok
+      if (response.ok) {
+        const data = await response.json().catch(() => ({}))
+        if (data.csrf_token && typeof document !== 'undefined') {
+          document.cookie = `gmb_csrf_token=${data.csrf_token}; path=/; max-age=${3600 * 24 * 7}; samesite=lax`
+        }
+        return true
+      }
+      return false
     } catch (e) {
       return false
     } finally {

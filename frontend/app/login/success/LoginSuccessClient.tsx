@@ -14,11 +14,16 @@ function LoginSuccessContent() {
 
   useEffect(() => {
     const token = searchParams.get('token')
+    const csrf = searchParams.get('csrf')
     const onboarding = searchParams.get('onboarding')
 
     if (!token) {
       router.replace('/login?error=token_missing')
       return
+    }
+
+    if (csrf) {
+      document.cookie = `gmb_csrf_token=${csrf}; path=/; max-age=${3600 * 24 * 7}; samesite=lax`
     }
     
     // Fetch profile and store

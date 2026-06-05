@@ -55,6 +55,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       console.error('Logout error', e)
     }
+    if (typeof document !== 'undefined') {
+      document.cookie = "gmb_csrf_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+    }
     setUser(null)
   }
 
