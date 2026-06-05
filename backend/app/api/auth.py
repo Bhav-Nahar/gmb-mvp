@@ -285,8 +285,11 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         local_token = create_access_token(subject=user.email, token_version=user.token_version)
         refresh_token = create_refresh_token(subject=user.email, token_version=user.token_version)
         
+        # Generate new session CSRF token
+        session_csrf = secrets.token_urlsafe(32)
+        
         # Redirect to frontend success page that will save credentials
-        redirect_url = f"{settings.FRONTEND_URL}/login/success?token={local_token}&csrf={csrf_token}&onboarding={'true' if is_new_user else 'false'}"
+        redirect_url = f"{settings.FRONTEND_URL}/login/success?token={local_token}&csrf={session_csrf}&onboarding={'true' if is_new_user else 'false'}"
         response = RedirectResponse(url=redirect_url)
         
         secure_cookie = settings.FRONTEND_URL.startswith("https://")
@@ -313,10 +316,9 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         )
         
         # Set long-lived CSRF cookie (7 days, httponly=False so JS can read it)
-        csrf_token = secrets.token_urlsafe(32)
         response.set_cookie(
             key="gmb_csrf_token",
-            value=csrf_token,
+            value=session_csrf,
             httponly=False,
             secure=secure_cookie,
             samesite=samesite_val,
