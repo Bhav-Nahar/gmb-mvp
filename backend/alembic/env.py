@@ -18,7 +18,8 @@ from app.models import Base
 config = context.config
 
 # Overwrite the ini-file database URL with the loaded environment variables
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Escape '%' to '%%' to prevent ConfigParser interpolation errors
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
