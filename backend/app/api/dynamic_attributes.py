@@ -98,6 +98,10 @@ async def get_form_schema(
                 }
             )
             return {"schema": [], "is_seeding": True}
+        except Exception as celery_err:
+            logger.error(f"Failed to trigger attribute metadata sync: {str(celery_err)}")
+            # Fallback: return empty schema instead of 500 error
+            return {"schema": [], "is_seeding": False, "error": "Metadata sync temporarily unavailable"}
         except Exception as e:
             logger.warning(f"Auto-seed attributes failed for {category_id}: {e}")
     

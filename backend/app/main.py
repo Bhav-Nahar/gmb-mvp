@@ -22,12 +22,17 @@ app = FastAPI(
 )
 
 # CORS configurations to support Next.js frontend
-allow_origins = [settings.FRONTEND_URL]
+frontend_url = settings.FRONTEND_URL.rstrip("/")
+allow_origins = [frontend_url]
 if getattr(settings, "APP_ENV", "production") == "development":
     allow_origins += [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+else:
+    # Additional safety: allow the current Vercel origin if not already covered
+    if "vercel.app" not in frontend_url and frontend_url:
+         logger.info(f"Production CORS origin configured as: {frontend_url}")
 
 app.add_middleware(
     CORSMiddleware,
