@@ -1,4 +1,6 @@
 from typing import List, Dict, Any, Optional
+import time
+import logging
 from sqlalchemy.orm import Session
 from app.providers.base.provider import BaseProvider
 from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric
@@ -13,6 +15,15 @@ from .mapper import GBPLocationMapper, GBPReviewMapper
 import datetime
 from datetime import timezone
 import httpx
+
+logger = logging.getLogger(__name__)
+
+# Module-level account ID cache: maps google_location_id -> (account_name, resolved_at_epoch)
+_account_id_cache: Dict[str, tuple] = {}
+_ACCOUNT_ID_CACHE_TTL = 3600  # seconds
+
+# Module-level set of already-warned unmapped metric names
+_warned_metrics: set = set()
 
 class GBPProvider(BaseProvider):
     provider_name = "gbp"
@@ -78,6 +89,79 @@ class GBPProvider(BaseProvider):
         self.db = db
         self._auth = GBPAuthManager(auth_context, db)
 
+    async def _resolve_account_id(self, google_location_id: str, access_token: str) -> str:
+        from app.models.location import Location
+
+        # Check module-level TTL cache first
+        cached = _account_id_cache.get(google_location_id)
+        if cached:
+            account_name, resolved_at = cached
+            if time.time() - resolved_at < _ACCOUNT_ID_CACHE_TTL:
+                return account_name
+            else:
+                del _account_id_cache[google_location_id]
+
+        loc_record = self.db.query(Location).filter(
+            Location.google_location_id == google_location_id,
+            Location.organization_id == self.auth_context.organization_id
+        ).first()
+
+        target_account_name = loc_record.google_account_id if loc_record else None
+
+        if not target_account_name:
+            async with GBPAsyncClient(self.auth_context.organization_id) as client:
+                accounts_url = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
+                headers = {"Authorization": f"Bearer {access_token}"}
+                acc_resp = await client.request("GET", accounts_url, headers=headers)
+                accounts = acc_resp.json().get("accounts", [])
+                
+                discovery_errors = []
+                for account in accounts:
+                    locations_url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{account['name']}/locations"
+                    next_loc_token = None
+                    while True:
+                        try:
+                            params = {"readMask": "name", "pageSize": 100}
+                            if next_loc_token:
+                                params["pageToken"] = next_loc_token
+                            loc_resp = await client.request("GET", locations_url, headers=headers, params=params)
+                            data = loc_resp.json()
+                            batch = data.get("locations", [])
+                            if any(loc.get("name") == google_location_id for loc in batch):
+                                target_account_name = account["name"]
+                                # Cache the discovered account name back to the database to bypass discovery in the future
+                                if loc_record:
+                                    loc_record.google_account_id = target_account_name
+                                    self.db.commit()
+                                break
+                            
+                            next_loc_token = data.get("nextPageToken")
+                            if not next_loc_token:
+                                break
+                        except Exception as e:
+                            logger.warning(f"Error fetching locations during discovery for account {account['name']}: {str(e)}")
+                            discovery_errors.append(e)
+                            break
+                    if target_account_name:
+                        break
+
+            if not target_account_name:
+                if discovery_errors:
+                    raise ProviderAPIError(
+                        provider_name=self.provider_name,
+                        status_code=502,
+                        message=str(discovery_errors[0])
+                    )
+                raise ProviderAPIError(
+                    provider_name=self.provider_name,
+                    status_code=404,
+                    message=f"Location {google_location_id} could not be found in any connected Google accounts. Please re-sync locations."
+                )
+
+        # Store resolved account in module-level cache
+        _account_id_cache[google_location_id] = (target_account_name, time.time())
+        return target_account_name
+
     async def get_locations(self) -> List[LocationModel]:
         # Validate/refresh token
         access_token = await self._auth.get_valid_token()
@@ -141,8 +225,7 @@ class GBPProvider(BaseProvider):
                             raw_model = GBPLocationRaw(**loc_dict)
                             all_locations.append(GBPLocationMapper.to_model(raw_model, account_name=account_name))
                         except Exception as e:
-                            import logging
-                            logging.error(f"Failed to map location {loc_name}: {str(e)}")
+                            logger.error(f"Failed to map location {loc_name}: {str(e)}")
                             continue
                     
                     next_page_token = data.get("nextPageToken")
@@ -184,44 +267,13 @@ class GBPProvider(BaseProvider):
             
         all_reviews = []
         async with GBPAsyncClient(self.auth_context.organization_id) as client:
-            # 1. Try to find the account_name from the database first
-            from app.models.location import Location
-            loc_record = self.db.query(Location).filter(
-                Location.google_location_id == google_location_id,
-                Location.organization_id == self.auth_context.organization_id
-            ).first()
-            
-            target_account_name = loc_record.google_account_id if loc_record else None
-            
-            # 2. If not in DB or if google_account_id is null, perform discovery
-            if not target_account_name:
-                accounts_url = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
-                acc_resp = await client.request("GET", accounts_url, headers=headers)
-                accounts = acc_resp.json().get("accounts", [])
-                
-                for account in accounts:
-                    locations_url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{account['name']}/locations"
-                    try:
-                        # We request with readMask=name and a larger pageSize to find it efficiently
-                        loc_resp = await client.request("GET", locations_url, headers=headers, params={"readMask": "name", "pageSize": 100})
-                        data = loc_resp.json()
-                        batch = data.get("locations", [])
-                        if any(loc.get("name") == google_location_id for loc in batch):
-                            target_account_name = account["name"]
-                            # Cache the discovered account name back to the database to bypass discovery in the future
-                            if loc_record:
-                                loc_record.google_account_id = target_account_name
-                                self.db.commit()
-                            break
-                    except Exception:
-                        continue
-            
-            if not target_account_name:
-                raise Exception(f"Location {google_location_id} could not be found in any connected Google accounts. Please re-sync locations.")
-
+            target_account_name = await self._resolve_account_id(google_location_id, access_token)
             # 3. Fetch reviews from the target account
             next_page_token = None
             stop_fetching = False
+            # Note: Google My Business Reviews API remains on v4 (mybusiness.googleapis.com/v4)
+            # because Google has not migrated review management resources to v1.
+            # Reference: https://developers.google.com/my-business/reference/rest/v4/accounts.locations.reviews
             while True:
                 url = f"https://mybusiness.googleapis.com/v4/{target_account_name}/{google_location_id}/reviews"
                 params = {"pageSize": 50}
@@ -230,6 +282,7 @@ class GBPProvider(BaseProvider):
                     
                 try:
                     resp = await client.request("GET", url, headers=headers, params=params)
+                    resp.raise_for_status()
                     data = resp.json()
                     batch = data.get("reviews", [])
                     
@@ -247,10 +300,20 @@ class GBPProvider(BaseProvider):
                     next_page_token = data.get("nextPageToken")
                     if not next_page_token or stop_fetching:
                         break
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"HTTP error fetching reviews for {google_location_id} in account {target_account_name}: {e.response.status_code} {e.response.text}")
+                    raise ProviderAPIError(
+                        provider_name=self.provider_name,
+                        status_code=e.response.status_code,
+                        message=f"Failed to fetch reviews: {e.response.text}"
+                    )
                 except Exception as e:
-                    import logging
-                    logging.error(f"Failed to fetch reviews for {google_location_id} in account {target_account_name}. Error: {str(e)}")
-                    raise e
+                    logger.error(f"Failed to fetch reviews for {google_location_id} in account {target_account_name}. Error: {str(e)}")
+                    raise ProviderAPIError(
+                        provider_name=self.provider_name,
+                        status_code=500,
+                        message=str(e)
+                    )
                         
         return all_reviews
 
@@ -263,27 +326,24 @@ class GBPProvider(BaseProvider):
             return ReviewReplyModel(
                 review_id=review_id,
                 reply_text=reply_text,
-                created_at=datetime.datetime.utcnow(),
+                created_at=datetime.datetime.now(timezone.utc),
                 provider="gbp"
             )
             
         async with GBPAsyncClient(self.auth_context.organization_id) as client:
-            accounts_url = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
-            acc_resp = await client.request("GET", accounts_url, headers=headers)
-            accounts = acc_resp.json().get("accounts", [])
+            target_account_name = await self._resolve_account_id(google_location_id, access_token)
             
-            if not accounts:
-                raise Exception("No GBP accounts found")
-            account_name = accounts[0]["name"]
-            
-            url = f"https://mybusiness.googleapis.com/v4/{account_name}/{google_location_id}/reviews/{review_id}/reply"
+            # Note: Google My Business Reviews API remains on v4 for reply management
+            # because Google has not migrated review reply resources to v1.
+            # Reference: https://developers.google.com/my-business/reference/rest/v4/accounts.locations.reviews
+            url = f"https://mybusiness.googleapis.com/v4/{target_account_name}/{google_location_id}/reviews/{review_id}/reply"
             payload = {"comment": reply_text}
             resp = await client.request("PUT", url, headers=headers, json=payload)
             
             return ReviewReplyModel(
                 review_id=review_id,
                 reply_text=reply_text,
-                created_at=datetime.datetime.utcnow(),
+                created_at=datetime.datetime.now(timezone.utc),
                 provider="gbp"
             )
 
@@ -317,26 +377,7 @@ class GBPProvider(BaseProvider):
             )
 
         # 1. Resolve Account ID from DB (Bug Fix: V4 requires accounts/{accId}/locations/{locId}/localPosts)
-        from app.models.location import Location
-        loc_record = self.db.query(Location).filter(
-            Location.google_location_id == location_id,
-            Location.organization_id == self.auth_context.organization_id
-        ).first()
-        
-        account_id = loc_record.google_account_id if loc_record else None
-        
-        if not account_id:
-            # Fallback discovery if not in DB
-            async with GBPAsyncClient(self.auth_context.organization_id) as client:
-                accounts_url = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
-                acc_resp = await client.request("GET", accounts_url, headers={"Authorization": f"Bearer {access_token}"})
-                accounts = acc_resp.json().get("accounts", [])
-                for account in accounts:
-                    account_id = account["name"]
-                    break # Just use first for now if discovery is needed
-        
-        if not account_id:
-             raise Exception(f"Could not resolve account ID for location {location_id}")
+        account_id = await self._resolve_account_id(location_id, access_token)
 
         # Google API: POST https://mybusiness.googleapis.com/v4/{account_id}/{location_id}/localPosts
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -455,9 +496,6 @@ class GBPProvider(BaseProvider):
                 acc_clean = f"accounts/{acc_clean}"
             full_path = f"{acc_clean}/{loc_path}"
 
-        import logging
-        logger = logging.getLogger(__name__)
-
         params = []
         for metric in METRIC_COLUMN_MAP.keys():
             params.append(("dailyMetrics", metric))
@@ -512,8 +550,9 @@ class GBPProvider(BaseProvider):
                 col_name = METRIC_COLUMN_MAP.get(metric_name)
                 
                 if not col_name:
-                    import logging
-                    logging.warning(f"Unmapped metric '{metric_name}' received from GBP Performance API.")
+                    if metric_name not in _warned_metrics:
+                        _warned_metrics.add(metric_name)
+                        logger.warning(f"Unmapped metric '{metric_name}' received from GBP Performance API.")
                     continue
                     
                 time_series = ts.get("timeSeries", {})
@@ -532,9 +571,39 @@ class GBPProvider(BaseProvider):
                             current_val = getattr(day_data[dt], col_name)
                             setattr(day_data[dt], col_name, current_val + val)
                     except Exception as ex:
-                        import logging
-                        logging.error(f"Error parsing dated value {dv} for metric {metric_name}: {str(ex)}")
+                        logger.error(f"Error parsing dated value {dv} for metric {metric_name}: {str(ex)}")
                         continue
                         
         return sorted(day_data.values(), key=lambda x: x.date)
 
+    async def get_location(self, google_location_id: str) -> Dict[str, Any]:
+        access_token = await self._auth.get_valid_token()
+        
+        if "mock_access_token" in access_token:
+            return {"name": google_location_id, "categories": {"primaryCategory": {"name": "categories/gcid:mock_category"}}}
+            
+        headers = {"Authorization": f"Bearer {access_token}"}
+        url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{google_location_id}"
+        params = {"readMask": "name,title,categories,metadata"}
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            resp = await client.request("GET", url, headers=headers, params=params)
+            if resp.status_code != 200:
+                raise httpx.HTTPStatusError(f"Failed to fetch location {google_location_id}: {resp.text}", request=resp.request, response=resp)
+            return resp.json()
+
+    async def get_location_attributes(self, google_location_id: str) -> Dict[str, Any]:
+        access_token = await self._auth.get_valid_token()
+        
+        if "mock_access_token" in access_token:
+            return {"name": f"{google_location_id}/attributes", "attributes": []}
+            
+        headers = {"Authorization": f"Bearer {access_token}"}
+        url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{google_location_id}/attributes"
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            resp = await client.request("GET", url, headers=headers)
+            # Attributes API might return 404 if no attributes are set, but usually returns 200 with empty list.
+            if resp.status_code not in [200, 404]:
+                raise httpx.HTTPStatusError(f"Failed to fetch attributes for {google_location_id}: {resp.text}", request=resp.request, response=resp)
+            if resp.status_code == 404:
+                return {"name": f"{google_location_id}/attributes", "attributes": []}
+            return resp.json()

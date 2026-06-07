@@ -1,0 +1,36 @@
+{
+  "name": "categories/gcid:restaurant",
+  "attributeMetadata": [
+    {
+      "name": "attributes/has_delivery",
+      "displayName": "Offers Delivery",
+      "groupDisplayName": "Service options",
+      "valueType": "BOOL"
+    },
+    {
+      "name": "attributes/payment_options",
+      "displayName": "Payments",
+      "groupDisplayName": "Payments",
+      "valueType": "REPEATED_ENUM",
+      "valueMetadata": [
+        {"value": "CREDIT_CARD", "displayName": "Credit cards"},
+        {"value": "DEBIT_CARD", "displayName": "Debit cards"},
+        {"value": "NFC", "displayName": "NFC mobile payments"}
+      ],
+      "repeatable": true
+    },
+    {
+      "name": "attributes/dining_options",
+      "displayName": "Dining options",
+      "groupDisplayName": "Dining options",
+      "valueType": "ENUM",
+      "valueMetadata": [
+        {"value": "BREAKFAST", "displayName": "Breakfast"},
+        {"value": "LUNCH", "displayName": "Lunch"},
+        {"value": "DINNER", "displayName": "Dinner"}
+      ],
+      "repeatable": true
+    }
+  ],
+  "nextPageToken": "abc123token"
+}

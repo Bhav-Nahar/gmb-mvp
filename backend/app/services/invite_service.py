@@ -58,7 +58,7 @@ class InviteService:
 
         # 3. Generate secure token & set expiry (7 days)
         token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + timedelta(days=7)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
         # 4. Create and persist invite record
         invite = Invite(
@@ -78,8 +78,9 @@ class InviteService:
         return invite
 
     @staticmethod
-    def list_organization_invites(db: Session, organization_id: int) -> list[Invite]:
-        invites = db.query(Invite).filter(Invite.organization_id == organization_id).order_by(Invite.created_at.desc()).all()
+    def list_organization_invites(db: Session, organization_id: int, limit: int = 50, offset: int = 0) -> list[Invite]:
+        limit = min(limit, 200)
+        invites = db.query(Invite).filter(Invite.organization_id == organization_id).order_by(Invite.created_at.desc()).limit(limit).offset(offset).all()
         now = datetime.now(timezone.utc)
         updated = False
         

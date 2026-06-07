@@ -7,7 +7,7 @@ class Location(Base):
     __tablename__ = "locations"
 
     id = Column(Integer, primary_key=True, index=True)
-    organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     google_account_id = Column(String, nullable=True) # Example: "accounts/12345"
     google_location_id = Column(String, index=True, nullable=False)  # Example: "locations/12345"
     location_name = Column(String, nullable=False)
@@ -23,6 +23,13 @@ class Location(Base):
     sync_status = Column(String, default="Pending", nullable=False)  # Pending, Synced, Failed
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     last_insights_sync_at = Column(DateTime(timezone=True), nullable=True)
+    google_attributes = Column(JSONB, default=list, server_default='[]', nullable=False)
+    draft_attributes = Column(JSONB, default=list, server_default='[]', nullable=False)
+    last_google_sync = Column(DateTime(timezone=True), nullable=True)
+    google_category_resource_name = Column(String, nullable=True) # Example: "categories/gcid:jewelry_store"
+    google_attributes_stale = Column(Boolean, default=False, nullable=False)
+    last_publish_hash = Column(String(64), nullable=True)
+    last_published_at = Column(DateTime(timezone=True), nullable=True)
     attention_needed = Column(Boolean, default=False, nullable=False)
     attention_reason = Column(Text, nullable=True)
     attention_updated_at = Column(DateTime(timezone=True), nullable=True)

@@ -1,7 +1,10 @@
+import logging
 import math
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.db.session import get_db
 from app.api.deps import staff_required
@@ -26,6 +29,16 @@ from app.schemas.posts import (
     CampaignDetailResponse
 )
 from app.services.post_service import post_service
+from app.core.config import settings
+import redis as _redis_lib
+
+_redis_pool = None
+
+def get_redis() -> _redis_lib.Redis:
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = _redis_lib.ConnectionPool.from_url(settings.REDIS_URL, max_connections=20)
+    return _redis_lib.Redis(connection_pool=_redis_pool)
 
 router = APIRouter()
 
@@ -71,6 +84,7 @@ def list_posts(
 
 @router.get("/campaigns", response_model=CampaignListResponse)
 def list_campaigns(
+    location_id: Optional[int] = None,
     campaign_status: Optional[str] = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -80,6 +94,11 @@ def list_campaigns(
     """Fetch paginated list of campaigns for the organization."""
     query = db.query(Campaign).filter(Campaign.organization_id == current_user.organization_id)
     
+    if location_id:
+        from app.models.publish_job import PublishJob
+        query = query.join(PublishJob).filter(PublishJob.location_id == location_id)
+        query = query.distinct()
+        
     if campaign_status:
         query = query.filter(Campaign.status == campaign_status)
         
@@ -160,10 +179,8 @@ def launch_campaign(
         log_metadata={"location_count": len(payload.location_ids)}
     )
     db.add(audit)
-    db.commit()
-    db.refresh(campaign)
 
-    # Dispatch orchestrator task
+    # Dispatch orchestrator task BEFORE committing so we can roll back if dispatch fails
     from app.worker import celery as celery_app
     try:
         celery_app.send_task(
@@ -171,9 +188,12 @@ def launch_campaign(
             args=(campaign.id, current_user.organization_id, payload.location_ids, current_user.id)
         )
     except Exception as e:
-        import logging
-        logging.error(f"Failed to dispatch orchestrate_campaign_task: {str(e)}")
+        db.rollback()
+        logger.error(f"Failed to dispatch orchestrate_campaign_task: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Task dispatch failed: {str(e)}")
+
+    db.commit()
+    db.refresh(campaign)
 
     return {"message": "Campaign launch queued successfully."}
 @router.get("/campaigns/{id}/progress", response_model=CampaignDetailResponse)
@@ -346,7 +366,8 @@ def get_post_publish_jobs(
     from app.api.deps import get_user_location_ids
     allowed_locs = get_user_location_ids(current_user, db)
     
-    query = db.query(PublishJob).filter(PublishJob.post_id == post.id)
+    from sqlalchemy.orm import joinedload as _joinedload
+    query = db.query(PublishJob).options(_joinedload(PublishJob.location)).filter(PublishJob.post_id == post.id)
     if allowed_locs is not None:
         query = query.filter(PublishJob.location_id.in_(allowed_locs))
     jobs = query.all()
@@ -421,16 +442,14 @@ def pause_campaign(
             detail=f"Campaign is in {campaign.status} state and cannot be paused."
         )
         
-    import redis
-    from app.core.config import settings
     from app.constants.posts import CampaignStatus
     from app.models.campaign_audit_log import CampaignAuditLog
-    
+
     old_status = campaign.status
     campaign.status = CampaignStatus.PAUSED.value
-    
+
     # Update Redis flag instantly so active worker loops check and abort/drain gracefully
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = get_redis()
     r.set(f"campaign:{campaign.id}:status", "Paused")
     
     audit = CampaignAuditLog(
@@ -464,19 +483,17 @@ def resume_campaign(
             detail=f"Campaign is in {campaign.status} state and cannot be resumed."
         )
         
-    import redis
-    from app.core.config import settings
     from app.constants.posts import CampaignStatus, PublishJobStatus
     from app.models.campaign_audit_log import CampaignAuditLog
     from app.models.publish_job import PublishJob
-    
+
     old_status = campaign.status
     campaign.status = CampaignStatus.PROCESSING.value
-    
+
     # Set Redis flag instantly
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = get_redis()
     r.set(f"campaign:{campaign.id}:status", "Processing")
-    
+
     # Fetch paused/pending jobs for the campaign
     paused_jobs = db.query(PublishJob).filter(
         PublishJob.campaign_id == campaign.id,
@@ -536,17 +553,15 @@ def cancel_campaign(
             detail=f"Campaign is in {campaign.status} state and cannot be cancelled."
         )
         
-    import redis
-    from app.core.config import settings
     from app.constants.posts import CampaignStatus, PublishJobStatus
     from app.models.campaign_audit_log import CampaignAuditLog
     from app.models.publish_job import PublishJob
-    
+
     old_status = campaign.status
     campaign.status = CampaignStatus.CANCELLED.value
-    
+
     # Set Redis flag instantly
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = get_redis()
     r.set(f"campaign:{campaign.id}:status", "Cancelled")
     
     # Fetch pending/paused/running jobs for the campaign
@@ -593,8 +608,6 @@ def retry_failed_campaign_jobs(
     from app.constants.posts import CampaignStatus, PublishJobStatus
     from app.models.campaign_audit_log import CampaignAuditLog
     from sqlalchemy import func
-    import redis
-    from app.core.config import settings
 
     campaign = post_service._verify_ownership(db, Campaign, id, current_user.organization_id)
 
@@ -612,7 +625,10 @@ def retry_failed_campaign_jobs(
     ).all()
 
     if not failed_jobs:
-        return campaign
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No failed jobs found to retry"
+        )
 
     # 2. RBAC Location Access check for all failed jobs
     location_ids = [job.location_id for job in failed_jobs]
@@ -667,7 +683,7 @@ def retry_failed_campaign_jobs(
         chunk_size = 50
         shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
         
-        r = redis.Redis.from_url(settings.REDIS_URL)
+        r = get_redis()
         r.set(f"campaign:{campaign.id}:pending_shards", len(shards))
         r.set(f"campaign:{campaign.id}:success", campaign.total_published)
         r.set(f"campaign:{campaign.id}:failed", campaign.total_failed)
@@ -698,8 +714,6 @@ def retry_single_publish_job(
     from app.constants.posts import CampaignStatus, PublishJobStatus
     from app.models.campaign_audit_log import CampaignAuditLog
     from sqlalchemy import func
-    import redis
-    from app.core.config import settings
 
     job = db.query(PublishJob).filter(
         PublishJob.id == job_id,
@@ -767,7 +781,7 @@ def retry_single_publish_job(
     db.refresh(campaign)
 
     # 4. Enqueue to Celery as a single-element shard
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = get_redis()
     r.incr(f"campaign:{campaign.id}:pending_shards")
     r.set(f"campaign:{campaign.id}:status", "Processing")
 

@@ -73,6 +73,8 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     const csrfToken = getCookie('gmb_csrf_token')
     if (csrfToken) {
       headers.set('X-CSRF-Token', csrfToken)
+    } else {
+      console.warn(`[API] CSRF token missing for ${method} request to ${endpoint}. This may fail in production.`)
     }
   }
 

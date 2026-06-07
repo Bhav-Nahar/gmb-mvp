@@ -208,11 +208,13 @@ def _check_regional_manager_invite_access(invite: Invite, current_user: User, db
 @router.get("/invites", response_model=List[InviteOut])
 def list_invites(
     db: Session = Depends(get_db),
-    current_user: User = Depends(regional_manager_plus)
+    current_user: User = Depends(regional_manager_plus),
+    limit: int = 50,
+    offset: int = 0,
 ):
     """List pending/expired/revoked/accepted invites for the organization.
     Regional Managers only see Store Manager invites for their assigned locations."""
-    all_invites = invite_service.list_organization_invites(db, current_user.organization_id)
+    all_invites = invite_service.list_organization_invites(db, current_user.organization_id, limit=limit, offset=offset)
 
     if current_user.role == "Regional Manager":
         rm_locs = set(get_user_location_ids(current_user, db) or [])
@@ -431,6 +433,7 @@ def delete_my_account(
     db.add(AuditLog(
         organization_id=current_user.organization_id,
         user_id=current_user.id,
+        actor_user_id=current_user.id,
         action="account_deletion",
         details=f"User {current_user.email} (role: {current_user.role}) requested permanent account deletion."
     ))
@@ -443,7 +446,7 @@ def delete_my_account(
     else:
         # Delete only user-specific records manually where cascade is missing or just to be safe
         db.query(UserLocationAccess).filter(UserLocationAccess.user_id == current_user.id).delete()
-        db.query(Invite).filter(Invite.email == current_user.email).delete()
+        db.query(Invite).filter(Invite.email == current_user.email, Invite.organization_id == current_user.organization_id).delete()
         # OAuthAccount cascades, but explicit is fine
         db.query(OAuthAccount).filter(OAuthAccount.user_id == current_user.id).delete()
         db.delete(current_user)

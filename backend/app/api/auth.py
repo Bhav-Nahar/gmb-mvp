@@ -1,4 +1,5 @@
 import secrets
+import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.responses import RedirectResponse
@@ -86,7 +87,12 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         name = "Google User"
         avatar = None
 
-        if "mock_access_token" not in access_token:
+        if settings.APP_ENV == "development" and "mock_access_token" in access_token:
+            # Formulate friendly mock profile details based on email prefix
+            logging.warning("Mock auth bypass used for email: %s — only permitted in development", email)
+            name = email.split("@")[0].title().replace("-", " ")
+            google_id = f"google_id_{email.split('@')[0]}"
+        else:
             # Real Google User Info call
             import httpx
             user_info_url = "https://www.googleapis.com/oauth2/v3/userinfo"
@@ -98,10 +104,6 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                 name = profile.get("name", "Google User")
                 avatar = profile.get("picture")
                 email = profile.get("email", email)
-        else:
-            # Formulate friendly mock profile details based on email prefix
-            name = email.split("@")[0].title().replace("-", " ")
-            google_id = f"google_id_{email.split('@')[0]}"
 
         email = email.strip().lower()
 
@@ -310,6 +312,14 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                 # Another concurrent login already created the record. Roll back
                 # and continue — login itself must still succeed.
                 db.rollback()
+                sync_state = db.query(OrganizationSyncState).filter(
+                    OrganizationSyncState.organization_id == user.organization_id
+                ).first()
+                if not sync_state:
+                    logging.error(
+                        "OrganizationSyncState missing after IntegrityError rollback for org %s",
+                        user.organization_id
+                    )
         else:
             # Check if last sync is stale (older than 12h) and a sync isn't safely in flight.
             threshold_time = datetime.now(timezone.utc) - timedelta(hours=12)
@@ -325,12 +335,13 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
 
             # Detect orphaned stuck state: sync_in_progress=True but the worker
             # crashed (Redis lock TTL has passed) so the flag was never cleared.
+            _started_at = sync_state.sync_started_at
+            if _started_at is not None and _started_at.tzinfo is None:
+                _started_at = _started_at.replace(tzinfo=timezone.utc)
             is_stuck = (
                 sync_state.sync_in_progress
-                and sync_state.sync_started_at is not None
-                and (datetime.now(timezone.utc) - sync_state.sync_started_at.replace(
-                    tzinfo=timezone.utc if sync_state.sync_started_at.tzinfo is None else sync_state.sync_started_at.tzinfo
-                )) > SYNC_STUCK_THRESHOLD
+                and _started_at is not None
+                and (datetime.now(timezone.utc) - _started_at) > SYNC_STUCK_THRESHOLD
             )
 
             # Trigger only when stale AND (not currently syncing OR stuck/orphaned)
@@ -379,7 +390,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             max_age=3600 * 24 * 7  # 7 days
         )
         
-        # Set long-lived CSRF cookie (7 days, httponly=False so JS can read it)
+        # Set long-lived CSRF cookie (7 days)
         response.set_cookie(
             key="gmb_csrf_token",
             value=session_csrf,
@@ -392,12 +403,10 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         
     except ValueError as e:
         db.rollback()
-        import logging
         logging.exception("Validation/CSRF error during Google OAuth callback")
         return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=oauth_validation_failed")
     except Exception as e:
         db.rollback()
-        import logging
         logging.exception("Unhandled exception during Google OAuth callback")
         return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=oauth_failed")
 

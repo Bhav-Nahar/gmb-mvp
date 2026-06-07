@@ -6,6 +6,7 @@ import { CriticalFieldWarningModal } from "../components/CriticalFieldWarningMod
 import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
 import { useAuth } from "@/hooks/useAuth"
 import { SkeletonLoader } from "../components/SkeletonLoader"
+import { DynamicFormEngine } from "../components/DynamicFormEngine"
 
 interface ProfileTabProps {
   locationId: number
@@ -16,7 +17,7 @@ export function ProfileTab({ locationId, setHasUnsavedChanges }: ProfileTabProps
   const { user, isAdmin } = useAuth()
   const { location, isLocationLoading, edits, isEditsLoading, createEditMutation } = useLocationWorkspace(locationId)
   
-  const { data: fieldConfigs, isLoading: isConfigsLoading } = useQuery({
+  const { data: fieldConfigs, isLoading: isConfigsLoading, isError: isConfigsError, refetch: refetchConfigs } = useQuery({
     queryKey: ['field-configs'],
     queryFn: () => api.get<any[]>('/fields'),
   })
@@ -37,6 +38,20 @@ export function ProfileTab({ locationId, setHasUnsavedChanges }: ProfileTabProps
 
   if (isLocationLoading || isConfigsLoading || isEditsLoading) {
     return <SkeletonLoader />
+  }
+
+  if (isConfigsError) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 p-8 text-center rounded-xl border border-destructive/30 bg-destructive/5">
+        <p className="text-sm font-medium text-destructive">Failed to load profile configuration.</p>
+        <button
+          onClick={() => refetchConfigs()}
+          className="px-4 py-2 rounded-lg text-sm font-semibold bg-muted/30 hover:bg-muted/50 border border-border transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    )
   }
 
   const handleSave = (fieldName: string, newValue: any, acknowledged: boolean) => {
@@ -105,6 +120,11 @@ export function ProfileTab({ locationId, setHasUnsavedChanges }: ProfileTabProps
     <div className="space-y-8 animate-in fade-in duration-500">
       {renderSection("Critical Fields", criticalFields)}
       {renderSection("Standard Fields", standardFields)}
+      
+      <div className="space-y-4 pt-6 border-t border-border/50">
+        <DynamicFormEngine locationId={locationId} />
+      </div>
+
       {isAdmin && renderSection("System Fields (Admin Only)", readOnlyFields)}
 
       <CriticalFieldWarningModal

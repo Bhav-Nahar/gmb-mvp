@@ -18,6 +18,7 @@ from app.schemas.listing_edits import (
 from app.services.listing_edit_service import ListingEditService
 from app.core.listing_fields import LISTING_FIELDS, FIELD_MAP
 from app.core.exceptions import PermissionDeniedError, ConflictError, NotFoundError
+from app.core.config import settings
 import app.tasks as tasks
 
 router = APIRouter(tags=["listing-edits"])
@@ -80,7 +81,7 @@ def list_edits(
     Returns edits for a location. Enforces stale Publishing recovery.
     """
     # ── Stale Publishing Recovery Rule ────────────────────────────────────────
-    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.EDIT_STALE_TIMEOUT_MINUTES)
     stale_edits = db.query(LocationEdit).filter(
         LocationEdit.location_id == location_id,
         LocationEdit.organization_id == current_user.organization_id,
@@ -106,6 +107,16 @@ def list_edits(
     )
     if current_user.role == "Staff":
         query = query.filter(LocationEdit.submitted_by_user_id == current_user.id)
+        from app.models.user_location_access import UserLocationAccess
+        has_access = db.query(UserLocationAccess).filter(
+            UserLocationAccess.user_id == current_user.id,
+            UserLocationAccess.location_id == location_id,
+        ).first()
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this location."
+            )
     if status_filter:
         query = query.filter(LocationEdit.status == status_filter)
     return query.order_by(LocationEdit.created_at.desc()).all()
@@ -199,7 +210,14 @@ def publish_edit(
             organization_id=current_user.organization_id,
         )
         from app.worker import celery as celery_app
-        celery_app.send_task("app.tasks.publish_listing_edit_task", args=[edit_id, current_user.organization_id])
+        try:
+            celery_app.send_task("app.tasks.publish_listing_edit_task", args=[edit_id, current_user.organization_id])
+        except Exception as dispatch_err:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Task dispatch failed: {str(dispatch_err)}"
+            )
         db.commit()
         db.refresh(edit)
         return edit

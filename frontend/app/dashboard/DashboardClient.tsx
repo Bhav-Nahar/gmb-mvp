@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, Suspense } from 'react'
+import { useEffect, useState, useRef, useMemo, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import AuthGuard from '@/components/AuthGuard'
 import Navbar from '@/components/Navbar'
@@ -52,7 +52,7 @@ interface SyncLog {
 }
 
 interface TokenStatus {
-  status: string
+  status: 'active' | 'requires_refresh' | 'expired' | 'sandbox_mock' | string
   message: string
   expires_in_seconds?: number
   google_email?: string
@@ -98,6 +98,10 @@ function DashboardContent() {
   const { user } = useAuth()
   const userRole = user?.role || 'Viewer'
 
+  // Refs for interval tracking to prevent memory leaks
+  const onboardingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const locationPollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
     const onboardingParam = searchParams.get('onboarding')
     const successParam = searchParams.get('success')
@@ -122,17 +126,23 @@ function DashboardContent() {
   useEffect(() => {
     if (!isOnboarding) return
 
+    // Ensure only one onboarding interval runs at a time
+    if (onboardingIntervalRef.current) {
+      clearInterval(onboardingIntervalRef.current)
+      onboardingIntervalRef.current = null
+    }
+
     let pollCount = 0
-    const pollInterval = setInterval(async () => {
+    onboardingIntervalRef.current = setInterval(async () => {
       pollCount++
-      
+
       try {
         // Query database state
         const locationsData = await api.get<Location[]>('/locations/')
         const logsRes = await api.get<{ items: SyncLog[] }>('/locations/sync-logs?page=1&size=10')
         const logsData = logsRes.items
         const statusData = await api.get<TokenStatus>('/users/me/token-status')
-        
+
         setLocations(locationsData)
         setSyncLogs(logsData)
         setTokenStatus(statusData)
@@ -147,9 +157,12 @@ function DashboardContent() {
 
         // If succeeded or failed, or max poll duration (30 seconds) reached, resolve onboarding overlay
         if (hasFinished || pollCount >= 15) {
-          clearInterval(pollInterval)
+          if (onboardingIntervalRef.current) {
+            clearInterval(onboardingIntervalRef.current)
+            onboardingIntervalRef.current = null
+          }
           setOnboardingSuccess(true)
-          
+
           setTimeout(() => {
             setIsOnboarding(false)
             // Clear URL parameter
@@ -161,51 +174,34 @@ function DashboardContent() {
       }
     }, 2000)
 
-    return () => clearInterval(pollInterval)
+    return () => {
+      if (onboardingIntervalRef.current) {
+        clearInterval(onboardingIntervalRef.current)
+        onboardingIntervalRef.current = null
+      }
+    }
   }, [isOnboarding, router])
 
   useEffect(() => {
+    // Clear any existing location polling interval before starting a new one
+    if (locationPollingIntervalRef.current) {
+      clearInterval(locationPollingIntervalRef.current)
+      locationPollingIntervalRef.current = null
+    }
+
     if (pollingLocationIds.length === 0) return;
 
-    const activeIntervals: Record<number, NodeJS.Timeout> = {};
-
-    pollingLocationIds.forEach((id) => {
-      const pollStatus = async () => {
-        try {
-          const res = await api.get<{
-            location_id: number;
-            status: string;
-            last_synced_at: string | null;
-            error_message: string | null;
-            run_type: string;
-          }>(`/locations/${id}/sync-status`);
-          
-          setSyncStatuses(prev => ({
-            ...prev,
-            [id]: {
-              status: res.status,
-              last_synced_at: res.last_synced_at,
-              error_message: res.error_message
-            }
-          }));
-
-          if (res.status === 'Success' || res.status === 'Failed') {
-            setPollingLocationIds(prev => prev.filter(pId => pId !== id));
-            loadLocations();
-            loadSyncLogs();
-          }
-        } catch (err) {
-          console.error(`Error polling status for location ${id}:`, err);
-        }
-      };
-
-      activeIntervals[id] = setInterval(pollStatus, 3000);
-    });
+    locationPollingIntervalRef.current = setInterval(() => {
+      loadLocations(false);
+    }, 5000);
 
     return () => {
-      Object.values(activeIntervals).forEach(clearInterval);
-    };
-  }, [pollingLocationIds]);
+      if (locationPollingIntervalRef.current) {
+        clearInterval(locationPollingIntervalRef.current)
+        locationPollingIntervalRef.current = null
+      }
+    }
+  }, [pollingLocationIds.length]);
 
   const handleLocationSync = async (locationId: number) => {
     try {
@@ -336,8 +332,8 @@ function DashboardContent() {
     }
   }
 
-  const loadLocations = async () => {
-    setLoadingLocations(true)
+  const loadLocations = async (isInitial = true) => {
+    if (isInitial) setLoadingLocations(true)
     try {
       const data = await api.get<Location[]>('/locations/')
       setLocations(data)
@@ -360,29 +356,33 @@ function DashboardContent() {
         }
       }
 
-      setSyncStatuses(prev => ({ ...prev, ...newStatuses }))
-      if (pendingIds.length > 0) {
-        setPollingLocationIds(prev => [
-          ...prev,
-          ...pendingIds.filter(id => !prev.includes(id)),
-        ])
-      }
+      const currentLocationIds = new Set(data.map(loc => loc.id))
+      setSyncStatuses(prev => {
+        const filtered: typeof prev = {}
+        for (const key in prev) {
+          if (currentLocationIds.has(Number(key))) {
+            filtered[Number(key)] = prev[Number(key)]
+          }
+        }
+        return { ...filtered, ...newStatuses }
+      })
+      setPollingLocationIds(pendingIds)
     } catch (e: any) {
       console.error(e)
     } finally {
-      setLoadingLocations(false)
+      if (isInitial) setLoadingLocations(false)
     }
   }
 
-  const loadSyncLogs = async () => {
-    setLoadingLogs(true)
+  const loadSyncLogs = async (isInitial = true) => {
+    if (isInitial) setLoadingLogs(true)
     try {
       const data = await api.get<{ items: SyncLog[] }>('/locations/sync-logs?page=1&size=10')
       setSyncLogs(data.items)
     } catch (e: any) {
       console.error(e)
     } finally {
-      setLoadingLogs(false)
+      if (isInitial) setLoadingLogs(false)
     }
   }
 
@@ -434,8 +434,8 @@ function DashboardContent() {
     }
   }
 
-  // Get last successful sync timestamp
-  const getLastSyncedTime = () => {
+  // Get last successful sync timestamp — memoized to avoid recomputing on every render
+  const getLastSyncedTime = useMemo(() => {
     const successLogs = syncLogs.filter(l => l.status === 'Success' && l.error_message?.includes('Synchronized'))
     if (successLogs.length > 0) {
       return new Date(successLogs[0].created_at).toLocaleString()
@@ -444,7 +444,7 @@ function DashboardContent() {
       return new Date(locations[0].last_synced_at).toLocaleString()
     }
     return 'Pending Sync'
-  }
+  }, [syncLogs, locations])
 
   return (
     <AuthGuard>
@@ -565,7 +565,7 @@ function DashboardContent() {
                     </span>
                     <span className="text-muted-foreground flex items-center gap-1.5">
                       <Calendar className="h-4 w-4 text-indigo-400" />
-                      Last Sync: <strong className="text-white">{getLastSyncedTime()}</strong>
+                      Last Sync: <strong className="text-white">{getLastSyncedTime}</strong>
                     </span>
                   </div>
                 ) : tokenStatus.status === 'requires_refresh' ? (

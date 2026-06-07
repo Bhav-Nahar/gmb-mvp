@@ -1,4 +1,6 @@
 import os
+from urllib.parse import urlparse, urlunparse
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -9,27 +11,46 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+    # Environment
+    APP_ENV: str = "development"
+
     # Database
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@db:5432/gmb_db"
 
     @property
     def sqlalchemy_database_url(self) -> str:
-        """Fixes 'postgres://' to 'postgresql://' and ensures psycopg2 driver is used."""
+        """Normalises the DATABASE_URL to use the postgresql+psycopg2 scheme."""
         url = self.DATABASE_URL
-        if url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql://", 1)
-        if "postgresql://" in url and "+psycopg2" not in url:
-            url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
-        return url
+        parsed = urlparse(url)
+        scheme = parsed.scheme
+        # Normalise bare 'postgres' or 'postgresql' to 'postgresql+psycopg2'
+        if scheme in ("postgres", "postgresql"):
+            scheme = "postgresql+psycopg2"
+        # If driver is already present (e.g. postgresql+asyncpg) leave it alone
+        rebuilt = urlunparse(parsed._replace(scheme=scheme))
+        return rebuilt
 
     # Redis & Celery
     REDIS_URL: str = "redis://redis:6379/0"
 
     # Security
-    JWT_SECRET: str = "4f7a2b9c78d4e5a6b7c8d9e0f1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0"
+    JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
-    ENCRYPTION_KEY: str = "yP3qCea34Z4K2ZtM1V8-x5Zt3B3-5pWk_N6s7pXv1vY="
+    ENCRYPTION_KEY: str = ""
+
+    @model_validator(mode="after")
+    def _validate_secrets(self) -> "Settings":
+        if self.APP_ENV != "development":
+            if not self.JWT_SECRET:
+                raise ValueError(
+                    "FATAL: JWT_SECRET must be set via environment variable in production"
+                )
+            if not self.ENCRYPTION_KEY:
+                raise ValueError(
+                    "FATAL: ENCRYPTION_KEY must be set via environment variable in production"
+                )
+        return self
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
@@ -46,6 +67,11 @@ class Settings(BaseSettings):
 
     # Backend
     BACKEND_URL: str = "http://localhost:8000"
+
+    # Task Settings
+    REVIEW_SYNC_CHUNK_SIZE: int = 20
+    REVIEW_SYNC_SLEEP_SECONDS: float = 0.2
+    EDIT_STALE_TIMEOUT_MINUTES: int = 5
 
     # Storage Settings
     STORAGE_PROVIDER: str = "local"  # "local", "s3", "r2"

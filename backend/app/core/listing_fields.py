@@ -48,7 +48,8 @@ LISTING_FIELDS: list[ListingFieldConfig] = [
         warning_body=(
             "Changing your primary category will affect how your listing ranks in local "
             "search. Google may take 24–48 hours to reindex. Make sure the new category "
-            "accurately reflects your core business."
+            "accurately reflects your core business. Additionally, all current dynamic attributes "
+            "will be wiped and you will need to fill them out again for the new category."
         ),
         gbp_field_mask="categories",
         field_type="select",

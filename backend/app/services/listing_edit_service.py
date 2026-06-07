@@ -9,6 +9,19 @@ from app.core.listing_fields import FIELD_MAP
 from app.services.activity_log_service import ActivityLogService
 from app.core.exceptions import PermissionDeniedError, ConflictError, NotFoundError
 
+# =============================================================================
+# LOCK ACQUISITION ORDER — MUST BE FOLLOWED BY ALL METHODS IN THIS MODULE
+# =============================================================================
+# To prevent deadlocks, any method that needs to lock both Location and
+# LocationEdit rows MUST always acquire the locks in this fixed order:
+#
+#   1. Location  (acquire first)
+#   2. LocationEdit  (acquire second)
+#
+# Acquiring locks in any other order when two concurrent transactions each
+# need both rows will produce a circular wait → deadlock.
+# =============================================================================
+
 # Valid state transitions. Key = current status, value = set of allowed next statuses.
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "Draft":      {"Pending", "Rejected"},   # submit for approval, or admin discards
@@ -234,17 +247,41 @@ class ListingEditService:
         organization_id: int,
     ) -> LocationEdit:
         """System marks Published on GBP success."""
+        # Lock order: Location -> LocationEdit (must be consistent to prevent deadlocks)
+        # We need the location_id before we can lock Location, so fetch the edit
+        # without a lock first, then acquire both locks in the correct order.
+        edit_row = db.query(LocationEdit).filter(
+            LocationEdit.id == edit_id,
+            LocationEdit.organization_id == organization_id,
+        ).first()
+        if not edit_row:
+            raise NotFoundError("Edit not found.")
+        location_id_for_lock = edit_row.location_id
+
+        # Step 1: Lock Location first (correct lock order)
+        location = db.query(Location).filter(
+            Location.id == location_id_for_lock
+        ).with_for_update().first()
+
+        # Step 2: Lock LocationEdit second (correct lock order)
         edit = ListingEditService._get_edit_locked(db, edit_id, organization_id)
+
         ListingEditService._transition(edit, "Published")
         edit.published_at = datetime.now(timezone.utc)
 
-        location = db.query(Location).filter(
-            Location.id == edit.location_id
-        ).with_for_update().first()
+        # location was already locked above in Step 1 (Lock order: Location -> LocationEdit).
+        # Both mutations are staged here and committed together in a single transaction.
         if location:
             final_value = edit.new_value
-            if edit.field_name == "primary_category" and isinstance(edit.new_value, dict) and "displayName" in edit.new_value:
-                final_value = edit.new_value["displayName"]
+            if edit.field_name == "primary_category":
+                if isinstance(edit.new_value, dict):
+                    final_value = edit.new_value.get("displayName")
+                    resource_name = edit.new_value.get("name")
+                    if resource_name:
+                        location.google_category_resource_name = resource_name
+                # Mark attributes stale when category changes
+                location.google_attributes_stale = True
+                
             setattr(location, edit.field_name, final_value)
             location.last_synced_at = datetime.now(timezone.utc)
 
@@ -302,7 +339,10 @@ class ListingEditService:
 
     @staticmethod
     def _get_edit_locked(db: Session, edit_id: int, organization_id: int) -> LocationEdit:
-        # Pessimistic Row Locking ensures no concurrent read/writes during transition
+        # Pessimistic Row Locking ensures no concurrent read/writes during transition.
+        # Lock order: Location -> LocationEdit (must be consistent to prevent deadlocks).
+        # Callers that also need to lock Location MUST acquire Location lock first,
+        # then call this method to acquire the LocationEdit lock second.
         edit = db.query(LocationEdit).filter(
             LocationEdit.id == edit_id,
             LocationEdit.organization_id == organization_id,
@@ -313,7 +353,13 @@ class ListingEditService:
 
     @staticmethod
     def _check_version(edit: LocationEdit, expected_version: int) -> None:
-        """Optimistic Concurrency: ensures the record hasn't been mutated since fetch."""
+        """Optimistic Concurrency: ensures the record hasn't been mutated since fetch.
+
+        IMPORTANT: This must always be called AFTER the row lock has been acquired
+        via with_for_update() (i.e., after _get_edit_locked). Checking the version
+        before acquiring the lock creates a TOCTOU race — another transaction could
+        mutate the row between the version read and the lock acquisition.
+        """
         if edit.version != expected_version:
             raise ConflictError(
                 f"The edit has been modified by someone else. Please refresh and try again."
