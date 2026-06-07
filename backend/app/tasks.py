@@ -13,6 +13,21 @@ from app.providers.factory import ProviderFactory
 from app.providers.base.exceptions import ProviderAuthError
 from app.services.review_sync_service import ReviewSyncService
 import asyncio
+import threading as _threading
+_worker_loop_lock = _threading.Lock()
+_worker_loop = None
+
+def _get_worker_loop():
+    global _worker_loop
+    with _worker_loop_lock:
+        if _worker_loop is None or _worker_loop.is_closed():
+            import asyncio as _asyncio
+            _worker_loop = _asyncio.new_event_loop()
+            _asyncio.set_event_loop(_worker_loop)
+        return _worker_loop
+
+def run_async(coro):
+    return _get_worker_loop().run_until_complete(coro)
 
 @shared_task(name="app.tasks.sync_reviews_task")
 def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: int = None) -> dict:
@@ -57,7 +72,7 @@ def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: in
             db.commit()
             db.refresh(sync_log)
             
-            result = asyncio.run(ReviewSyncService.sync_location_reviews(db, location_id, run_type, sync_log_id=sync_log.id))
+            result = run_async(ReviewSyncService.sync_location_reviews(db, location_id, run_type, sync_log_id=sync_log.id))
 
             return {"status": "success", "result": result}
         except Exception as e:
@@ -73,6 +88,99 @@ def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: in
                 lock.release()
             except Exception:
                 pass
+    finally:
+        db.close()
+
+@shared_task(bind=True, name="app.tasks.sync_reviews_chunk_task")
+def sync_reviews_chunk_task(self, location_ids: list, organization_id: int, run_type: str = "Scheduled", user_id: int = None) -> dict:
+    """
+    Synchronizes reviews for a chunk of locations.
+    Contains isolated exception handling, idempotency locks, and rate limiting to protect the API.
+    """
+    import redis
+    import time
+    import logging
+    from app.core.config import settings
+    from sqlalchemy.orm import Session
+    from app.db.session import SessionLocal
+    from app.models.location import Location
+    from app.models.sync_log import SyncLog
+    from app.services.review_sync_service import ReviewSyncService
+
+    logger = logging.getLogger(__name__)
+    db: Session = SessionLocal()
+    r = redis.Redis.from_url(settings.REDIS_URL)
+
+    results = []
+    
+    try:
+        for loc_id in location_ids:
+            sync_log = None
+            lock_key = f"lock:sync_reviews:{organization_id}:{loc_id}"
+            lock = r.lock(lock_key, timeout=300)
+            
+            if not lock.acquire(blocking=False):
+                logger.info(f"Skipped sync for location {loc_id} - already in progress", extra={
+                    "organization_id": organization_id,
+                    "location_id": loc_id,
+                    "task_id": self.request.id
+                })
+                results.append({"location_id": loc_id, "status": "skipped", "reason": "sync already in progress"})
+                continue
+                
+            try:
+                sync_log = SyncLog(
+                    organization_id=organization_id,
+                    location_id=loc_id,
+                    status="Pending",
+                    run_type=run_type,
+                    error_message=None
+                )
+                db.add(sync_log)
+                db.commit()
+                db.refresh(sync_log)
+
+                loc = db.query(Location).filter(Location.id == loc_id).first()
+                google_location_id = loc.google_location_id if loc else "unknown"
+
+                logger.info("Starting review sync", extra={
+                    "organization_id": organization_id,
+                    "location_id": loc_id,
+                    "task_id": self.request.id,
+                    "google_location_id": google_location_id
+                })
+
+                result = run_async(ReviewSyncService.sync_location_reviews(db, loc_id, run_type, sync_log_id=sync_log.id))
+                results.append({"location_id": loc_id, "status": "success", "result": result})
+
+            except Exception as e:
+                db.rollback()
+                google_location_id = locals().get('google_location_id', 'unknown')
+                logger.error(f"Sync failed for location {loc_id}: {str(e)}", extra={
+                    "organization_id": organization_id,
+                    "location_id": loc_id,
+                    "task_id": self.request.id,
+                    "google_location_id": google_location_id
+                })
+                
+                if 'sync_log' in locals() and sync_log and sync_log.id:
+                    db.query(SyncLog).filter(SyncLog.id == sync_log.id).update({
+                        SyncLog.status: "Failed",
+                        SyncLog.error_message: f"Sync Failed: {str(e)}"
+                    })
+                    db.commit()
+                
+                results.append({"location_id": loc_id, "status": "error", "reason": str(e)})
+            finally:
+                try:
+                    lock.release()
+                except Exception:
+                    pass
+                
+                # Rate limiting / Sleep in chunk
+                time.sleep(getattr(settings, "REVIEW_SYNC_SLEEP_SECONDS", 0.2))
+
+        return {"status": "completed", "results": results}
     finally:
         db.close()
 
@@ -129,18 +237,19 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         db.refresh(sync_log)
         
         provider = ProviderFactory.get_provider("gbp", organization_id, db)
-        provider_locations = asyncio.run(provider.get_locations())
+        provider_locations = run_async(provider.get_locations())
+        
+        # Pre-fetch all locations for this org to prevent N+1 query inside loop
+        existing_locations = db.query(Location).filter(Location.organization_id == organization_id).all()
+        existing_locs_map = {loc.google_location_id: loc for loc in existing_locations}
         
         synced_count = 0
         sync_jobs = []
         for p_loc in provider_locations:
-            print(f"DEBUG: Processing location: {p_loc.name}")
+            # Removed debug print
             
-            # Check if location already exists in db
-            existing_loc = db.query(Location).filter(
-                Location.organization_id == organization_id,
-                Location.google_location_id == p_loc.provider_location_id
-            ).first()
+            # Check if location already exists in db via map
+            existing_loc = existing_locs_map.get(p_loc.provider_location_id)
             
             if existing_loc:
                 # Update
@@ -188,9 +297,17 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         # Commit once after the loop
         db.commit()
         
-        # Trigger review sync for this location
+        # Trigger review sync in chunks
+        import time
+        chunk_size = getattr(settings, "REVIEW_SYNC_CHUNK_SIZE", 20)
+        for i in range(0, len(sync_jobs), chunk_size):
+            chunk = sync_jobs[i:i + chunk_size]
+            sync_reviews_chunk_task.delay(chunk, organization_id, run_type, user_id)
+            time.sleep(0.1)
+            
+        # Trigger attribute sync
         for loc_id in sync_jobs:
-            sync_reviews_task.delay(loc_id, run_type, user_id)
+            sync_location_attributes_task.delay(loc_id)
             
         # Log successful sync operation
         log_message = f"Synchronized {synced_count} locations successfully."
@@ -212,7 +329,8 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         db.rollback()
         
         # If refreshing has failed catastrophically
-        if isinstance(e, ProviderAuthError) or "re-authentication required" in str(e).lower() or "invalid_grant" in str(e).lower():
+        from app.providers.gbp.auth import PermanentAuthError
+        if isinstance(e, PermanentAuthError):
             # Find and delete oauth account securely
             oauth_account = db.query(OAuthAccount).join(User).filter(
                 User.organization_id == organization_id,
@@ -263,8 +381,9 @@ def sync_all_organizations_task() -> str:
     try:
         # Fetch all active Owner/Admin users who have a connected OAuth account,
         # ordered so the freshest token comes first within each organization.
+        # Deduplicate at the query level or fetch only what we need to avoid massive memory usage
         users_with_google = (
-            db.query(User)
+            db.query(User.id, User.organization_id)
             .join(OAuthAccount, OAuthAccount.user_id == User.id)
             .filter(
                 User.role.in_(["Owner", "Admin"]),
@@ -275,14 +394,14 @@ def sync_all_organizations_task() -> str:
         )
 
         # Deduplicate: keep only the first (freshest-token) admin per org.
-        best_admin_per_org: dict[int, User] = {}
-        for admin in users_with_google:
-            if admin.organization_id not in best_admin_per_org:
-                best_admin_per_org[admin.organization_id] = admin
+        best_admin_per_org = {}
+        for admin_id, org_id in users_with_google:
+            if org_id not in best_admin_per_org:
+                best_admin_per_org[org_id] = admin_id
 
         triggered_count = 0
-        for org_id, admin in best_admin_per_org.items():
-            sync_locations_task.delay(org_id, admin.id, "Scheduled")
+        for org_id, admin_id in best_admin_per_org.items():
+            sync_locations_task.delay(org_id, admin_id, "Scheduled")
             triggered_count += 1
 
         return f"Triggered synchronization for {triggered_count} organizations."
@@ -330,7 +449,7 @@ def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> 
         if not untagged_reviews:
             return {"status": "skipped", "reason": "no untagged reviews"}
 
-        asyncio.run(tag_reviews_sentiment(untagged_reviews, db))
+        run_async(tag_reviews_sentiment(untagged_reviews, db))
 
         return {"status": "completed", "tagged": len(untagged_reviews)}
 
@@ -360,7 +479,7 @@ def process_review_sentiment_task(self, review_id: int) -> dict:
         if not review or review.sentiment_tagged_at is not None:
             return {"status": "skipped", "reason": "Review not found or already tagged"}
             
-        asyncio.run(tag_reviews_sentiment([review], db))
+        run_async(tag_reviews_sentiment([review], db))
         return {"status": "completed", "review_id": review_id}
     except Exception as e:
         logger.error(f"process_review_sentiment_task failed for review {review_id}: {e}")
@@ -429,7 +548,7 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
         provider = ProviderFactory.get_provider("gbp", organization_id, db)
 
         # Sync/Async invocation: internally provider.create_post is fully async but called here synchronously
-        res = asyncio.run(provider.create_post(location.google_location_id, payload))
+        res = run_async(provider.create_post(location.google_location_id, payload))
 
         # Simulating/Parsing successful Google API response
         job.status = PublishJobStatus.SUCCESS.value
@@ -445,9 +564,10 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
         if job.campaign_id:
             from app.models.campaign import Campaign
             from app.models.campaign_audit_log import CampaignAuditLog
+            from sqlalchemy import func
             db.query(Campaign).filter(Campaign.id == job.campaign_id).update({
                 Campaign.total_published: Campaign.total_published + 1,
-                Campaign.total_pending: Campaign.total_pending - 1
+                Campaign.total_pending: func.greatest(0, Campaign.total_pending - 1)
             }, synchronize_session=False)
             
             campaign = db.query(Campaign).filter(Campaign.id == job.campaign_id).first()
@@ -570,9 +690,10 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
                     if job_record.campaign_id:
                         from app.models.campaign import Campaign
                         from app.models.campaign_audit_log import CampaignAuditLog
+                        from sqlalchemy import func
                         job_db.query(Campaign).filter(Campaign.id == job_record.campaign_id).update({
                             Campaign.total_failed: Campaign.total_failed + 1,
-                            Campaign.total_pending: Campaign.total_pending - 1
+                            Campaign.total_pending: func.greatest(0, Campaign.total_pending - 1)
                         }, synchronize_session=False)
                         
                         campaign = job_db.query(Campaign).filter(Campaign.id == job_record.campaign_id).first()
@@ -754,9 +875,12 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
             
             summary_template = post.summary or ""
             rendered_summary = summary_template.replace("{{location}}", loc.location_name).replace("{{city}}", city).replace("{{phone}}", loc.phone or "")
+            rendered_summary = re.sub(r'\{[^{}]+\}', '', rendered_summary)
             
             cta_template = post.cta_url or ""
             rendered_cta_url = cta_template.replace("{{location_id}}", str(loc.id)) if cta_template else None
+            if rendered_cta_url:
+                rendered_cta_url = re.sub(r'\{[^{}]+\}', '', rendered_cta_url)
             
             if rendered_cta_url:
                 from app.utils.utm_generator import generate_utm_link
@@ -828,6 +952,7 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
     # Boundary crossed: DB is committed. Now chunk jobs and dispatch campaign shards.
     shards_count = 0
     if job_ids:
+        import time
         import redis
         from app.core.config import settings
         
@@ -844,7 +969,8 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
         
         for shard in shards:
             process_campaign_shard_task.delay(shard, organization_id, campaign_id)
-        
+            time.sleep(0.1)
+
     return {"status": "success", "jobs_created": len(job_ids), "shards_created": shards_count}
 
 
@@ -960,7 +1086,7 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
                 provider = ProviderFactory.get_provider("gbp", organization_id, db)
 
                 # Invoke provider.create_post
-                res = asyncio.run(provider.create_post(location.google_location_id, payload))
+                res = run_async(provider.create_post(location.google_location_id, payload))
 
                 # Job Success
                 job.status = PublishJobStatus.SUCCESS.value
@@ -1103,7 +1229,7 @@ def _decr_and_flush_terminal_state(r, campaign_id: int, organization_id: int, sh
     logger = logging.getLogger(__name__)
     remaining_shards = r.decr(f"campaign:{campaign_id}:pending_shards")
     
-    if remaining_shards <= 0:
+    if remaining_shards == 0:
         db = SessionLocal()
         try:
             campaign = db.query(Campaign).filter(Campaign.id == campaign_id, Campaign.organization_id == organization_id).first()
@@ -1357,7 +1483,7 @@ async def _cleanup_deleted_media_async() -> dict:
         deleted_medias = db.query(PostMedia).filter(
             PostMedia.is_deleted == True,
             PostMedia.upload_status != "FullyDeleted"
-        ).all()
+        ).limit(100).all()
         
         cleaned_count = 0
         for media in deleted_medias:
@@ -1410,7 +1536,7 @@ def optimize_media_task(self, media_id: int, organization_id: int) -> dict:
     Async Celery task to optimize/compress and resize original media upload.
     Capping longest edge to 2048px and saving as quality=85 format-specific bytes.
     """
-    return asyncio.run(_optimize_media_async(media_id, organization_id))
+    return run_async(_optimize_media_async(media_id, organization_id))
 
 
 @shared_task(bind=True, name="app.tasks.generate_thumbnail_task", max_retries=3)
@@ -1418,7 +1544,7 @@ def generate_thumbnail_task(self, media_id: int, organization_id: int) -> dict:
     """
     Async Celery task to generate a 300x300 pixel crop/scale thumbnail of original media upload.
     """
-    return asyncio.run(_generate_thumbnail_async(media_id, organization_id))
+    return run_async(_generate_thumbnail_async(media_id, organization_id))
 
 
 @shared_task(name="app.tasks.cleanup_deleted_media_task")
@@ -1426,7 +1552,7 @@ def cleanup_deleted_media_task() -> dict:
     """
     Periodic task to physically delete blobs of soft-deleted media files from storage.
     """
-    return asyncio.run(_cleanup_deleted_media_async())
+    return run_async(_cleanup_deleted_media_async())
 
 
 @shared_task(name="app.tasks.check_scheduled_posts_task")
@@ -1449,17 +1575,24 @@ def check_scheduled_posts_task() -> dict:
     r = redis.Redis.from_url(settings.REDIS_URL)
     
     now = datetime.datetime.now(datetime.timezone.utc)
-    due_posts = db.query(Post).filter(
+    now = datetime.datetime.now(datetime.timezone.utc)
+    due_post_ids = [p.id for p in db.query(Post.id).filter(
         Post.status == PostStatus.SCHEDULED.value,
         Post.scheduled_at <= now
-    ).all()
+    ).all()]
     
     processed_count = 0
     
-    for post in due_posts:
-        logger.info(f"Processing scheduled post {post.id} (due at {post.scheduled_at})")
+    for post_id in due_post_ids:
         try:
+            post = db.query(Post).filter(Post.id == post_id).first()
+            if not post or post.status != PostStatus.SCHEDULED.value:
+                continue
+                
+            logger.info(f"Processing scheduled post {post.id} (due at {post.scheduled_at})")
+            
             post.status = PostStatus.APPROVED.value
+            tasks_to_dispatch = []
             
             if post.campaign_id:
                 campaign = db.query(Campaign).filter(Campaign.id == post.campaign_id).first()
@@ -1469,7 +1602,6 @@ def check_scheduled_posts_task() -> dict:
                     
                     if job_ids:
                         campaign.status = CampaignStatus.PROCESSING.value
-                        db.commit()
                         
                         chunk_size = 50
                         shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
@@ -1479,7 +1611,7 @@ def check_scheduled_posts_task() -> dict:
                         
                         from app.tasks import process_campaign_shard_task
                         for shard in shards:
-                            process_campaign_shard_task.delay(shard, post.organization_id, campaign.id)
+                            tasks_to_dispatch.append((process_campaign_shard_task, (shard, post.organization_id, campaign.id)))
                     else:
                         from app.models.location import Location
                         locs = db.query(Location).filter(Location.organization_id == post.organization_id).all()
@@ -1487,12 +1619,10 @@ def check_scheduled_posts_task() -> dict:
                         
                         if loc_ids:
                             campaign.status = CampaignStatus.QUEUED.value
-                            db.commit()
                             from app.tasks import orchestrate_campaign_task
-                            orchestrate_campaign_task.delay(campaign.id, post.organization_id, loc_ids, post.created_by_user_id)
+                            tasks_to_dispatch.append((orchestrate_campaign_task, (campaign.id, post.organization_id, loc_ids, post.created_by_user_id)))
                         else:
                             campaign.status = CampaignStatus.FAILED.value
-                            db.commit()
             else:
                 from app.models.location import Location
                 loc = db.query(Location).filter(Location.organization_id == post.organization_id).first()
@@ -1505,15 +1635,23 @@ def check_scheduled_posts_task() -> dict:
                         status=PublishJobStatus.PENDING.value
                     )
                     db.add(job)
-                    db.commit()
+                    db.flush() # Populate job.id
                     
                     from app.tasks import process_publish_job_task
-                    process_publish_job_task.delay(job.id, post.organization_id)
+                    tasks_to_dispatch.append((process_publish_job_task, (job.id, post.organization_id)))
             
-            processed_count += 1
+            # Stage all database updates/inserts
+            db.flush()
+            
+            # Dispatch all Celery tasks. If Redis is down, this will throw an exception.
+            for task_fn, args in tasks_to_dispatch:
+                task_fn.delay(*args)
+                
+            # Celery dispatch succeeded, now commit database transaction safely
             db.commit()
+            processed_count += 1
         except Exception as post_err:
-            logger.error(f"Failed to process scheduled post {post.id}: {str(post_err)}")
+            logger.error(f"Failed to process scheduled post {post_id}: {str(post_err)}")
             db.rollback()
             
     db.close()
@@ -1574,7 +1712,7 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
         provider = ProviderFactory.get_provider("gbp", organization_id, db)
         
         try:
-            res = asyncio.run(provider.patch_location(location.google_location_id, gbp_payload, update_mask))
+            res = run_async(provider.patch_location(location.google_location_id, gbp_payload, update_mask))
             ListingEditService.mark_published(db, edit_id=edit.id, organization_id=organization_id)
             db.commit()
             return {"status": "completed"}
@@ -1642,23 +1780,27 @@ def archive_old_activity_logs_task() -> dict:
                 break
                 
             # Create archive copies
-            archives = []
-            for log in old_logs:
-                arch = ActivityLogArchive(
-                    id=log.id,
-                    organization_id=log.organization_id,
-                    location_id=log.location_id,
-                    actor_user_id=log.actor_user_id,
-                    entity_type=log.entity_type,
-                    entity_id=log.entity_id,
-                    action=log.action,
-                    payload=log.payload,
-                    correlation_id=log.correlation_id,
-                    created_at=log.created_at
-                )
-                archives.append(arch)
+            from sqlalchemy.dialects.postgresql import insert
             
-            db.add_all(archives)
+            archive_data = []
+            for log in old_logs:
+                archive_data.append({
+                    "id": log.id,
+                    "organization_id": log.organization_id,
+                    "location_id": log.location_id,
+                    "actor_user_id": log.actor_user_id,
+                    "entity_type": log.entity_type,
+                    "entity_id": log.entity_id,
+                    "action": log.action,
+                    "payload": log.payload,
+                    "correlation_id": log.correlation_id,
+                    "created_at": log.created_at
+                })
+            
+            if archive_data:
+                stmt = insert(ActivityLogArchive).values(archive_data)
+                stmt = stmt.on_conflict_do_nothing(index_elements=['id'])
+                db.execute(stmt)
             
             # Delete originals
             log_ids = [l.id for l in old_logs]
@@ -1698,8 +1840,12 @@ def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str,
             return {"status": "error", "reason": f"Location {location_id} not found"}
 
         organization_id = location.organization_id
-        start_date = datetime.date.fromisoformat(start_date_str)
-        end_date = datetime.date.fromisoformat(end_date_str)
+        try:
+            start_date = datetime.date.fromisoformat(start_date_str)
+            end_date = datetime.date.fromisoformat(end_date_str)
+        except ValueError as date_err:
+            logger.error(f"Invalid date format for insights sync: {date_err}")
+            return {"status": "error", "reason": f"Invalid date format: {date_err}"}
 
         r = redis.Redis.from_url(settings.REDIS_URL)
         lock_key = f"lock:sync_insights:{organization_id}:{location_id}"
@@ -1712,7 +1858,7 @@ def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str,
         try:
             logger.info(f"Executing InsightSyncService for location {location_id}...")
             # Import and run async function inside Celery worker thread
-            res_msg = asyncio.run(InsightSyncService.sync_location_insights(
+            res_msg = run_async(InsightSyncService.sync_location_insights(
                 db=db,
                 location_id=location_id,
                 start_date=start_date,
@@ -1823,8 +1969,8 @@ def sync_organization_insights_task(organization_id: int, start_date_str: str, e
             errors = []
             for loc in locations:
                 try:
-                    # Execute synchronous subtask for each location sequentially inside this thread to avoid queue congestion
-                    sync_insights_task(
+                    # Queue the task asynchronously
+                    sync_insights_task.delay(
                         location_id=loc.id,
                         start_date_str=start_date_str,
                         end_date_str=end_date_str,
@@ -1928,20 +2074,468 @@ def retry_failed_sentiment_beat_task() -> dict:
     
     db = SessionLocal()
     try:
-        # Find untagged reviews. Limit to 1000 per run to avoid overwhelming the queue.
-        untagged_reviews = db.query(Review.id).filter(
-            Review.sentiment_tagged_at == None,  # noqa: E711
+        # Find locations with untagged reviews
+        untagged_locations = db.query(Review.location_id, Review.organization_id).filter(
+            Review.sentiment_tagged_at == None,
             Review.is_deleted == False
-        ).limit(1000).all()
-        
+        ).distinct().all()
+
         enqueued = 0
-        for (rid,) in untagged_reviews:
-            process_review_sentiment_task.delay(rid)
+        for loc_id, org_id in untagged_locations:
+            tag_reviews_sentiment_task.delay(loc_id, org_id)
             enqueued += 1
-            
-        return {"status": "success", "enqueued": enqueued}
+
+        return {"status": "success", "enqueued_locations": enqueued}
     except Exception as e:
         logging.error(f"Failed retry_failed_sentiment_beat_task: {str(e)}")
         raise e
     finally:
         db.close()
+
+@shared_task(name="app.tasks.sync_gbp_attributes_metadata_task")
+def sync_gbp_attributes_metadata_task(category_id: str, region_code: str, language_code: str, organization_id: int) -> dict:
+    from app.db.session import SessionLocal
+    from app.services.attribute_sync_service import AttributeSyncService
+    import asyncio
+    db = SessionLocal()
+    try:
+        service = AttributeSyncService(db)
+        run_async(service.sync_category_metadata(organization_id, category_id, region_code, language_code))
+        return {"status": "success", "category_id": category_id}
+    except Exception as e:
+        import logging
+        logging.error(f"sync_gbp_attributes_metadata_task failed: {e}")
+        raise e
+    finally:
+        db.close()
+
+@shared_task(name="app.tasks.sync_all_active_categories_metadata_task")
+def sync_all_active_categories_metadata_task() -> dict:
+    from app.db.session import SessionLocal
+    from app.models.location import Location
+    import logging
+    db = SessionLocal()
+    try:
+        locations = db.query(Location.google_category_resource_name, Location.organization_id).filter(
+            Location.google_category_resource_name != None
+        ).distinct().all()
+        
+        region_code = "IN"
+        language_code = "en"
+        enqueued_count = 0
+        
+        for category_resource_name, org_id in locations:
+            if not category_resource_name:
+                continue
+            category_id = category_resource_name.replace("categories/", "")
+            sync_gbp_attributes_metadata_task.delay(category_id, region_code, language_code, org_id)
+            enqueued_count += 1
+            
+        return {"status": "success", "enqueued_count": enqueued_count}
+    except Exception as e:
+        logging.error(f"sync_all_active_categories_metadata_task failed: {e}")
+        raise e
+    finally:
+        db.close()
+
+@shared_task(name="app.tasks.sync_location_attributes_task")
+def sync_location_attributes_task(location_id: int) -> dict:
+    from app.db.session import SessionLocal
+    from app.services.attribute_sync_service import AttributeSyncService
+    import asyncio
+    db = SessionLocal()
+    try:
+        service = AttributeSyncService(db)
+        run_async(service.fetch_location_attributes(location_id))
+        return {"status": "success", "location_id": location_id}
+    except Exception as e:
+        import logging
+        logging.error(f"sync_location_attributes_task failed: {e}")
+        raise e
+    finally:
+        db.close()
+
+@shared_task(name="app.tasks.backfill_google_category_resource_names_task")
+def backfill_google_category_resource_names_task() -> dict:
+    from app.db.session import SessionLocal
+    from app.models.location import Location
+    from app.providers.factory import ProviderFactory
+    import asyncio
+    import logging
+    
+    db = SessionLocal()
+    try:
+        locations = db.query(Location).filter(
+            Location.google_category_resource_name.is_(None),
+            Location.google_location_id.is_not(None)
+        ).all()
+        
+        updated = 0
+        for loc in locations:
+            try:
+                provider = ProviderFactory.get_provider("gbp", loc.organization_id, db)
+                data = run_async(provider.get_location(loc.google_location_id))
+                
+                categories = data.get("categories", {})
+                primary = categories.get("primaryCategory", {})
+                resource_name = primary.get("name")
+                
+                if resource_name:
+                    loc.google_category_resource_name = resource_name
+                    db.commit()
+                    updated += 1
+            except Exception as e:
+                logging.error(f"Backfill failed for location {loc.id}: {e}")
+                
+        return {"status": "success", "updated_count": updated}
+    finally:
+        db.close()
+
+@shared_task(name="app.tasks.publish_location_attributes_task", max_retries=3)
+def publish_location_attributes_task(location_id: int) -> dict:
+    from app.db.session import SessionLocal
+    from app.models.location import Location
+    from app.models.user import User
+    from app.models.oauth_account import OAuthAccount
+    from app.models.gbp_location_attribute_rejection import GbpLocationAttributeRejection
+    from app.providers.gbp.auth import GBPAuthManager
+    from app.providers.base.auth import AuthContext
+    from app.providers.gbp.client import GBPAsyncClient
+    from app.providers.base.exceptions import ProviderError
+    from app.providers.factory import ProviderFactory
+    from sqlalchemy.dialects.postgresql import insert
+    import datetime
+    import hashlib
+    import json
+    import asyncio
+    import logging
+    import re
+    
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    
+    try:
+        location = db.query(Location).filter(Location.id == location_id).first()
+        if not location:
+            return {"status": "error", "reason": "Location not found"}
+            
+        if not location.google_location_id:
+            location.sync_status = "Failed"
+            db.commit()
+            return {"status": "error", "reason": "Location is not linked to Google"}
+            
+        draft_attrs = location.draft_attributes or []
+        
+        current_draft_hash = None
+        if draft_attrs:
+            current_draft_hash = hashlib.sha256(json.dumps(draft_attrs, sort_keys=True).encode()).hexdigest()
+            
+        if not draft_attrs:
+            location.sync_status = "Synced"
+            db.commit()
+            return {"status": "success", "message": "Attributes are up to date"}
+            
+        # Get rejection capability memory (sliding 30-day window to allow for Google feature rollouts)
+        expiry_limit = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
+        rejections = db.query(GbpLocationAttributeRejection).filter(
+            GbpLocationAttributeRejection.location_id == location_id,
+            GbpLocationAttributeRejection.last_seen >= expiry_limit,
+            GbpLocationAttributeRejection.suppressed == False
+        ).all()
+        rejected_ids = {r.attribute_id for r in rejections}
+        
+        # Clean draft attributes based on existing rejection memory (proactive filtering)
+        pre_cleaned_drafts = [attr for attr in draft_attrs if attr["name"] not in rejected_ids]
+        removed_due_to_memory = [attr["name"] for attr in draft_attrs if attr["name"] in rejected_ids]
+        
+        if removed_due_to_memory:
+            logger.info("attributes_removed_due_to_memory", extra={
+                "location_id": location_id,
+                "removed_attributes": removed_due_to_memory
+            })
+        
+        current_payload_attrs = pre_cleaned_drafts
+        
+        # Publish to Google API
+        oauth_account = db.query(OAuthAccount).join(User).filter(
+            User.organization_id == location.organization_id,
+            User.role.in_(["Owner", "Admin"]),
+            OAuthAccount.provider.in_(["gbp", "google"])
+        ).first()
+
+        if not oauth_account:
+            location.sync_status = "Failed"
+            location.attention_needed = True
+            location.attention_reason = "Google credentials not found for organization"
+            db.commit()
+            return {"status": "error", "reason": "Google credentials not found for organization"}
+
+        auth_context = AuthContext(
+            organization_id=location.organization_id,
+            access_token=decrypt_token(oauth_account.access_token),
+            refresh_token=decrypt_token(oauth_account.refresh_token) if oauth_account.refresh_token else None,
+            expires_at=oauth_account.expires_at
+        )
+        auth_manager = GBPAuthManager(auth_context, db)
+        
+        async def _do_publish(payload_attrs):
+            access_token = await auth_manager.get_valid_token()
+            
+            if "mock_access_token" in access_token:
+                return True, None, None
+                
+            headers = {"Authorization": f"Bearer {access_token}"}
+            url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{location.google_location_id}/attributes"
+            
+            payload = {
+                "name": f"{location.google_location_id}/attributes",
+                "attributes": payload_attrs
+            }
+            
+            logger.debug("Publishing to Google: loc=%s", location_id)
+            
+            attribute_mask = ",".join(attr["name"] for attr in payload_attrs) if payload_attrs else ""
+            
+            async with GBPAsyncClient(location.organization_id) as client:
+                try:
+                    resp = await client.request("PATCH", url, headers=headers, json=payload, params={"attributeMask": attribute_mask})
+                    if resp.status_code != 200:
+                        logger.error(f"attribute_publish_failed: loc={location_id} status={resp.status_code} body={resp.text}")
+                        return False, resp, None
+                    return True, resp, None
+                except ProviderError as e:
+                    logger.error(f"attribute_publish_provider_error: loc={location_id} status={e.status_code} detail={e.detail}")
+                    return False, None, e
+                
+        success = False
+        response = None
+        exception = None
+        removed_on_this_run = []
+        
+        if current_payload_attrs:
+            success, response, exception = run_async(_do_publish(current_payload_attrs))
+
+            if not success:
+                invalid_names = []
+                error_data = None
+
+                # Parse error body from HTTP response or ProviderError detail string
+                if response is not None:
+                    try:
+                        error_data = response.json()
+                    except Exception:
+                        pass
+                elif exception is not None:
+                    try:
+                        # ProviderError puts response text in the detail string, e.g., "Validation error: {...}"
+                        match = re.search(r'(\{.*\})', exception.detail, re.DOTALL)
+                        if match:
+                            error_data = json.loads(match.group(1))
+                    except Exception:
+                        pass
+
+                if error_data is not None:
+                    try:
+                        details = error_data.get("error", {}).get("details", [])
+                        for detail in details:
+                            # Path 1: ErrorInfo envelope (New Google shape)
+                            if detail.get("@type") == "type.googleapis.com/google.rpc.ErrorInfo":
+                                reason = detail.get("reason", "INVALID_ARGUMENT")
+                                metadata = detail.get("metadata", {})
+                                
+                                # Single attribute name
+                                if "attribute_name" in metadata:
+                                    invalid_names.append({"name": metadata["attribute_name"], "reason": reason})
+                                # Multiple attribute names
+                                elif "attribute_names" in metadata:
+                                    names = metadata["attribute_names"].split(",")
+                                    for n in names:
+                                        if n.strip():
+                                            invalid_names.append({"name": n.strip(), "reason": reason})
+
+                            # Path 2: custom metadata envelope with attribute_names
+                            elif "metadata" in detail and "attribute_names" in detail.get("metadata", {}):
+                                names = detail["metadata"]["attribute_names"].split(",")
+                                invalid_names.extend([{"name": n.strip(), "reason": "INVALID_ATTRIBUTE_NAME"} for n in names if n.strip()])
+                            
+                            # Path 3: standard BadRequest fieldViolations
+                            elif detail.get("@type") == "type.googleapis.com/google.rpc.BadRequest":
+                                for violation in detail.get("fieldViolations", []):
+                                    field_name = violation.get("field", "")
+                                    if "attributes[" in field_name:
+                                        match = re.search(r'attributes\["([^"]+)"\]', field_name)
+                                        if match:
+                                            invalid_names.append({"name": match.group(1), "reason": "INVALID_ARGUMENT"})
+                    except Exception as parse_exc:
+                        logger.warning(
+                            "google_error_parse_failed",
+                            extra={"location_id": location_id, "error": str(parse_exc), "error_data": str(error_data)[:500]}
+                        )
+
+                # M2: If error_data was present but we couldn't extract any attribute names,
+                # attempt a fuzzy match based on the error reason
+                if error_data is not None and not invalid_names:
+                    reason = "INVALID_ARGUMENT"
+                    try:
+                        reason = error_data.get("error", {}).get("details", [{}])[0].get("reason", "INVALID_ARGUMENT")
+                    except Exception:
+                        pass
+
+                    if "SOCIAL_MEDIA" in reason:
+                        # Guess which ones are social media
+                        social_ids = [a["name"] for a in current_payload_attrs if any(x in a["name"] for x in ["facebook", "instagram", "twitter", "linkedin", "youtube", "pinterest"])]
+                        if social_ids:
+                            invalid_names.extend([{"name": sid, "reason": reason} for sid in social_ids])
+                    
+                    # If still no names, we must fail all in this batch to prevent infinite loop
+                    if not invalid_names:
+                        logger.warning(
+                            "google_error_no_invalid_attrs_extracted",
+                            extra={"location_id": location_id, "error_data": str(error_data)[:1000]}
+                        )
+                        invalid_names.extend([{"name": a["name"], "reason": reason} for a in current_payload_attrs])
+
+                if invalid_names:
+                    # Add to persistent rejection memory using atomic upsert.
+                    # C2: If this fails we must stop — continuing would retry the same bad attributes indefinitely.
+                    rejection_upsert_failed = False
+                    for invalid_name_item in invalid_names:
+                        attr_id = invalid_name_item.get("name") if isinstance(invalid_name_item, dict) else invalid_name_item
+                        rejection_reason = invalid_name_item.get("reason", "INVALID_ATTRIBUTE_NAME") if isinstance(invalid_name_item, dict) else "INVALID_ATTRIBUTE_NAME"
+                        
+                        # Try to find the value we tried to send
+                        rejected_val = None
+                        for original_attr in current_payload_attrs:
+                            if original_attr["name"] == attr_id:
+                                rejected_val = original_attr
+                                break
+
+                        stmt = insert(GbpLocationAttributeRejection).values(
+                            location_id=location_id,
+                            attribute_id=attr_id,
+                            rejection_reason=rejection_reason,
+                            rejected_value=rejected_val,
+                            first_seen=datetime.datetime.now(datetime.timezone.utc),
+                            last_seen=datetime.datetime.now(datetime.timezone.utc),
+                            rejection_count=1,
+                            suppressed=False
+                        )
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=['location_id', 'attribute_id'],
+                            set_={
+                                'rejection_count': GbpLocationAttributeRejection.rejection_count + 1,
+                                'last_seen': datetime.datetime.now(datetime.timezone.utc),
+                                'rejection_reason': rejection_reason,
+                                'rejected_value': rejected_val
+                            }
+                        )
+                        try:
+                            db.execute(stmt)
+                            removed_on_this_run.append(attr_id)
+                        except Exception as upsert_exc:
+                            db.rollback()
+                            logger.error(
+                                "rejection_upsert_failed",
+                                extra={"location_id": location_id, "attribute_id": attr_id, "error": str(upsert_exc)}
+                            )
+                            rejection_upsert_failed = True
+                            break
+
+                    if rejection_upsert_failed:
+                        location.sync_status = "Failed"
+                        db.commit()
+                        return {"status": "error", "reason": "Failed to record attribute rejection — publish aborted."}
+
+                    db.commit()
+
+                    # Strip only the newly rejected attributes
+                    current_payload_attrs = [attr for attr in current_payload_attrs if attr["name"] not in removed_on_this_run]
+
+                    # Persist the cleaned draft state
+                    try:
+                        location.draft_attributes = current_payload_attrs
+                        db.commit()
+                    except Exception as e:
+                        db.rollback()
+                        logger.error("cleaned_draft_save_failed", extra={"location_id": location_id, "error": str(e)})
+
+                    # Retry PATCH exactly ONCE using cleaned payload
+                    if current_payload_attrs:
+                        success, response, exception = run_async(_do_publish(current_payload_attrs))
+                    else:
+                        success = True
+                        response = None
+                        exception = None
+                else:
+                    # Other type of Google error
+                    location.sync_status = "Failed"
+                    db.commit()
+                    if exception is not None:
+                        return {"status": "error", "reason": exception.detail}
+                    elif response is not None:
+                        return {"status": "error", "reason": f"Failed to publish attributes: {response.text}"}
+                    else:
+                        return {"status": "error", "reason": "Failed to publish attributes"}
+        else:
+            # If all attributes were already pre-filtered out by capability memory
+            success = True
+            response = None
+            exception = None
+            
+        if not success:
+            location.sync_status = "Failed"
+            db.commit()
+            if exception is not None:
+                return {"status": "error", "reason": exception.detail}
+            elif response is not None:
+                return {"status": "error", "reason": f"Failed to publish attributes on retry: {response.text}"}
+            else:
+                return {"status": "error", "reason": "Failed to publish attributes on retry"}
+            
+        # Successfully published. Update google_attributes in database
+        all_removed = list(set(removed_due_to_memory + removed_on_this_run))
+        try:
+            provider = ProviderFactory.get_provider("gbp", location.organization_id, db)
+            updated_data = run_async(provider.get_location_attributes(location.google_location_id))
+            location.google_attributes = updated_data.get("attributes", [])
+            location.google_attributes_stale = False
+        except Exception as e:
+            logger.warning(f"Failed to refetch attributes after publish for {location_id}: {e}")
+            # Fallback to optimistic update
+            google_dict = {a.get("name"): a for a in (location.google_attributes or [])}
+            for draft in current_payload_attrs:
+                google_dict[draft["name"]] = draft
+                
+            for r_id in all_removed:
+                if r_id in google_dict:
+                    del google_dict[r_id]
+                    
+            location.google_attributes = list(google_dict.values())
+            location.google_attributes_stale = True
+
+        # C3: Cleanup is critical — if it fails the client will believe publish succeeded but draft
+        # was never cleared, causing duplicate publishes on every subsequent call.
+        try:
+            location.draft_attributes = []  # Clear draft since it is successfully published
+            location.last_google_sync = datetime.datetime.now(datetime.timezone.utc)
+            location.last_published_at = datetime.datetime.now(datetime.timezone.utc)
+            if current_draft_hash:
+                location.last_publish_hash = current_draft_hash
+            location.sync_status = "Synced"
+            location.attention_needed = False
+            location.attention_reason = None
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error("publish_cleanup_failed", extra={"location_id": location_id, "error": str(e)})
+            return {"status": "error", "reason": "Attributes were published to Google but the local state could not be updated."}
+        
+        return {"status": "success", "removed_attributes": all_removed}
+
+    except Exception as e:
+        logger.error(f"publish_location_attributes_task failed: {e}")
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+

@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import json
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import func
@@ -10,7 +11,9 @@ from app.models.sync_log import SyncLog
 from app.models.organization_sync_state import OrganizationSyncState
 from app.providers.factory import ProviderFactory
 
-def generate_content_hash(rating: int, comment: str, reply_text: str, updated_at, reply_created_at) -> str:
+logger = logging.getLogger(__name__)
+
+def generate_content_hash(rating: int, comment: str, reply_text: str, updated_at, reply_created_at=None) -> str:
     if updated_at:
         if updated_at.tzinfo is not None:
             updated_at = updated_at.astimezone(datetime.timezone.utc).replace(tzinfo=None)
@@ -60,8 +63,26 @@ class ReviewSyncService:
             # 2. Fetch reviews from provider with sliding safety window
             provider_name = "gbp"
             provider = ProviderFactory.get_provider(provider_name, organization_id, db)
-            provider_reviews = await provider.get_reviews(location.google_location_id, safe_cutoff_time=safe_cutoff_time)
-            
+            try:
+                provider_reviews = await provider.get_reviews(location.google_location_id, safe_cutoff_time=safe_cutoff_time)
+            except Exception as fetch_err:
+                logger.error("Provider fetch failed for location %s: %s", location_id, fetch_err)
+                error_msg = f"ProviderError: {str(fetch_err)}"
+                if sync_log:
+                    sync_log.status = "ProviderError"
+                    sync_log.error_message = error_msg
+                else:
+                    new_log = SyncLog(
+                        organization_id=organization_id,
+                        location_id=location_id,
+                        status="ProviderError",
+                        run_type=run_type,
+                        error_message=error_msg
+                    )
+                    db.add(new_log)
+                db.commit()
+                return f"PROVIDER_ERROR: {error_msg}"
+
             if not provider_reviews:
                 log_msg = "Successfully synced 0 reviews."
                 if sync_log:
@@ -79,7 +100,13 @@ class ReviewSyncService:
                 db.commit()
                 return f"SUCCESS: {log_msg}"
             
-            # 3. Load existing review hashes for delta detection
+            # 3. Filter out reviews with missing provider IDs
+            valid_reviews = [pr for pr in provider_reviews if pr.id]
+            if len(valid_reviews) < len(provider_reviews):
+                logger.warning("Skipped %d reviews with missing IDs", len(provider_reviews) - len(valid_reviews))
+            provider_reviews = valid_reviews
+
+            # 4. Load existing review hashes for delta detection
             provider_ids = [pr.id for pr in provider_reviews]
             existing_reviews = db.query(Review.provider_review_id, Review.content_hash).filter(
                 Review.location_id == location_id,
@@ -94,7 +121,7 @@ class ReviewSyncService:
                 max_update_time = max_update_time.replace(tzinfo=datetime.timezone.utc)
             
             for pr in provider_reviews:
-                rev_updated_at = pr.updated_at or pr.created_at or datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+                rev_updated_at = pr.updated_at or pr.created_at or datetime.datetime.now(datetime.timezone.utc)
                 if rev_updated_at.tzinfo is None:
                     rev_updated_at = rev_updated_at.replace(tzinfo=datetime.timezone.utc)
                 if rev_updated_at > max_update_time:
@@ -128,14 +155,16 @@ class ReviewSyncService:
                             "is_replied": bool(pr.reply),
                             "reply_text": pr.reply,
                             "reply_created_at": pr.reply_created_at,
-                            "review_created_at": pr.created_at or datetime.datetime.utcnow(),
+                            "review_created_at": pr.created_at or datetime.datetime.now(datetime.timezone.utc),
                             "review_updated_at": pr.updated_at,
                             "raw_payload": pr.provider_metadata,
-                            "created_at": datetime.datetime.utcnow(),
-                            "updated_at": datetime.datetime.utcnow(),
+                            "created_at": datetime.datetime.now(datetime.timezone.utc),
+                            "updated_at": datetime.datetime.now(datetime.timezone.utc),
                             "is_deleted": False,
                             "content_hash": new_hash,
-                            "sentiment_tagged_at": None # Reset to NULL for AI to process
+                            "sentiment_tagged_at": None, # Reset to NULL for AI to process
+                            "sentiment": None,
+                            "issue_category": None
                         })
                     
                     stmt = insert(Review).values(insert_values)
@@ -148,30 +177,30 @@ class ReviewSyncService:
                             "comment": stmt.excluded.comment,
                             "is_replied": stmt.excluded.is_replied,
                             "reply_text": stmt.excluded.reply_text,
-                            "reply_created_at": Review.__table__.c.reply_created_at,
+                            "reply_created_at": stmt.excluded.reply_created_at,
                             "review_updated_at": stmt.excluded.review_updated_at,
                             "raw_payload": stmt.excluded.raw_payload,
                             "updated_at": func.now(),
                             "is_deleted": False,
                             "content_hash": stmt.excluded.content_hash,
-                            "sentiment_tagged_at": None # Reset for reprocessing
+                            "sentiment_tagged_at": None, # Reset for reprocessing
+                            "sentiment": None,
+                            "issue_category": None
                         }
                     )
                     db.execute(stmt)
 
-                db.commit()
-                
+                # NOTE: commit deferred — combined with location metadata update below
+
                 # 6. Event-Driven AI Enqueueing
-                # Fetch IDs of the newly upserted reviews
-                upserted_provider_ids = [pr.id for pr, _ in reviews_to_upsert]
-                upserted_review_ids = db.query(Review.id).filter(
-                    Review.location_id == location_id,
-                    Review.provider_review_id.in_(upserted_provider_ids)
-                ).all()
-                
                 from app.worker import celery as celery_app
-                for (rid,) in upserted_review_ids:
-                    celery_app.send_task("app.tasks.process_review_sentiment_task", args=[rid])
+                celery_app.send_task(
+                    "app.tasks.tag_reviews_sentiment_task",
+                    kwargs={
+                        "location_id": location_id,
+                        "organization_id": organization_id
+                    }
+                )
             
             # Update location summary stats
             stats = db.query(
@@ -191,22 +220,26 @@ class ReviewSyncService:
                 loc_key = f"loc_{location_id}"
                 loc_data = current_meta.get(loc_key, {})
                 loc_data["latest_review_update_at"] = max_update_time.isoformat()
-                loc_data["last_review_sync_completed_at"] = datetime.datetime.utcnow().isoformat()
+                loc_data["last_review_sync_completed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 loc_data["last_review_sync_status"] = "Success"
                 current_meta[loc_key] = loc_data
                 sync_state.location_sync_metadata = current_meta
             
             from app.services.activity_log_service import ActivityLogService
-            ActivityLogService.log(
-                db,
-                organization_id=organization_id,
-                location_id=location_id,
-                actor_user_id=None,
-                entity_type="system",
-                action="reviews_synced",
-                payload={"synced_count": synced_count, "total_fetched": len(provider_reviews)}
-            )
-            
+            try:
+                ActivityLogService.log(
+                    db,
+                    organization_id=organization_id,
+                    location_id=location_id,
+                    actor_user_id=None,
+                    entity_type="system",
+                    action="reviews_synced",
+                    payload={"synced_count": synced_count, "total_fetched": len(provider_reviews)}
+                )
+            except Exception as log_err:
+                logger.warning("ActivityLogService.log failed (non-fatal): %s", log_err)
+
+            # Single atomic commit: review upserts + location metadata update
             db.commit()
 
             # Log successful sync

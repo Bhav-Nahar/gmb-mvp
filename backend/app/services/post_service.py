@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, TypeVar, Type, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from fastapi import HTTPException, status
 from app.models.campaign import Campaign
@@ -19,6 +19,12 @@ from app.constants.posts import PostStatus, PublishJobStatus, CampaignStatus
 import datetime
 
 T = TypeVar("T")
+
+
+def normalize_status(s: Optional[str]) -> Optional[str]:
+    """Normalize a status string to uppercase so 'Draft' and 'DRAFT' compare identically."""
+    return s.upper() if s else s
+
 
 class PostService:
     @staticmethod
@@ -145,7 +151,14 @@ class PostService:
     @staticmethod
     def attach_media(db: Session, post_id: int, media_data: PostMediaCreateRequest, organization_id: int) -> PostMedia:
         post = PostService._verify_ownership(db, Post, post_id, organization_id)
-        
+
+        VALID_ATTACH_STATUSES = {"DRAFT", "APPROVED"}
+        if normalize_status(post.status) not in VALID_ATTACH_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot attach media to a post in status '{post.status}'. Must be Draft or Approved."
+            )
+
         # Safe storage key resolution (Bug 1 Fix)
         storage_key = media_data.storage_key
         if not storage_key:
@@ -283,6 +296,9 @@ class PostService:
         Also instantiates a PostVariant record if one doesn't exist, rendering the 
         summary and CTA URL (including UTM generator) for safety.
         """
+        VALID_PRE_PUBLISH = {"Approved", "APPROVED"}
+        if post.status not in VALID_PRE_PUBLISH:
+            raise ValueError(f"Cannot publish post in status '{post.status}'. Must be Approved.")
         post.status = "PUBLISHING"
 
         # 1. Ensure PostVariant exists and is rendered
@@ -348,7 +364,24 @@ class PostService:
             db.add(variant)
             db.flush()
 
-        idempotency_key = f"post_{post.id}_loc_{location_id}_rev_1"
+        # Dynamic revision: count all existing jobs for this post+location
+        existing_job_count = db.query(func.count(PublishJob.id)).filter(
+            PublishJob.post_id == post.id,
+            PublishJob.location_id == location_id,
+        ).scalar() or 0
+        revision = existing_job_count + 1
+        idempotency_key = f"post_{post.id}_loc_{location_id}_rev_{revision}"
+
+        # Idempotency: return existing non-terminal job rather than creating a duplicate
+        NON_TERMINAL_STATUSES = {"PENDING", "RUNNING", "RETRYING"}
+        existing_non_terminal = db.query(PublishJob).filter(
+            PublishJob.post_id == post.id,
+            PublishJob.location_id == location_id,
+            PublishJob.idempotency_key == idempotency_key,
+        ).first()
+        if existing_non_terminal and normalize_status(existing_non_terminal.status) in NON_TERMINAL_STATUSES:
+            return existing_non_terminal
+
         job = PublishJob(
             organization_id=organization_id,
             campaign_id=post.campaign_id,

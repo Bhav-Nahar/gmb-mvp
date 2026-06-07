@@ -20,12 +20,16 @@ from app.models.activity_log import ActivityLog
 from app.models.activity_log_archive import ActivityLogArchive
 from app.models.location_daily_insights import LocationDailyInsight
 from app.models.organization_sync_state import OrganizationSyncState
+from app.models.gbp_attribute_metadata import GbpAttributeMetadata
+from app.models.gbp_attribute_definition import GbpAttributeDefinition
+from app.models.gbp_location_attribute_rejection import GbpLocationAttributeRejection
 
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location", 
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
     "Campaign", "Post", "PostVariant", "PostMedia", "PublishJob", "PostAuditLog",
     "CampaignAuditLog", "LocationEdit", "ActivityLog", "ActivityLogArchive",
-    "LocationDailyInsight", "OrganizationSyncState"
+    "LocationDailyInsight", "OrganizationSyncState", "GbpAttributeMetadata", "GbpAttributeDefinition",
+    "GbpLocationAttributeRejection"
 ]
 

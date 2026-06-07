@@ -24,8 +24,11 @@ def get_current_user(
     if not token:
         # Fallback to Authorization header for API clients
         auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
+        if auth_header:
+            parts = auth_header.split(" ", 1)
+            if len(parts) != 2 or parts[0].lower() != "bearer":
+                raise HTTPException(status_code=401, detail="Invalid authorization header")
+            token = parts[1]
             
     if not token:
         raise credentials_exception
@@ -111,14 +114,21 @@ def check_csrf(request: Request):
     if request.method in ["GET", "HEAD", "OPTIONS"]:
         return
         
-    # Exclude OAuth and Refresh endpoints (exact match on trailing part of path)
+    # Skip CSRF check in development to avoid localhost port-mismatch issues
+    from app.core.config import settings
+    if settings.APP_ENV == "development":
+        return
+        
+    # Exclude OAuth and Refresh endpoints (exact path match, O(1) frozenset lookup)
+    _CSRF_EXCLUDED_PATHS: frozenset = frozenset({
+        "/api/v1/auth/google/callback",
+        "/api/v1/auth/google/login",
+        "/api/v1/auth/refresh",
+        "/api/v1/",
+        "/",
+    })
     path = request.url.path
-    if any(path.endswith(p) for p in [
-        "/auth/google/callback",
-        "/auth/google/login",
-        "/auth/refresh",
-        "/api/v1/" # health check endpoint might be just / or /api/v1/
-    ]) or path == "/":
+    if path in _CSRF_EXCLUDED_PATHS:
         return
         
     csrf_cookie = request.cookies.get("gmb_csrf_token")

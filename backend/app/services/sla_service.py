@@ -42,40 +42,33 @@ async def get_location_sla_metrics(
     # Response hours logic
     response_hours_expr = func.extract('epoch', Review.reply_created_at - Review.review_created_at) / 3600.0
 
-    # 2. Single aggregate query for replied reviews
-    replied_stats = db.query(
-        func.count(Review.id).label("total_replied"),
-        func.avg(response_hours_expr).label("avg_resp"),
-        func.min(response_hours_expr).label("best_resp"),
-        func.max(response_hours_expr).label("worst_resp"),
-        func.sum(case((response_hours_expr <= 12, 1), else_=0)).label("best_count"),
-        func.sum(case(((response_hours_expr > 12) & (response_hours_expr <= 24), 1), else_=0)).label("good_count"),
-        func.sum(case(((response_hours_expr > 24) & (response_hours_expr <= 72), 1), else_=0)).label("avg_count"),
-        func.sum(case((response_hours_expr > 72, 1), else_=0)).label("poor_count")
-    ).filter(
-        Review.location_id == location_id,
-        Review.is_deleted == False,
-        Review.review_created_at >= started_at,
-        Review.is_replied == True,
-        Review.reply_created_at != None
-    ).first()
-
-    # 3. Query for unreplied
     age_hours_expr = func.extract('epoch', func.now() - Review.review_created_at) / 3600.0
 
-    unreplied_stats = db.query(
-        func.count(Review.id).label("pending_count"),
-        func.sum(case((age_hours_expr > 72, 1), else_=0)).label("overdue_count")
+    # 2. Single combined aggregate query for both replied and unreplied stats
+    combined_stats = db.query(
+        func.sum(case((Review.is_replied == True, 1), else_=0)).label("total_replied"),
+        func.avg(case((Review.is_replied == True, response_hours_expr), else_=None)).label("avg_resp"),
+        func.min(case((Review.is_replied == True, response_hours_expr), else_=None)).label("best_resp"),
+        func.max(case((Review.is_replied == True, response_hours_expr), else_=None)).label("worst_resp"),
+        func.sum(case(((Review.is_replied == True) & (response_hours_expr <= 12), 1), else_=0)).label("best_count"),
+        func.sum(case(((Review.is_replied == True) & (response_hours_expr > 12) & (response_hours_expr <= 24), 1), else_=0)).label("good_count"),
+        func.sum(case(((Review.is_replied == True) & (response_hours_expr > 24) & (response_hours_expr <= 72), 1), else_=0)).label("avg_count"),
+        func.sum(case(((Review.is_replied == True) & (response_hours_expr > 72), 1), else_=0)).label("poor_count"),
+        func.sum(case((Review.is_replied == False, 1), else_=0)).label("pending_count"),
+        func.sum(case(((Review.is_replied == False) & (age_hours_expr > 72), 1), else_=0)).label("overdue_count")
     ).filter(
         Review.location_id == location_id,
         Review.is_deleted == False,
         Review.review_created_at >= started_at,
-        Review.is_replied == False
     ).first()
 
-    total_replied = replied_stats.total_replied if replied_stats and replied_stats.total_replied else 0
-    avg_resp = round(float(replied_stats.avg_resp), 1) if replied_stats and replied_stats.avg_resp is not None else None
-    
+    # Alias combined_stats for replied and unreplied
+    replied_stats = combined_stats
+    unreplied_stats = combined_stats
+
+    total_replied = int(combined_stats.total_replied or 0) if combined_stats else 0
+    avg_resp = round(float(combined_stats.avg_resp), 1) if combined_stats and combined_stats.avg_resp is not None else None
+
     avg_tier = get_sla_tier(avg_resp) if avg_resp is not None else None
 
     return LocationSLAMetrics(
@@ -84,15 +77,15 @@ async def get_location_sla_metrics(
         sla_tracking_started_at=started_at,
         total_replied=total_replied,
         avg_response_hours=avg_resp,
-        best_response_hours=float(replied_stats.best_resp) if replied_stats and replied_stats.best_resp is not None else None,
-        worst_response_hours=float(replied_stats.worst_resp) if replied_stats and replied_stats.worst_resp is not None else None,
-        tier_best_count=int(replied_stats.best_count or 0),
-        tier_good_count=int(replied_stats.good_count or 0),
-        tier_average_count=int(replied_stats.avg_count or 0),
-        tier_poor_count=int(replied_stats.poor_count or 0),
+        best_response_hours=float(combined_stats.best_resp) if combined_stats and combined_stats.best_resp is not None else None,
+        worst_response_hours=float(combined_stats.worst_resp) if combined_stats and combined_stats.worst_resp is not None else None,
+        tier_best_count=int(combined_stats.best_count or 0),
+        tier_good_count=int(combined_stats.good_count or 0),
+        tier_average_count=int(combined_stats.avg_count or 0),
+        tier_poor_count=int(combined_stats.poor_count or 0),
         avg_sla_tier=avg_tier,
-        pending_count=int(unreplied_stats.pending_count or 0),
-        overdue_count=int(unreplied_stats.overdue_count or 0)
+        pending_count=int(combined_stats.pending_count or 0),
+        overdue_count=int(combined_stats.overdue_count or 0)
     )
 
 
@@ -111,39 +104,23 @@ async def get_organization_sla_summary(
     if not locations:
         return []
 
-    # 2. Aggregate replied stats for org
-    replied_stats = db.query(
+    # 2. Single combined aggregate query for both replied and unreplied stats per location
+    combined_stats = db.query(
         Review.location_id,
-        func.count(Review.id).label("total_replied"),
-        func.avg(response_hours_expr).label("avg_resp")
+        func.sum(case((Review.is_replied == True, 1), else_=0)).label("total_replied"),
+        func.avg(case((Review.is_replied == True, response_hours_expr), else_=None)).label("avg_resp"),
+        func.sum(case((Review.is_replied == False, 1), else_=0)).label("pending_count"),
+        func.sum(case(((Review.is_replied == False) & (age_hours_expr > 72), 1), else_=0)).label("overdue_count")
     ).join(
         Location, Review.location_id == Location.id
     ).filter(
         Review.organization_id == organization_id,
         Review.is_deleted == False,
-        Review.is_replied == True,
-        Review.reply_created_at != None,
         Location.sla_tracking_started_at != None,
         Review.review_created_at >= Location.sla_tracking_started_at
     ).group_by(Review.location_id).all()
 
-    # 3. Aggregate unreplied stats for org
-    unreplied_stats = db.query(
-        Review.location_id,
-        func.count(Review.id).label("pending_count"),
-        func.sum(case((age_hours_expr > 72, 1), else_=0)).label("overdue_count")
-    ).join(
-        Location, Review.location_id == Location.id
-    ).filter(
-        Review.organization_id == organization_id,
-        Review.is_deleted == False,
-        Review.is_replied == False,
-        Location.sla_tracking_started_at != None,
-        Review.review_created_at >= Location.sla_tracking_started_at
-    ).group_by(Review.location_id).all()
-
-    replied_map = {row.location_id: row for row in replied_stats}
-    unreplied_map = {row.location_id: row for row in unreplied_stats}
+    combined_map = {row.location_id: row for row in combined_stats}
 
     results = []
     for loc in locations:
@@ -161,14 +138,13 @@ async def get_organization_sla_summary(
             ))
             continue
 
-        r_stat = replied_map.get(loc.id)
-        u_stat = unreplied_map.get(loc.id)
+        stat = combined_map.get(loc.id)
 
-        total_replied = int(r_stat.total_replied) if r_stat else 0
-        avg_resp = round(float(r_stat.avg_resp), 1) if r_stat and r_stat.avg_resp is not None else None
-        
-        pending_count = int(u_stat.pending_count) if u_stat else 0
-        overdue_count = int(u_stat.overdue_count) if u_stat else 0
+        total_replied = int(stat.total_replied or 0) if stat else 0
+        avg_resp = round(float(stat.avg_resp), 1) if stat and stat.avg_resp is not None else None
+
+        pending_count = int(stat.pending_count or 0) if stat else 0
+        overdue_count = int(stat.overdue_count or 0) if stat else 0
 
         avg_tier = get_sla_tier(avg_resp) if avg_resp is not None else None
 

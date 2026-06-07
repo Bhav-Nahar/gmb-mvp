@@ -1,6 +1,7 @@
 import math
 import asyncio
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -17,6 +18,8 @@ from app.llm.exceptions import LLMProviderError
 from app.constants.review_sentiment import ALLOWED_SENTIMENTS, ALLOWED_ISSUE_CATEGORIES
 from app.constants.sla import SLA_TIER_LIST
 from sqlalchemy import func, extract
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -95,7 +98,7 @@ def get_reviews(
         age_hours = extract('epoch', func.now() - Review.review_created_at) / 3600.0
         query = query.filter(Review.is_replied == False, age_hours > 72)
 
-    total = query.count()
+    total = db.query(func.count()).select_from(query.subquery()).scalar()
     pages = math.ceil(total / size) if total > 0 else 1
 
     reviews = query.order_by(Review.review_created_at.desc()).offset((page - 1) * size).limit(size).all()
@@ -129,17 +132,27 @@ def trigger_reviews_sync(
         task = celery_app.send_task("app.tasks.sync_reviews_task", args=[location_id, "Manual", current_user.id])
         return {"message": "Sync task has been queued for the location.", "task_id": task.id}
     else:
-        if current_user.role not in ["Owner", "Admin"]:
-            raise HTTPException(status_code=403, detail="Only Owners and Admins can trigger organization-wide sync")
+        if current_user.role not in ["Owner", "Admin", "Manager"]:
+            raise HTTPException(status_code=403, detail="Only Managers, Owners, and Admins can trigger organization-wide sync")
             
+        from app.core.config import settings
+        chunk_size = getattr(settings, "REVIEW_SYNC_CHUNK_SIZE", 20)
+        
         locations = db.query(Location).filter(
             Location.organization_id == current_user.organization_id
         ).all()
+        loc_ids = [loc.id for loc in locations]
+        
         task_ids = []
-        for loc in locations:
-            task = celery_app.send_task("app.tasks.sync_reviews_task", args=[loc.id, "Manual", current_user.id])
+        for i in range(0, len(loc_ids), chunk_size):
+            chunk = loc_ids[i:i + chunk_size]
+            task = celery_app.send_task(
+                "app.tasks.sync_reviews_chunk_task", 
+                args=[chunk, current_user.organization_id, "Manual", current_user.id]
+            )
             task_ids.append(task.id)
-        return {"message": f"Sync tasks have been queued for {len(locations)} locations.", "task_ids": task_ids}
+            
+        return {"message": f"Sync tasks have been queued for {len(locations)} locations in {len(task_ids)} batches.", "task_ids": task_ids}
 
 @router.post("/{id}/reply", response_model=ReviewResponse)
 async def reply_to_review(
@@ -169,25 +182,29 @@ async def reply_to_review(
     try:
         await provider.reply_review(review.provider_review_id, payload.reply_text)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to post reply to provider: {str(e)}")
+        logger.error("Failed to post reply to provider for review %s: %s", id, e, exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to post reply to the review provider. Please try again later.")
         
     if review.reply_created_at is None:
-        review.reply_created_at = func.now()
+        review.reply_created_at = datetime.now(timezone.utc)
     review.is_replied = True
     review.reply_text = payload.reply_text
-    review.review_updated_at = func.now()
+    review.review_updated_at = datetime.now(timezone.utc)
     
     from app.services.activity_log_service import ActivityLogService
-    ActivityLogService.log(
-        db,
-        organization_id=current_user.organization_id,
-        location_id=review.location_id,
-        actor_user_id=current_user.id,
-        entity_type="review",
-        entity_id=review.id,
-        action="review_replied",
-        payload={"rating": review.rating}
-    )
+    try:
+        ActivityLogService.log(
+            db,
+            organization_id=current_user.organization_id,
+            location_id=review.location_id,
+            actor_user_id=current_user.id,
+            entity_type="review",
+            entity_id=review.id,
+            action="review_replied",
+            payload={"rating": review.rating}
+        )
+    except Exception as log_exc:
+        logger.error("ActivityLogService.log failed for review %s: %s", review.id, log_exc, exc_info=True)
     
     db.commit()
     db.refresh(review)
@@ -226,8 +243,13 @@ async def generate_review_reply(
     try:
         result = await generate_reply(review, location)
     except LLMProviderError as e:
-        import logging
-        logging.getLogger(__name__).error(f"LLM Generation failed: {e}")
+        logger.error("LLM generation failed for review %s: %s", review_id, e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI service temporarily unavailable. Please write a manual reply."
+        )
+    except Exception as e:
+        logger.error("Unexpected error during AI reply generation for review %s: %s", review_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI service temporarily unavailable. Please write a manual reply."

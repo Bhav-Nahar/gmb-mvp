@@ -1,7 +1,8 @@
 from typing import List
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, outerjoin
+from sqlalchemy import select, func, update
 from app.db.session import get_db
 from app.api.deps import get_current_user, staff_required, admin_required, get_user_location_ids, verify_location_access
 from app.models.user import User
@@ -13,7 +14,9 @@ from app.schemas.location import LocationSyncStatus
 from app.schemas.sla import LocationSLAMetrics, LocationSLASummary
 from app.services.sla_service import get_location_sla_metrics, get_organization_sla_summary
 from app.worker import celery
-from sqlalchemy import func
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -122,13 +125,20 @@ def enable_location_sla(
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
 
-    if location.sla_tracking_started_at is not None:
+    now = datetime.now(timezone.utc)
+    result = db.execute(
+        update(Location)
+        .where(Location.id == location_id)
+        .where(Location.sla_tracking_started_at.is_(None))
+        .values(sla_tracking_started_at=now)
+    )
+    if result.rowcount == 0:
+        # Already enabled — re-fetch to return the existing value
+        db.refresh(location)
         return {"status": "already_enabled", "sla_tracking_started_at": location.sla_tracking_started_at}
-        
-    location.sla_tracking_started_at = func.now()
+
     db.commit()
     db.refresh(location)
-    
     return {"status": "enabled", "sla_tracking_started_at": location.sla_tracking_started_at}
 
 @router.get("/{location_id}", response_model=LocationOut)
@@ -199,6 +209,10 @@ async def search_categories(
     async with GBPAsyncClient(current_user.organization_id) as client:
         resp = await client.request("GET", url, headers=headers, params=params)
         if resp.status_code != 200:
+            logger.warning(
+                "GBP category search returned non-200 status %s for query %r: %s",
+                resp.status_code, query, resp.text
+            )
             cats = []
         else:
             cats = resp.json().get("categories", [])
@@ -235,7 +249,7 @@ def trigger_sync(
     
     if not admin_user:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
             detail="No connected Google Account found for this organization. Please reconnect via Google."
         )
 
@@ -278,16 +292,14 @@ def get_location_sync_status(
             run_type="Manual"
         )
 
-    last_synced_at = None
-    if latest_log.status == "Success":
-        last_synced_at = latest_log.created_at
-    else:
-        last_success_log = db.query(SyncLog).filter(
-            SyncLog.location_id == location_id,
-            SyncLog.status == "Success"
-        ).order_by(SyncLog.created_at.desc()).first()
-        if last_success_log:
-            last_synced_at = last_success_log.created_at
+    # Single subquery to find last-success timestamp — avoids a second round-trip
+    last_success_sq = (
+        select(func.max(SyncLog.created_at))
+        .where(SyncLog.location_id == location_id)
+        .where(SyncLog.status == "Success")
+        .scalar_subquery()
+    )
+    last_synced_at = db.execute(select(last_success_sq)).scalar_one_or_none()
 
     return LocationSyncStatus(
         location_id=location_id,

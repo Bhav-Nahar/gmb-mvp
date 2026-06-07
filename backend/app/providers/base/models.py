@@ -23,6 +23,7 @@ class LocationModel(BaseModel):
     provider: str
     provider_metadata: Dict[str, Any] = {}
     synced_at: datetime
+    google_category_resource_name: Optional[str] = None
     
     # Extensions for task parity
     average_rating: Optional[float] = None

@@ -29,6 +29,21 @@ interface Location {
   phone?: string
 }
 
+interface CampaignJob {
+  id: number
+  location_id: number
+  status: string
+  last_error?: string | null
+}
+
+interface CampaignAuditLog {
+  id: number
+  action: string
+  previous_status?: string | null
+  new_status: string
+  created_at: string
+}
+
 interface Campaign {
   id: number
   name: string
@@ -38,8 +53,8 @@ interface Campaign {
   total_published: number
   total_failed: number
   created_at: string
-  jobs?: any[]
-  audit_logs?: any[]
+  jobs?: CampaignJob[]
+  audit_logs?: CampaignAuditLog[]
 }
 
 export default function PostsPage(props: any) {
@@ -62,6 +77,10 @@ export default function PostsPage(props: any) {
   const [mediaUrl, setMediaUrl] = useState('')
   const [mediaPayload, setMediaPayload] = useState<any>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Guard refs
+  const isMounted = useRef(true)
+  const campaignsLoadedOnce = useRef(false)
 
   // Autocomplete & Live Preview State
   const [showSuggest, setShowSuggest] = useState(false)
@@ -150,15 +169,25 @@ export default function PostsPage(props: any) {
   const [pollingActive, setPollingActive] = useState(false)
 
   useEffect(() => {
+    isMounted.current = true
     loadLocations()
-    loadCampaigns()
+    if (!campaignsLoadedOnce.current) {
+      campaignsLoadedOnce.current = true
+      loadCampaigns()
+    }
+    return () => {
+      isMounted.current = false
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     if (locationId) {
       setSelectedLocationIds([locationId])
-      loadCampaigns()
+      if (!campaignsLoadedOnce.current) {
+        campaignsLoadedOnce.current = true
+        loadCampaigns()
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationId])
@@ -168,9 +197,26 @@ export default function PostsPage(props: any) {
       setPollingActive(false)
       return
     }
+
+    // Do not start polling if the campaign is already in a terminal state
+    const currentCampaign = campaigns.find(c => c.id === selectedCampaignId)
+    const terminalStatuses = ['COMPLETED', 'FAILED', 'CANCELLED']
+    if (currentCampaign && terminalStatuses.includes(currentCampaign.status.toUpperCase())) {
+      setPollingActive(false)
+      return
+    }
+
     loadCampaignProgress()
     setPollingActive(true)
-    const interval = setInterval(loadCampaignProgress, 3000)
+    const interval = setInterval(() => {
+      const latest = campaigns.find(c => c.id === selectedCampaignId)
+      if (latest && terminalStatuses.includes(latest.status.toUpperCase())) {
+        clearInterval(interval)
+        setPollingActive(false)
+        return
+      }
+      loadCampaignProgress()
+    }, 3000)
     return () => {
       clearInterval(interval)
       setPollingActive(false)
@@ -187,26 +233,13 @@ export default function PostsPage(props: any) {
 
   const loadCampaigns = async () => {
     try {
-      const data: any = await api.get('/posts/campaigns?size=50')
+      const url = locationId ? `/posts/campaigns?size=50&location_id=${locationId}` : '/posts/campaigns?size=50'
+      const data: any = await api.get(url)
       const allCampaigns = data.campaigns || []
       
-      if (locationId) {
-        const filtered: Campaign[] = []
-        for (const camp of allCampaigns) {
-          try {
-            const detail: Campaign = await api.get(`/posts/campaigns/${camp.id}/progress`)
-            const hasJob = detail.jobs?.some((j: any) => j.location_id === Number(locationId))
-            if (hasJob) {
-              filtered.push({ ...camp, jobs: detail.jobs, audit_logs: detail.audit_logs })
-            }
-          } catch (err) {}
-        }
-        setCampaigns(filtered)
-        if (filtered.length > 0 && !selectedCampaignId) {
-          setSelectedCampaignId(filtered[0].id)
-        }
-      } else {
-        setCampaigns(allCampaigns)
+      setCampaigns(allCampaigns)
+      if (allCampaigns.length > 0 && !selectedCampaignId) {
+        setSelectedCampaignId(allCampaigns[0].id)
       }
     } catch (e: any) {}
   }
@@ -219,12 +252,28 @@ export default function PostsPage(props: any) {
     } catch (e) {}
   }
 
+  const validateUrl = (url: string): boolean => {
+    if (!url) return true // empty is allowed; required check is separate
+    try {
+      const parsed = new URL(url)
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
+    const file = files[0]
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      setErrorAlert('Invalid file type. Please upload an image or video file.')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
     setUploading(true)
     const formData = new FormData()
-    formData.append('file', files[0])
+    formData.append('file', file)
     try {
       const resMedia: any = await api.post('/media/upload', formData)
       setMediaUrl(resMedia.cdn_url)
@@ -255,6 +304,10 @@ export default function PostsPage(props: any) {
   const handleCreateCampaign = async () => {
     if (!campaignName || !summary || selectedLocationIds.length === 0) {
       setErrorAlert('Please provide a campaign name, post summary, and select at least one location.')
+      return
+    }
+    if (ctaUrl && !validateUrl(ctaUrl)) {
+      setErrorAlert('CTA URL must be a valid http or https URL.')
       return
     }
     setSubmitting(true)
@@ -314,6 +367,7 @@ export default function PostsPage(props: any) {
       
       // Close modal and refresh after a short delay
       setTimeout(() => {
+        if (!isMounted.current) return
         setIsModalOpen(false)
         loadCampaigns()
         setSelectedCampaignId(camp.id)
@@ -476,7 +530,7 @@ export default function PostsPage(props: any) {
                     </div>
                   </div>
 
-                  {selectedCampaign.jobs && selectedCampaign.jobs.filter((j: any) => j.status === 'FAILED').length > 0 && (
+                  {selectedCampaign.jobs && selectedCampaign.jobs.filter((j: CampaignJob) => j.status === 'FAILED').length > 0 && (
                     <div className="mt-8">
                       <h4 className="text-sm font-bold text-red-400 uppercase mb-3 flex items-center gap-2">
                         <AlertTriangle className="w-4 h-4" /> Failed Locations
@@ -490,7 +544,7 @@ export default function PostsPage(props: any) {
                             </tr>
                           </thead>
                           <tbody>
-                            {selectedCampaign.jobs.filter((j: any) => j.status === 'FAILED').map((job: any) => (
+                            {selectedCampaign.jobs.filter((j: CampaignJob) => j.status === 'FAILED').map((job: CampaignJob) => (
                               <tr key={job.id} className="border-t border-border/50">
                                 <td className="px-4 py-3 font-medium text-white">{locations.find(l => l.id === job.location_id)?.location_name || job.location_id}</td>
                                 <td className="px-4 py-3 text-red-400 font-mono text-xs">{job.last_error || 'Unknown error'}</td>
@@ -517,7 +571,7 @@ export default function PostsPage(props: any) {
                             </tr>
                           </thead>
                           <tbody>
-                            {selectedCampaign.audit_logs.map((log: any) => (
+                            {selectedCampaign.audit_logs.map((log: CampaignAuditLog) => (
                               <tr key={log.id} className="border-t border-border/50 hover:bg-muted/10 transition-colors">
                                 <td className="px-4 py-3 font-medium text-white uppercase text-xs">{log.action}</td>
                                 <td className="px-4 py-3 text-muted-foreground">
@@ -615,7 +669,14 @@ export default function PostsPage(props: any) {
                           type="text"
                           placeholder="https://example.com/promo?loc={{location_id}}"
                           value={ctaUrl}
-                          onChange={e => setCtaUrl(e.target.value)}
+                          onChange={e => {
+                            setCtaUrl(e.target.value)
+                            if (e.target.value && !validateUrl(e.target.value)) {
+                              setErrorAlert('CTA URL must be a valid http or https URL.')
+                            } else {
+                              setErrorAlert('')
+                            }
+                          }}
                           className="w-full bg-muted/20 border border-border rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-colors text-white"
                         />
                       </div>
@@ -720,7 +781,7 @@ export default function PostsPage(props: any) {
 
               <div className="p-5 border-t border-border flex justify-end gap-3 sticky bottom-0 bg-background/95 backdrop-blur z-10">
                 <button onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 rounded-lg text-sm font-bold bg-muted/30 hover:bg-muted/50 border border-border transition-colors cursor-pointer">Cancel</button>
-                <button onClick={handleCreateCampaign} disabled={submitting} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors shadow-lg cursor-pointer">
+                <button onClick={handleCreateCampaign} disabled={submitting || uploading} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors shadow-lg cursor-pointer">
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin"/> : <Send className="w-4 h-4"/>} Launch Campaign
                 </button>
               </div>

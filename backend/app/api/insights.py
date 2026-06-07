@@ -1,8 +1,11 @@
 import datetime
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 from app.api import deps
 from app.db.session import SessionLocal
@@ -49,14 +52,23 @@ def get_insights_overview(
         end_date = datetime.date.today() - datetime.timedelta(days=1)
     if not start_date:
         start_date = end_date - datetime.timedelta(days=29)
-        
+
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date must be on or before end_date."
+        )
+    if (end_date - start_date).days > 366:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Date range must not exceed 366 days."
+        )
+
     duration = (end_date - start_date).days + 1
     prior_end_date = start_date - datetime.timedelta(days=1)
     prior_start_date = prior_end_date - datetime.timedelta(days=duration - 1)
 
     # 2. Query location ID filters
-    loc_filter_clause = ""
-    loc_params = {"org_id": current_user.organization_id}
     if allowed_ids is not None:
         if not allowed_ids:
             # User has no access to any locations
@@ -73,26 +85,27 @@ def get_insights_overview(
                 leaderboard=[],
                 attention_locations_count=0
             )
-        loc_filter_clause = "AND location_id IN :allowed_ids"
-        loc_params["allowed_ids"] = tuple(allowed_ids)
 
-    # 3. Retrieve Current and Prior Aggregates for KPIs
-    kpi_query = text(f"""
-        SELECT 
-            COALESCE(SUM(profile_views), 0) AS profile_views,
-            COALESCE(SUM(search_impressions), 0) AS search_impressions,
-            COALESCE(SUM(maps_views), 0) AS maps_views,
-            COALESCE(SUM(phone_calls), 0) AS phone_calls,
-            COALESCE(SUM(website_clicks), 0) AS website_clicks,
-            COALESCE(SUM(direction_requests), 0) AS direction_requests
-        FROM location_daily_insights
-        WHERE organization_id = :org_id
-          AND date BETWEEN :start AND :end
-          {loc_filter_clause}
-    """)
-    
-    curr_res = db.execute(kpi_query, {**loc_params, "start": start_date, "end": end_date}).fetchone()
-    prior_res = db.execute(kpi_query, {**loc_params, "start": prior_start_date, "end": prior_end_date}).fetchone()
+    # 3. Retrieve Current and Prior Aggregates for KPIs using ORM
+    def _kpi_base_query(start, end):
+        q = db.query(
+            func.coalesce(func.sum(LocationDailyInsight.profile_views), 0).label("profile_views"),
+            func.coalesce(func.sum(LocationDailyInsight.search_impressions), 0).label("search_impressions"),
+            func.coalesce(func.sum(LocationDailyInsight.maps_views), 0).label("maps_views"),
+            func.coalesce(func.sum(LocationDailyInsight.phone_calls), 0).label("phone_calls"),
+            func.coalesce(func.sum(LocationDailyInsight.website_clicks), 0).label("website_clicks"),
+            func.coalesce(func.sum(LocationDailyInsight.direction_requests), 0).label("direction_requests"),
+        ).filter(
+            LocationDailyInsight.organization_id == current_user.organization_id,
+            LocationDailyInsight.date >= start,
+            LocationDailyInsight.date <= end,
+        )
+        if allowed_ids is not None:
+            q = q.filter(LocationDailyInsight.location_id.in_(allowed_ids))
+        return q.one()
+
+    curr_res = _kpi_base_query(start_date, end_date)
+    prior_res = _kpi_base_query(prior_start_date, prior_end_date)
 
     kpis = OverviewKPIs(
         profile_views=InsightsMetricDelta(
@@ -127,29 +140,28 @@ def get_insights_overview(
         )
     )
 
-    # 4. Get Time Series Trends (aggregating by date)
-    trend_query = text(f"""
-        SELECT 
-            date,
-            SUM(profile_views) AS profile_views,
-            SUM(search_impressions) AS search_impressions,
-            SUM(maps_views) AS maps_views,
-            SUM(phone_calls) AS phone_calls,
-            SUM(website_clicks) AS website_clicks,
-            SUM(direction_requests) AS direction_requests,
-            SUM(searches_direct) AS searches_direct,
-            SUM(searches_indirect) AS searches_indirect,
-            SUM(searches_chain) AS searches_chain,
-            SUM(reviews_received) AS reviews_received,
-            AVG(avg_rating) AS avg_rating
-        FROM location_daily_insights
-        WHERE organization_id = :org_id
-          AND date BETWEEN :start AND :end
-          {loc_filter_clause}
-        GROUP BY date
-        ORDER BY date ASC
-    """)
-    trend_res = db.execute(trend_query, {**loc_params, "start": start_date, "end": end_date}).fetchall()
+    # 4. Get Time Series Trends (aggregating by date) using ORM
+    trend_q = db.query(
+        LocationDailyInsight.date,
+        func.sum(LocationDailyInsight.profile_views).label("profile_views"),
+        func.sum(LocationDailyInsight.search_impressions).label("search_impressions"),
+        func.sum(LocationDailyInsight.maps_views).label("maps_views"),
+        func.sum(LocationDailyInsight.phone_calls).label("phone_calls"),
+        func.sum(LocationDailyInsight.website_clicks).label("website_clicks"),
+        func.sum(LocationDailyInsight.direction_requests).label("direction_requests"),
+        func.sum(LocationDailyInsight.searches_direct).label("searches_direct"),
+        func.sum(LocationDailyInsight.searches_indirect).label("searches_indirect"),
+        func.sum(LocationDailyInsight.searches_chain).label("searches_chain"),
+        func.sum(LocationDailyInsight.reviews_received).label("reviews_received"),
+        func.avg(LocationDailyInsight.avg_rating).label("avg_rating"),
+    ).filter(
+        LocationDailyInsight.organization_id == current_user.organization_id,
+        LocationDailyInsight.date >= start_date,
+        LocationDailyInsight.date <= end_date,
+    )
+    if allowed_ids is not None:
+        trend_q = trend_q.filter(LocationDailyInsight.location_id.in_(allowed_ids))
+    trend_res = trend_q.group_by(LocationDailyInsight.date).order_by(LocationDailyInsight.date.asc()).all()
     
     trends = [
         DailyMetricPoint(
@@ -169,24 +181,31 @@ def get_insights_overview(
         for row in trend_res
     ]
 
-    # 5. Leaderboard of Top Locations
-    leaderboard_query = text(f"""
-        SELECT 
-            l.id AS location_id,
-            l.location_name,
-            COALESCE(SUM(i.profile_views), 0) AS profile_views,
-            COALESCE(SUM(i.search_impressions), 0) AS search_impressions,
-            COALESCE(SUM(i.reviews_received), 0) AS reviews_count,
-            AVG(i.avg_rating) AS avg_rating
-        FROM locations l
-        LEFT JOIN location_daily_insights i ON l.id = i.location_id AND i.date BETWEEN :start AND :end
-        WHERE l.organization_id = :org_id
-          {"" if allowed_ids is None else "AND l.id IN :allowed_ids"}
-        GROUP BY l.id, l.location_name
-        ORDER BY profile_views DESC
-        LIMIT 10
-    """)
-    leaderboard_res = db.execute(leaderboard_query, {**loc_params, "start": start_date, "end": end_date}).fetchall()
+    # 5. Leaderboard of Top Locations using ORM
+    leaderboard_q = db.query(
+        Location.id.label("location_id"),
+        Location.location_name,
+        func.coalesce(func.sum(LocationDailyInsight.profile_views), 0).label("profile_views"),
+        func.coalesce(func.sum(LocationDailyInsight.search_impressions), 0).label("search_impressions"),
+        func.coalesce(func.sum(LocationDailyInsight.reviews_received), 0).label("reviews_count"),
+        func.coalesce(func.avg(LocationDailyInsight.avg_rating), 0.0).label("avg_rating"),
+    ).outerjoin(
+        LocationDailyInsight,
+        (Location.id == LocationDailyInsight.location_id) &
+        (LocationDailyInsight.date >= start_date) &
+        (LocationDailyInsight.date <= end_date),
+    ).filter(
+        Location.organization_id == current_user.organization_id,
+    )
+    if allowed_ids is not None:
+        leaderboard_q = leaderboard_q.filter(Location.id.in_(allowed_ids))
+    leaderboard_res = (
+        leaderboard_q
+        .group_by(Location.id, Location.location_name)
+        .order_by(text("profile_views DESC"))
+        .limit(10)
+        .all()
+    )
     
     leaderboard = [
         LeaderboardLocation(
@@ -195,7 +214,7 @@ def get_insights_overview(
             profile_views=row.profile_views,
             search_impressions=row.search_impressions,
             reviews_count=row.reviews_count,
-            avg_rating=float(row.avg_rating) if row.avg_rating is not None else None
+            avg_rating=float(row.avg_rating)
         )
         for row in leaderboard_res
     ]
@@ -214,8 +233,7 @@ def get_insights_overview(
         check_and_trigger_stale_insights_sync(current_user.organization_id, db)
     except Exception as e:
         # Prevent sync errors from blocking data display
-        import logging
-        logging.getLogger(__name__).error(f"Failed to check/trigger insights sync on overview load: {str(e)}")
+        logger.error(f"Failed to check/trigger insights sync on overview load: {str(e)}")
 
     return InsightsOverviewResponse(
         kpis=kpis,
@@ -262,6 +280,17 @@ def get_location_insights(
         end_date = datetime.date.today() - datetime.timedelta(days=1)
     if not start_date:
         start_date = end_date - datetime.timedelta(days=29)
+
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date must be on or before end_date."
+        )
+    if (end_date - start_date).days > 366:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Date range must not exceed 366 days."
+        )
 
     duration = (end_date - start_date).days + 1
     prior_end_date = start_date - datetime.timedelta(days=1)
@@ -342,12 +371,21 @@ def get_location_insights(
         for item in insights
     ]
 
-    # 3. Sentiment breakdown (aggregate counts)
-    pos_count = sum(i.positive_review_count for i in insights)
-    neu_count = sum(i.neutral_review_count for i in insights)
-    neg_count = sum(i.negative_review_count for i in insights)
+    # 3. Sentiment breakdown (aggregate counts via SQL)
+    sentiment_agg = db.query(
+        func.coalesce(func.sum(LocationDailyInsight.positive_review_count), 0).label("pos_count"),
+        func.coalesce(func.sum(LocationDailyInsight.neutral_review_count), 0).label("neu_count"),
+        func.coalesce(func.sum(LocationDailyInsight.negative_review_count), 0).label("neg_count"),
+    ).filter(
+        LocationDailyInsight.location_id == id,
+        LocationDailyInsight.date >= start_date,
+        LocationDailyInsight.date <= end_date,
+    ).one()
+    pos_count = sentiment_agg.pos_count
+    neu_count = sentiment_agg.neu_count
+    neg_count = sentiment_agg.neg_count
     total_rev = pos_count + neu_count + neg_count
-    
+
     if total_rev > 0:
         pos_pct = (pos_count / total_rev) * 100.0
         neu_pct = (neu_count / total_rev) * 100.0
@@ -364,8 +402,15 @@ def get_location_insights(
         negative_percentage=neg_pct
     )
 
-    # 4. SLA Summary details
-    reviews_count = sum(i.reviews_received for i in insights)
+    # 4. SLA Summary details (aggregate counts via SQL)
+    sla_agg = db.query(
+        func.coalesce(func.sum(LocationDailyInsight.reviews_received), 0).label("reviews_count"),
+    ).filter(
+        LocationDailyInsight.location_id == id,
+        LocationDailyInsight.date >= start_date,
+        LocationDailyInsight.date <= end_date,
+    ).one()
+    reviews_count = sla_agg.reviews_count
     total_replied = sum(int(i.reviews_received * (i.response_rate / 100.0)) for i in insights)
     
     sla_resp_rate = (total_replied / reviews_count) * 100.0 if reviews_count > 0 else 0.0
@@ -413,8 +458,7 @@ def get_location_insights(
         check_and_trigger_stale_insights_sync(current_user.organization_id, db)
     except Exception as e:
         # Prevent sync errors from blocking data display
-        import logging
-        logging.getLogger(__name__).error(f"Failed to check/trigger insights sync on location load: {str(e)}")
+        logger.error(f"Failed to check/trigger insights sync on location load: {str(e)}")
 
     return LocationInsightsResponse(
         location_id=location.id,

@@ -1,6 +1,8 @@
 import json
 import logging
-from datetime import datetime
+import re
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -55,8 +57,8 @@ async def tag_reviews_sentiment(reviews: list[Review], db: Session) -> None:
     if not untagged:
         return
 
-    # Split into chunks of 5
-    chunks: list[list[Review]] = [untagged[i:i + 5] for i in range(0, len(untagged), 5)]
+    # Split into chunks of 15
+    chunks: list[list[Review]] = [untagged[i:i + 15] for i in range(0, len(untagged), 15)]
 
     for chunk in chunks:
         try:
@@ -89,15 +91,21 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
     )
 
     llm = get_llm_provider()
-    raw: str = await llm.complete(SYSTEM_PROMPT, user_message, max_tokens=300, temperature=0.1)
+    raw: str = ""
+    for attempt in range(3):
+        try:
+            raw = await llm.complete(SYSTEM_PROMPT, user_message, max_tokens=300, temperature=0.1)
+            break
+        except LLMProviderError as e:
+            if attempt == 2:
+                raise
+            wait = 2 ** attempt  # 1s, 2s
+            logger.warning("LLM batch attempt %d failed, retrying in %ds: %s", attempt + 1, wait, str(e))
+            time.sleep(wait)
 
     # Strip markdown fences if present
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        # Remove opening fence line and closing fence line
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        cleaned = "\n".join(lines).strip()
+    raw_text = raw
+    cleaned = re.sub(r"^\s*```(?:json)?\s*\n?|\n?\s*```\s*$", "", raw_text.strip(), flags=re.MULTILINE)
 
     # Parse JSON
     try:
@@ -124,7 +132,12 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
             logger.warning("Skipping item missing required keys: %s", list(item.keys()))
             continue
 
-        review_id = item["id"]
+        try:
+            review_id = int(item["id"])
+        except (ValueError, TypeError, KeyError):
+            logger.warning("Skipping item with unparseable id: %s", item.get("id"))
+            continue
+
         sentiment = item["sentiment"]
         issue_category = item["issue_category"]
 
@@ -136,18 +149,21 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
             logger.warning("Skipping item %s — invalid issue_category: %s", review_id, issue_category)
             continue
 
-        review = review_map.get(int(review_id))
+        review = review_map.get(review_id)
         if review is None:
             logger.warning("Skipping item — review id %s not found in batch.", review_id)
             continue
 
         review.sentiment = sentiment
         review.issue_category = issue_category
-        review.sentiment_tagged_at = datetime.utcnow()
+        review.sentiment_tagged_at = datetime.now(timezone.utc)
         valid_updates.append(review)
 
     if not valid_updates:
         return
+
+    for r in valid_updates:
+        db.add(r)
 
     try:
         db.commit()

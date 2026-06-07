@@ -3,6 +3,10 @@ from app.core.listing_fields import FIELD_MAP
 
 def transform_identity(field_name: str, value: Any) -> Dict[str, Any]:
     config = FIELD_MAP.get(field_name)
+    if config is None:
+        raise ValueError(f"Unknown field '{field_name}': not found in FIELD_MAP")
+    if config.gbp_field_mask is None:
+        raise ValueError(f"Field '{field_name}' has no gbp_field_mask defined")
     return {config.gbp_field_mask: value}
 
 def transform_location_name(field_name: str, value: Any) -> Dict[str, Any]:
@@ -19,26 +23,53 @@ def transform_description(field_name: str, value: Any) -> Dict[str, Any]:
 
 def transform_primary_category(field_name: str, value: Any) -> Dict[str, Any]:
     category_name = value
-    if isinstance(value, dict) and "name" in value:
-        category_name = value["name"]
+    if isinstance(value, dict):
+        if "name" in value:
+            category_name = value["name"]
+        else:
+            raise ValueError(f"Category value is a dict but missing 'name' key: {value!r}")
+    if not isinstance(category_name, str):
+        raise ValueError(
+            f"Expected category_name to be a string, got {type(category_name).__name__}: {category_name!r}"
+        )
     return {"categories": {"primaryCategory": {"name": str(category_name)}}}
 
 def transform_address(field_name: str, value: Any) -> Dict[str, Any]:
     return {"storefrontAddress": value}
 
+def _parse_time_string(time_str: str) -> Dict[str, int]:
+    """Parse a time string of the form HH:MM or HH:MM:SS into {hours, minutes}."""
+    parts = time_str.split(":")
+    if len(parts) < 2:
+        raise ValueError(f"Invalid time string (expected HH:MM or HH:MM:SS): {time_str!r}")
+    try:
+        h = int(parts[0])
+        m = int(parts[1])
+    except ValueError:
+        raise ValueError(f"Invalid time string (non-integer components): {time_str!r}")
+    if not (0 <= h <= 23):
+        raise ValueError(f"Hour out of range [0-23] in time string: {time_str!r}")
+    if not (0 <= m <= 59):
+        raise ValueError(f"Minute out of range [0-59] in time string: {time_str!r}")
+    return {"hours": h, "minutes": m}
+
 def transform_business_hours(field_name: str, value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {"regularHours": {"periods": []}}
+    if not hasattr(value, "__iter__"):
+        raise ValueError(
+            f"transform_business_hours expects an iterable of period dicts, got {type(value).__name__}"
+        )
     formatted_periods = []
     for p in value:
         open_t = p.get("openTime")
         close_t = p.get("closeTime")
-        
+
         if isinstance(open_t, str) and ":" in open_t:
-            h, m = map(int, open_t.split(":"))
-            open_t = {"hours": h, "minutes": m}
+            open_t = _parse_time_string(open_t)
         if isinstance(close_t, str) and ":" in close_t:
-            h, m = map(int, close_t.split(":"))
-            close_t = {"hours": h, "minutes": m}
-            
+            close_t = _parse_time_string(close_t)
+
         formatted_periods.append({
             "openDay": p.get("openDay"),
             "openTime": open_t,
@@ -58,6 +89,15 @@ TRANSFORMER_REGISTRY: Dict[str, Callable[[str, Any], Dict[str, Any]]] = {
     "address": transform_address,
     "business_hours": transform_business_hours,
 }
+
+def transform(field_name: str, value: Any) -> Dict[str, Any]:
+    """Top-level dispatch: validate field_name exists in FIELD_MAP, then route to the correct transformer."""
+    config = FIELD_MAP.get(field_name)
+    if config is None:
+        raise ValueError(f"Unknown field '{field_name}': not found in FIELD_MAP")
+    transformer_key = getattr(config, "transformer", None)
+    transformer_fn = TRANSFORMER_REGISTRY.get(transformer_key, transform_identity)
+    return transformer_fn(field_name, value)
 
 class PayloadTransformer:
     @staticmethod
