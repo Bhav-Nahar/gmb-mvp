@@ -123,6 +123,8 @@ async def get_form_schema(
     def extract_val(val_obj):
         if not val_obj:
             return None
+        if not isinstance(val_obj, dict):
+            return val_obj
         if "values" in val_obj:
             return val_obj["values"]
         if "repeatedEnumValue" in val_obj:
