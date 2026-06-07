@@ -1034,12 +1034,16 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
 
     try:
         # Loop over shard jobs sequentially
+        cached_status = campaign_status
         for idx, job_id in enumerate(job_ids):
-            # 1. Double check Campaign Status before executing individual job provider call
-            campaign_status = (r.get(f"campaign:{campaign_id}:status") or b"").decode("utf-8")
-            if campaign_status in ["Paused", "Cancelled"]:
+            # 1. Double check Campaign Status periodically (every 5 jobs) 
+            # instead of every single job to save Redis requests
+            if idx > 0 and idx % 5 == 0:
+                cached_status = (r.get(f"campaign:{campaign_id}:status") or b"").decode("utf-8")
+
+            if cached_status in ["Paused", "Cancelled"]:
                 # Circuit breaker tripped mid-shard
-                logger.info(f"Campaign {campaign_id} transitioned to {campaign_status}. Tripping circuit breaker for remaining jobs in shard.")
+                logger.info(f"Campaign {campaign_id} transitioned to {cached_status}. Tripping circuit breaker for remaining jobs in shard.")
                 remaining_ids = job_ids[idx:]
                 db = SessionLocal()
                 try:
