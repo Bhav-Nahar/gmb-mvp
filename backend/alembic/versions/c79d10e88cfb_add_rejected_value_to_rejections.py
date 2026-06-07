@@ -1,7 +1,7 @@
 """add rejected_value to rejections
 
 Revision ID: c79d10e88cfb
-Revises: 6a25b1c50d0b
+Revises: 8c3b1a2d4e5f
 Create Date: 2026-06-08 01:03:00.000000
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = 'c79d10e88cfb'
-down_revision = '6a25b1c50d0b'
+down_revision = '8c3b1a2d4e5f'
 branch_labels = None
 depends_on = None
 
