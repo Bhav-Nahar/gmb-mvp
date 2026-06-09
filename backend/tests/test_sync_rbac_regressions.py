@@ -90,9 +90,41 @@ class SyncAndRbacRegressionTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
-    def test_provider_mapper_import_smoke(self):
-        import app.providers.gbp.mapper as mapper_module
-        self.assertIsNotNone(mapper_module.GBPLocationMapper)
+    def test_provider_mapper_location_state(self):
+        from app.providers.gbp.mapper import GBPLocationMapper
+        from app.providers.gbp.schemas import GBPLocationRaw
+        
+        # Test case 1: verified location
+        raw_verified = GBPLocationRaw(
+            name="locations/mock-1",
+            title="Mock Verified",
+            locationState={"isVerified": True, "isSuspended": False, "isDuplicate": False}
+        )
+        model_verified = GBPLocationMapper.to_model(raw_verified)
+        self.assertTrue(model_verified.is_verified)
+        self.assertFalse(model_verified.is_suspended)
+        self.assertFalse(model_verified.is_duplicate)
+        
+        # Test case 2: suspended duplicate location
+        raw_suspended = GBPLocationRaw(
+            name="locations/mock-2",
+            title="Mock Suspended Duplicate",
+            locationState={"isVerified": False, "isSuspended": True, "isDuplicate": True}
+        )
+        model_suspended = GBPLocationMapper.to_model(raw_suspended)
+        self.assertFalse(model_suspended.is_verified)
+        self.assertTrue(model_suspended.is_suspended)
+        self.assertTrue(model_suspended.is_duplicate)
+        
+        # Test case 3: missing locationState
+        raw_missing = GBPLocationRaw(
+            name="locations/mock-3",
+            title="Mock Missing State"
+        )
+        model_missing = GBPLocationMapper.to_model(raw_missing)
+        self.assertIsNone(model_missing.is_verified)
+        self.assertIsNone(model_missing.is_suspended)
+        self.assertIsNone(model_missing.is_duplicate)
 
     def test_location_sync_selects_active_owner_admin_with_latest_token(self):
         owner = User(

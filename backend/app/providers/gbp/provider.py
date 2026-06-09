@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 import time
 import logging
+import asyncio
 from sqlalchemy.orm import Session
 from app.providers.base.provider import BaseProvider
 from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric
@@ -177,7 +178,8 @@ class GBPProvider(BaseProvider):
                 phoneNumbers={"primaryPhone": "+1 206 555 0199"},
                 websiteUri="https://sleekcoffeeroasters.com",
                 rating=4.8,
-                reviewCount=124
+                reviewCount=124,
+                locationState={"isVerified": True, "isSuspended": False, "isDuplicate": False}
             )
             mock_raw_2 = GBPLocationRaw(
                 name="locations/mock-loc-2",
@@ -187,7 +189,8 @@ class GBPProvider(BaseProvider):
                 phoneNumbers={"primaryPhone": "+1 512 555 0288"},
                 websiteUri="https://zenithfitness.com",
                 rating=4.5,
-                reviewCount=89
+                reviewCount=89,
+                locationState={"isVerified": False, "isSuspended": False, "isDuplicate": False}
             )
             return [GBPLocationMapper.to_model(mock_raw_1), GBPLocationMapper.to_model(mock_raw_2)]
 
@@ -218,9 +221,44 @@ class GBPProvider(BaseProvider):
                     data = loc_resp.json()
                     batch = data.get("locations", [])
                     
+                    async def fetch_vom_state(loc_dict):
+                        loc_name = loc_dict["name"]
+                        try:
+                            vom_url = f"https://mybusinessverifications.googleapis.com/v1/{loc_name}/VoiceOfMerchantState"
+                            vom_resp = await client.request("GET", vom_url, headers=headers)
+                            if vom_resp.status_code == 200:
+                                vom_data = vom_resp.json()
+                                is_verified = vom_data.get("hasVoiceOfMerchant", False)
+                                is_duplicate = "resolveOwnershipConflict" in vom_data
+                                is_suspended = None
+                                
+                                # Merge flags from location metadata if present
+                                loc_metadata = loc_dict.get("metadata", {})
+                                if loc_metadata.get("isSuspended") is True:
+                                    is_suspended = True
+                                elif loc_metadata.get("isSuspended") is False:
+                                    is_suspended = False
+                                    
+                                if loc_metadata.get("isDuplicate") is True:
+                                    is_duplicate = True
+                                if loc_metadata.get("isVerified") is True:
+                                    is_verified = True
+                                    
+                                loc_dict["locationState"] = {
+                                    "isVerified": is_verified,
+                                    "isSuspended": is_suspended,
+                                    "isDuplicate": is_duplicate
+                                }
+                            else:
+                                logger.warning(f"Failed to fetch VoiceOfMerchantState for {loc_name}: {vom_resp.status_code} {vom_resp.text}")
+                        except Exception as e:
+                            logger.error(f"Error fetching VoiceOfMerchantState for {loc_name}: {str(e)}")
+
+                    if batch:
+                        await asyncio.gather(*(fetch_vom_state(loc) for loc in batch))
+
                     for loc_dict in batch:
                         loc_name = loc_dict["name"]
-                        
                         try:
                             raw_model = GBPLocationRaw(**loc_dict)
                             all_locations.append(GBPLocationMapper.to_model(raw_model, account_name=account_name))

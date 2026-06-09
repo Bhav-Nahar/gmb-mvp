@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
-from app.api.deps import get_db, get_current_user, admin_required, staff_required
+from app.api.deps import get_db, get_current_user, admin_required, staff_required, verify_location_access
 from app.models.user import User
 from app.models.location_edit import LocationEdit
 from app.models.activity_log import ActivityLog
@@ -47,6 +47,7 @@ def create_edit(
     payload: LocationEditCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _access: int = Depends(verify_location_access)
 ):
     """Staff: creates a Draft. Admin: creates and auto-advances to Pending."""
     try:
@@ -129,6 +130,27 @@ def submit_draft(
     current_user: User = Depends(get_current_user),
 ):
     try:
+        # First, ensure the edit exists and user has access to its location
+        edit_lookup = db.query(LocationEdit).filter(
+            LocationEdit.id == edit_id,
+            LocationEdit.organization_id == current_user.organization_id
+        ).first()
+        if not edit_lookup:
+            raise HTTPException(status_code=404, detail="Edit not found.")
+            
+        # Verify access to the specific location this edit targets
+        from app.api.deps import verify_location_access
+        # We invoke the helper manually since we don't have location_id in the URL
+        # For a more robust fix, we'd refactor the dependency, but this is immediate.
+        from app.models.user_location_access import UserLocationAccess
+        if current_user.role not in ["Owner", "Admin"]:
+            has_access = db.query(UserLocationAccess).filter(
+                UserLocationAccess.user_id == current_user.id,
+                UserLocationAccess.location_id == edit_lookup.location_id
+            ).first()
+            if not has_access:
+                raise HTTPException(status_code=403, detail="You do not have access to this location.")
+
         edit = ListingEditService.submit_draft(
             db,
             edit_id=edit_id,

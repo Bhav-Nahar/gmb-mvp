@@ -27,6 +27,9 @@ function LoginContent() {
         friendlyMessage = 'Security state validation failed. Please try logging in again.'
       } else if (errorParam === 'session_expired') {
         friendlyMessage = 'Your session has expired. Please sign in again.'
+      } else if (errorParam === 'profile_fetch_failed') {
+        const details = searchParams.get('details')
+        friendlyMessage = `Failed to establish session. ${details ? `Details: ${details}` : 'Please try again.'}`
       }
       setError(friendlyMessage)
     }

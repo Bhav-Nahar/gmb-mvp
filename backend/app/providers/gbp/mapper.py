@@ -44,6 +44,17 @@ class GBPLocationMapper:
         if raw.phoneNumbers and "primaryPhone" in raw.phoneNumbers:
             phone = raw.phoneNumbers["primaryPhone"]
 
+        is_verified = None
+        is_suspended = None
+        is_duplicate = None
+        
+        metadata = raw.metadata or {}
+        location_state = metadata.get("locationState") or raw.locationState
+        if location_state:
+            is_verified = location_state.get("isVerified")
+            is_suspended = location_state.get("isSuspended")
+            is_duplicate = location_state.get("isDuplicate")
+
         return LocationModel(
             provider_location_id=raw.name,
             google_account_id=account_name,
@@ -59,7 +70,10 @@ class GBPLocationMapper:
             synced_at=datetime.now(timezone.utc),
             average_rating=raw.rating,
             total_reviews=raw.reviewCount,
-            google_category_resource_name=google_category_resource_name
+            google_category_resource_name=google_category_resource_name,
+            is_verified=is_verified,
+            is_suspended=is_suspended,
+            is_duplicate=is_duplicate
         )
 
 

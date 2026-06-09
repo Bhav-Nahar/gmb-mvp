@@ -363,8 +363,8 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         # Generate new session CSRF token
         session_csrf = secrets.token_urlsafe(32)
         
-        # Redirect to frontend success page that will save credentials
-        redirect_url = f"{settings.FRONTEND_URL}/login/success?token={local_token}&csrf={session_csrf}&onboarding={'true' if is_new_user else 'false'}"
+        # Redirect to frontend success page
+        redirect_url = f"{settings.FRONTEND_URL}/login/success?onboarding={'true' if is_new_user else 'false'}"
         response = RedirectResponse(url=redirect_url)
         
         secure_cookie = settings.FRONTEND_URL.startswith("https://")

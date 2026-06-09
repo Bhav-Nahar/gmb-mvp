@@ -25,6 +25,11 @@ class LocationModel(BaseModel):
     synced_at: datetime
     google_category_resource_name: Optional[str] = None
     
+    # State tracking
+    is_verified: Optional[bool] = None
+    is_suspended: Optional[bool] = None
+    is_duplicate: Optional[bool] = None
+    
     # Extensions for task parity
     average_rating: Optional[float] = None
     total_reviews: Optional[int] = None

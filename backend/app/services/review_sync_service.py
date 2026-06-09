@@ -108,11 +108,19 @@ class ReviewSyncService:
 
             # 4. Load existing review hashes for delta detection
             provider_ids = [pr.id for pr in provider_reviews]
-            existing_reviews = db.query(Review.provider_review_id, Review.content_hash).filter(
+            existing_reviews = db.query(
+                Review.provider_review_id, 
+                Review.content_hash,
+                Review.rating,
+                Review.comment,
+                Review.sentiment_tagged_at,
+                Review.sentiment,
+                Review.issue_category
+            ).filter(
                 Review.location_id == location_id,
                 Review.provider_review_id.in_(provider_ids)
             ).all()
-            existing_hashes = {r.provider_review_id: r.content_hash for r in existing_reviews}
+            existing_reviews_map = {r.provider_review_id: r for r in existing_reviews}
             
             # 4. Delta Detection
             reviews_to_upsert = []
@@ -128,10 +136,16 @@ class ReviewSyncService:
                     max_update_time = rev_updated_at
                     
                 new_hash = generate_content_hash(pr.rating, pr.body, pr.reply, pr.updated_at, pr.reply_created_at)
-                old_hash = existing_hashes.get(pr.id)
+                old_review = existing_reviews_map.get(pr.id)
+                old_hash = old_review.content_hash if old_review else None
                 
                 if new_hash != old_hash:
-                    reviews_to_upsert.append((pr, new_hash))
+                    sentiment_reset = True
+                    if old_review:
+                        if old_review.rating == pr.rating and (old_review.comment or "") == (pr.body or ""):
+                            sentiment_reset = False
+                    
+                    reviews_to_upsert.append((pr, new_hash, sentiment_reset, old_review))
             
             synced_count = len(reviews_to_upsert)
             
@@ -142,7 +156,7 @@ class ReviewSyncService:
                     chunk = reviews_to_upsert[i:i + chunk_size]
                     
                     insert_values = []
-                    for pr, new_hash in chunk:
+                    for pr, new_hash, sentiment_reset, old_review in chunk:
                         insert_values.append({
                             "organization_id": organization_id,
                             "location_id": location_id,
@@ -162,9 +176,9 @@ class ReviewSyncService:
                             "updated_at": datetime.datetime.now(datetime.timezone.utc),
                             "is_deleted": False,
                             "content_hash": new_hash,
-                            "sentiment_tagged_at": None, # Reset to NULL for AI to process
-                            "sentiment": None,
-                            "issue_category": None
+                            "sentiment_tagged_at": None if sentiment_reset else (old_review.sentiment_tagged_at if old_review else None),
+                            "sentiment": None if sentiment_reset else (old_review.sentiment if old_review else None),
+                            "issue_category": None if sentiment_reset else (old_review.issue_category if old_review else None)
                         })
                     
                     stmt = insert(Review).values(insert_values)
@@ -183,9 +197,9 @@ class ReviewSyncService:
                             "updated_at": func.now(),
                             "is_deleted": False,
                             "content_hash": stmt.excluded.content_hash,
-                            "sentiment_tagged_at": None, # Reset for reprocessing
-                            "sentiment": None,
-                            "issue_category": None
+                            "sentiment_tagged_at": stmt.excluded.sentiment_tagged_at,
+                            "sentiment": stmt.excluded.sentiment,
+                            "issue_category": stmt.excluded.issue_category
                         }
                     )
                     db.execute(stmt)

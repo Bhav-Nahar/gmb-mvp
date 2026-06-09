@@ -86,6 +86,5 @@ def health_check(db: Session = Depends(get_db)):
 
     return {
         "status": "online",
-        "database": db_status,
-        "environment": getattr(settings, "APP_ENV", "production")
+        "database": db_status
     }

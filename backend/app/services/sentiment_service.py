@@ -65,6 +65,16 @@ async def tag_reviews_sentiment(reviews: list[Review], db: Session) -> None:
             await _tag_batch(chunk, db)
         except LLMProviderError as e:
             logger.error("LLMProviderError tagging sentiment batch: %s", str(e))
+            if chunk:
+                from app.worker import celery as celery_app
+                celery_app.send_task(
+                    "app.tasks.tag_reviews_sentiment_task",
+                    kwargs={
+                        "location_id": chunk[0].location_id,
+                        "organization_id": chunk[0].organization_id
+                    },
+                    countdown=60
+                )
         except Exception as e:
             logger.error("Unexpected error tagging sentiment batch: %s", str(e))
 

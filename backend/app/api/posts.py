@@ -12,6 +12,7 @@ from app.models.user import User
 from app.models.post import Post
 from app.models.campaign import Campaign
 from app.models.publish_job import PublishJob
+from app.constants.posts import PostStatus, CampaignStatus
 
 from app.schemas.posts import (
     PostCreateRequest,
@@ -37,7 +38,12 @@ _redis_pool = None
 def get_redis() -> _redis_lib.Redis:
     global _redis_pool
     if _redis_pool is None:
-        _redis_pool = _redis_lib.ConnectionPool.from_url(settings.REDIS_URL, max_connections=20)
+        _redis_pool = _redis_lib.ConnectionPool.from_url(
+            settings.REDIS_URL, 
+            max_connections=20,
+            socket_timeout=5,
+            socket_connect_timeout=5
+        )
     return _redis_lib.Redis(connection_pool=_redis_pool)
 
 router = APIRouter()
@@ -59,7 +65,7 @@ def create_draft_post(
 
 @router.get("", response_model=PostListResponse)
 def list_posts(
-    post_status: Optional[str] = None,
+    post_status: Optional[PostStatus] = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -69,7 +75,7 @@ def list_posts(
     query = db.query(Post).filter(Post.organization_id == current_user.organization_id)
     
     if post_status:
-        query = query.filter(Post.status == post_status)
+        query = query.filter(Post.status == post_status.value)
         
     total = query.count()
     pages = math.ceil(total / size) if total > 0 else 1
@@ -85,7 +91,7 @@ def list_posts(
 @router.get("/campaigns", response_model=CampaignListResponse)
 def list_campaigns(
     location_id: Optional[int] = None,
-    campaign_status: Optional[str] = None,
+    campaign_status: Optional[CampaignStatus] = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -100,7 +106,7 @@ def list_campaigns(
         query = query.distinct()
         
     if campaign_status:
-        query = query.filter(Campaign.status == campaign_status)
+        query = query.filter(Campaign.status == campaign_status.value)
         
     total = query.count()
     pages = math.ceil(total / size) if total > 0 else 1

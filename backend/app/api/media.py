@@ -27,7 +27,15 @@ async def upload_media(
     Validates GBP image requirements, checks for duplicate uploads in the same tenant,
     stores the file in the configured storage provider, and dispatches Celery optimization tasks.
     """
-    file_bytes = await file.read()
+    # 0. Size Limit: Read only up to 10MB + 1 byte to detect overflow
+    # This prevents OOM (Out of Memory) attacks from multi-GB uploads.
+    MAX_SIZE = 10 * 1024 * 1024  # 10MB
+    file_bytes = await file.read(MAX_SIZE + 1)
+    if len(file_bytes) > MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_SIZE // (1024 * 1024)}MB"
+        )
     
     # 1. Deduplication: Compute SHA256 checksum
     sha256_hash = hashlib.sha256(file_bytes).hexdigest()

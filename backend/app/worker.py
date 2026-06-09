@@ -57,7 +57,7 @@ celery.conf.beat_schedule = {
     },
     "retry-failed-sentiment-hourly": {
         "task": "app.tasks.retry_failed_sentiment_beat_task",
-        "schedule": 10800.0, # Every 3 hours (10800 seconds)
+        "schedule": 900.0, # Every 15 minutes (900 seconds)
     }
 }
 
