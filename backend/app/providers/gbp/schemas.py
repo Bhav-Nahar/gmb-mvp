@@ -11,6 +11,7 @@ class GBPLocationRaw(BaseModel):
     regularHours: Optional[Dict[str, Any]] = None
     profile: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    locationState: Optional[Dict[str, Any]] = None
     
     # These fields are fetched separately but appended internally
     rating: Optional[float] = None

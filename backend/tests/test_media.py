@@ -145,7 +145,7 @@ class MediaPipelineTests(unittest.TestCase):
         mock_file = MagicMock()
         mock_file.filename = "valid.jpg"
         
-        async def mock_read():
+        async def mock_read(*args, **kwargs):
             return self.valid_jpg_bytes
         mock_file.read = mock_read
 

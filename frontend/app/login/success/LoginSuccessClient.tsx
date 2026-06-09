@@ -13,25 +13,16 @@ function LoginSuccessContent() {
   const [statusMessage, setStatusMessage] = useState('Securing connection...')
 
   useEffect(() => {
-    const token = searchParams.get('token')
-    const csrf = searchParams.get('csrf')
     const onboarding = searchParams.get('onboarding')
 
-    if (!token) {
-      router.replace('/login?error=token_missing')
-      return
-    }
-
-    if (csrf) {
-      document.cookie = `gmb_csrf_token=${csrf}; path=/; max-age=${3600 * 24 * 7}; samesite=lax`
-    }
-    
     // Fetch profile and store
     const fetchAndRedirect = async () => {
       try {
         setStatusMessage('Establishing workspace...')
+        // The backend has already set the gmb_auth_token and gmb_csrf_token cookies.
+        // refresh() will call /users/me which verifies these cookies.
         await refresh()
-        
+
         setStatusMessage('Onboarding workspace...')
         // Short delay for sleek feel
         setTimeout(() => {
@@ -41,8 +32,10 @@ function LoginSuccessContent() {
             router.replace('/dashboard')
           }
         }, 1000)
-      } catch (e) {
-        router.replace('/login?error=profile_fetch_failed')
+      } catch (e: any) {
+        console.error('LoginSuccessClient error during fetchAndRedirect:', e)
+        const errorMsg = e instanceof Error ? e.message : String(e)
+        router.replace(`/login?error=profile_fetch_failed&details=${encodeURIComponent(errorMsg)}`)
       }
     }
 

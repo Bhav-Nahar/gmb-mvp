@@ -365,33 +365,47 @@ class PostService:
             db.flush()
 
         # Dynamic revision: count all existing jobs for this post+location
-        existing_job_count = db.query(func.count(PublishJob.id)).filter(
-            PublishJob.post_id == post.id,
-            PublishJob.location_id == location_id,
-        ).scalar() or 0
-        revision = existing_job_count + 1
-        idempotency_key = f"post_{post.id}_loc_{location_id}_rev_{revision}"
+        # Using a nested transaction (savepoint) and retry loop to prevent race conditions 
+        # where two concurrent requests calculate the same revision and hit an IntegrityError.
+        from sqlalchemy.exc import IntegrityError
+        
+        MAX_RETRIES = 3
+        for attempt in range(MAX_RETRIES):
+            try:
+                with db.begin_nested():
+                    existing_job_count = db.query(func.count(PublishJob.id)).filter(
+                        PublishJob.post_id == post.id,
+                        PublishJob.location_id == location_id,
+                    ).scalar() or 0
+                    revision = existing_job_count + 1
+                    idempotency_key = f"post_{post.id}_loc_{location_id}_rev_{revision}"
 
-        # Idempotency: return existing non-terminal job rather than creating a duplicate
-        NON_TERMINAL_STATUSES = {"PENDING", "RUNNING", "RETRYING"}
-        existing_non_terminal = db.query(PublishJob).filter(
-            PublishJob.post_id == post.id,
-            PublishJob.location_id == location_id,
-            PublishJob.idempotency_key == idempotency_key,
-        ).first()
-        if existing_non_terminal and normalize_status(existing_non_terminal.status) in NON_TERMINAL_STATUSES:
-            return existing_non_terminal
+                    # Idempotency: return existing non-terminal job rather than creating a duplicate
+                    NON_TERMINAL_STATUSES = {"PENDING", "RUNNING", "RETRYING"}
+                    existing_non_terminal = db.query(PublishJob).filter(
+                        PublishJob.post_id == post.id,
+                        PublishJob.location_id == location_id,
+                        PublishJob.idempotency_key == idempotency_key,
+                    ).first()
+                    if existing_non_terminal and normalize_status(existing_non_terminal.status) in NON_TERMINAL_STATUSES:
+                        return existing_non_terminal
 
-        job = PublishJob(
-            organization_id=organization_id,
-            campaign_id=post.campaign_id,
-            post_id=post.id,
-            location_id=location_id,
-            status="PENDING",
-            idempotency_key=idempotency_key,
-        )
-        db.add(job)
-        db.flush()  # populate job.id without committing
+                    job = PublishJob(
+                        organization_id=organization_id,
+                        campaign_id=post.campaign_id,
+                        post_id=post.id,
+                        location_id=location_id,
+                        status="PENDING",
+                        idempotency_key=idempotency_key,
+                    )
+                    db.add(job)
+                    db.flush()  # populate job.id without committing
+                    break  # Success, exit retry loop
+            except IntegrityError:
+                if attempt == MAX_RETRIES - 1:
+                    raise  # Max retries exhausted, bubble up error
+                # The savepoint is automatically rolled back by the context manager.
+                # Loop will continue, recalculate existing_job_count, and attempt insert with a new revision.
 
         audit_log = PostAuditLog(
             organization_id=organization_id,

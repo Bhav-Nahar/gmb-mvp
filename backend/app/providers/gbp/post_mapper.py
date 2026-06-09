@@ -20,10 +20,19 @@ class GBPPostMapper:
         cta_url = variant.rendered_cta_url if (variant and variant.rendered_cta_url) else post.cta_url
 
         # 2. Build base payload
+        # Map internal post_type to GBP topicType
+        # UPDATE -> STANDARD, EVENT -> EVENT, OFFER -> OFFER
+        topic_type_map = {
+            "UPDATE": "STANDARD",
+            "EVENT": "EVENT",
+            "OFFER": "OFFER"
+        }
+        mapped_topic_type = topic_type_map.get(post.post_type.upper() if post.post_type else "UPDATE", "STANDARD")
+
         payload = {
             "languageCode": post.language_code or "en-US",
             "summary": summary,
-            "topicType": "STANDARD" # Mandatory for GBP API
+            "topicType": mapped_topic_type
         }
 
         # 3. Add Call to Action if specified
@@ -42,7 +51,9 @@ class GBPPostMapper:
             payload["callToAction"] = {
                 "actionType": mapped_action
             }
-            if mapped_action != "CALL" and cta_url:
+            if mapped_action != "CALL":
+                if not cta_url:
+                    raise ValueError(f"cta_url is required for CTA type {mapped_action}")
                 payload["callToAction"]["url"] = str(cta_url)
 
         # 4. Add Media URL if present

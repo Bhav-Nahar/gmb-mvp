@@ -34,6 +34,12 @@ class Location(Base):
     attention_reason = Column(Text, nullable=True)
     attention_updated_at = Column(DateTime(timezone=True), nullable=True)
     sla_tracking_started_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # State tracking
+    is_verified = Column(Boolean, nullable=True)
+    is_suspended = Column(Boolean, nullable=True)
+    is_duplicate = Column(Boolean, nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     organization = relationship("Organization", back_populates="locations")

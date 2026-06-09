@@ -13,21 +13,13 @@ from app.providers.factory import ProviderFactory
 from app.providers.base.exceptions import ProviderAuthError
 from app.services.review_sync_service import ReviewSyncService
 import asyncio
-import threading as _threading
-_worker_loop_lock = _threading.Lock()
-_worker_loop = None
-
-def _get_worker_loop():
-    global _worker_loop
-    with _worker_loop_lock:
-        if _worker_loop is None or _worker_loop.is_closed():
-            import asyncio as _asyncio
-            _worker_loop = _asyncio.new_event_loop()
-            _asyncio.set_event_loop(_worker_loop)
-        return _worker_loop
 
 def run_async(coro):
-    return _get_worker_loop().run_until_complete(coro)
+    """
+    Run an async coroutine synchronously.
+    Uses asyncio.run() to ensure thread safety across Celery workers.
+    """
+    return asyncio.run(coro)
 
 @shared_task(name="app.tasks.sync_reviews_task")
 def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: int = None) -> dict:
@@ -53,7 +45,7 @@ def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: in
         
         organization_id = location.organization_id
         
-        r = redis.Redis.from_url(settings.REDIS_URL)
+        r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
         lock_key = f"lock:sync_reviews:{organization_id}:{location_id}"
         lock = r.lock(lock_key, timeout=300)
         
@@ -109,7 +101,7 @@ def sync_reviews_chunk_task(self, location_ids: list, organization_id: int, run_
 
     logger = logging.getLogger(__name__)
     db: Session = SessionLocal()
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
 
     results = []
     
@@ -197,7 +189,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
     
     db: Session = SessionLocal()
     
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
     lock_key = f"lock:sync_locations:org_{organization_id}"
     lock = r.lock(lock_key, timeout=3600)  # 1-hour lease to protect sync window
     
@@ -265,6 +257,13 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     existing_loc.average_rating = p_loc.average_rating
                 if p_loc.total_reviews is not None:
                     existing_loc.total_reviews = p_loc.total_reviews
+                
+                # Update state attributes
+                if p_loc.is_verified is not None:
+                    existing_loc.is_verified = p_loc.is_verified
+                    existing_loc.is_suspended = p_loc.is_suspended
+                    existing_loc.is_duplicate = p_loc.is_duplicate
+                
                 existing_loc.sync_status = "Synced"
                 existing_loc.last_synced_at = datetime.datetime.now(datetime.timezone.utc)
                 db.flush()
@@ -284,6 +283,9 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     business_hours=p_loc.business_hours,
                     average_rating=p_loc.average_rating,
                     total_reviews=p_loc.total_reviews,
+                    is_verified=p_loc.is_verified,
+                    is_suspended=p_loc.is_suspended,
+                    is_duplicate=p_loc.is_duplicate,
                     sync_status="Synced",
                     last_synced_at=datetime.datetime.now(datetime.timezone.utc)
                 )
@@ -424,7 +426,7 @@ def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> 
 
     logger = logging.getLogger(__name__)
 
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
     lock_key = f"lock:sentiment_tag:{organization_id}:{location_id}"
     lock = r.lock(lock_key, timeout=600)
 
@@ -511,7 +513,7 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
     
     logger = logging.getLogger(__name__)
     
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
     lock_key = f"lock:publish_job:{organization_id}:{job_id}"
     lock = r.lock(lock_key, timeout=120)
     
@@ -960,7 +962,7 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
         shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
         shards_count = len(shards)
         
-        r = redis.Redis.from_url(settings.REDIS_URL)
+        r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
         r.set(f"campaign:{campaign_id}:pending_shards", len(shards))
         r.set(f"campaign:{campaign_id}:success", 0)
         r.set(f"campaign:{campaign_id}:failed", 0)
@@ -1003,7 +1005,7 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
     from app.providers.gbp.auth import PermanentAuthError
     
     logger = logging.getLogger(__name__)
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
     
     shard_success = 0
     shard_failed = 0
@@ -1047,7 +1049,7 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
                 remaining_ids = job_ids[idx:]
                 db = SessionLocal()
                 try:
-                    status_val = PublishJobStatus.PAUSED.value if campaign_status == "Paused" else PublishJobStatus.CANCELLED.value
+                    status_val = PublishJobStatus.PAUSED.value if cached_status == "Paused" else PublishJobStatus.CANCELLED.value
                     db.query(PublishJob).filter(PublishJob.id.in_(remaining_ids)).update(
                         {PublishJob.status: status_val}, synchronize_session=False
                     )
@@ -1236,7 +1238,13 @@ def _decr_and_flush_terminal_state(r, campaign_id: int, organization_id: int, sh
     if remaining_shards == 0:
         db = SessionLocal()
         try:
-            campaign = db.query(Campaign).filter(Campaign.id == campaign_id, Campaign.organization_id == organization_id).first()
+            # HIGH-7 Fix: Use with_for_update() to lock the row and ensure we read the 
+            # most up-to-date committed values, preventing race conditions with other 
+            # concurrent API requests or workers.
+            campaign = db.query(Campaign).filter(
+                Campaign.id == campaign_id, 
+                Campaign.organization_id == organization_id
+            ).with_for_update().first()
             if campaign:
                 camp_redis_status = (r.get(f"campaign:{campaign_id}:status") or b"").decode("utf-8")
                 
@@ -1256,8 +1264,12 @@ def _decr_and_flush_terminal_state(r, campaign_id: int, organization_id: int, sh
                 campaign.status = new_status
                 
                 if campaign.primary_post:
-                    campaign.primary_post.status = PostStatus.PUBLISHED.value if campaign.total_published > 0 else PostStatus.FAILED.value
-                
+                    if campaign.total_failed == 0 and campaign.total_published > 0:
+                        campaign.primary_post.status = PostStatus.PUBLISHED.value
+                    elif campaign.total_published == 0:
+                        campaign.primary_post.status = PostStatus.FAILED.value
+                    else:
+                        campaign.primary_post.status = PostStatus.PARTIALLY_PUBLISHED.value
                 db.add(CampaignAuditLog(
                     organization_id=organization_id,
                     campaign_id=campaign.id,
@@ -1576,7 +1588,7 @@ def check_scheduled_posts_task() -> dict:
 
     logger = logging.getLogger(__name__)
     db = SessionLocal()
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
     
     now = datetime.datetime.now(datetime.timezone.utc)
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -1589,8 +1601,9 @@ def check_scheduled_posts_task() -> dict:
     
     for post_id in due_post_ids:
         try:
-            post = db.query(Post).filter(Post.id == post_id).first()
+            post = db.query(Post).filter(Post.id == post_id).with_for_update(skip_locked=True).first()
             if not post or post.status != PostStatus.SCHEDULED.value:
+                db.rollback()
                 continue
                 
             logger.info(f"Processing scheduled post {post.id} (due at {post.scheduled_at})")
@@ -1680,7 +1693,7 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
     
     logger = logging.getLogger(__name__)
     
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
     lock_key = f"lock:publish_edit:{edit_id}"
     lock = r.lock(lock_key, timeout=120)
     
@@ -1851,7 +1864,7 @@ def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str,
             logger.error(f"Invalid date format for insights sync: {date_err}")
             return {"status": "error", "reason": f"Invalid date format: {date_err}"}
 
-        r = redis.Redis.from_url(settings.REDIS_URL)
+        r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
         lock_key = f"lock:sync_insights:{organization_id}:{location_id}"
         lock = r.lock(lock_key, timeout=300)
 
@@ -1894,7 +1907,7 @@ def evaluate_attention_flags_task(organization_id: int) -> dict:
 
     db: Session = SessionLocal()
     try:
-        r = redis.Redis.from_url(settings.REDIS_URL)
+        r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
         lock_key = f"lock:attention_eval:{organization_id}"
         lock = r.lock(lock_key, timeout=300)
 
@@ -1933,7 +1946,7 @@ def sync_organization_insights_task(organization_id: int, start_date_str: str, e
     logger.info(f"Starting sync_organization_insights_task for org={organization_id}, force={force}")
 
     db: Session = SessionLocal()
-    r = redis.Redis.from_url(settings.REDIS_URL)
+    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
     lock_key = f"insights_sync:org_{organization_id}"
     lock = r.lock(lock_key, timeout=3600)  # 1 hour lease
 

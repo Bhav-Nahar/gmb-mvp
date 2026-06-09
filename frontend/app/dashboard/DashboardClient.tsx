@@ -37,6 +37,9 @@ interface Location {
   sync_status: string
   last_synced_at?: string
   created_at: string
+  is_verified?: boolean | null
+  is_suspended?: boolean | null
+  is_duplicate?: boolean | null
   // Embedded from latest SyncLog by the backend — no extra fetch needed
   latest_sync_status?: string | null
   latest_sync_error?: string | null
@@ -629,6 +632,28 @@ function DashboardContent() {
                           </h4>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">{loc.primary_category || 'Storefront'}</span>
+                            
+                            {/* State Badges */}
+                            {loc.is_suspended && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
+                                Suspended
+                              </span>
+                            )}
+                            {loc.is_duplicate && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                Duplicate
+                              </span>
+                            )}
+                            {loc.is_verified === false && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
+                                Unverified
+                              </span>
+                            )}
+                            {loc.is_verified === true && !loc.is_suspended && !loc.is_duplicate && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                Verified
+                              </span>
+                            )}
                             
                             {/* SLA Badge */}
                             {slaSummaries[loc.id]?.sla_enabled && (

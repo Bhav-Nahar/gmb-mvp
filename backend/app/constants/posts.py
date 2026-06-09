@@ -22,6 +22,7 @@ class PostStatus(str, Enum):
     SCHEDULED = "Scheduled"
     PUBLISHING = "Publishing"
     PUBLISHED = "Published"
+    PARTIALLY_PUBLISHED = "PartiallyPublished"
     FAILED = "Failed"
     REJECTED = "Rejected"
     SHADOW_BANNED = "ShadowBanned"

@@ -79,6 +79,11 @@ class LocationOut(BaseModel):
     # Embedded from latest SyncLog — avoids N+1 sync-status requests
     latest_sync_status: Optional[str] = None
     latest_sync_error: Optional[str] = None
+    
+    # State tracking
+    is_verified: Optional[bool] = None
+    is_suspended: Optional[bool] = None
+    is_duplicate: Optional[bool] = None
 
     class Config:
         from_attributes = True
