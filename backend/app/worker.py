@@ -58,6 +58,10 @@ celery.conf.beat_schedule = {
     "retry-failed-sentiment-hourly": {
         "task": "app.tasks.retry_failed_sentiment_beat_task",
         "schedule": 900.0, # Every 15 minutes (900 seconds)
+    },
+    "reconcile-pending-subscriptions": {
+        "task": "app.tasks.reconcile_pending_subscriptions_task",
+        "schedule": 600.0, # Every 10 minutes — catch missed payment webhooks
     }
 }
 

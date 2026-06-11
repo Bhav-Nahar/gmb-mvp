@@ -135,6 +135,11 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* must be available at build time to be inlined into the bundle.
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+        NEXT_PUBLIC_RAZORPAY_KEY: ${RAZORPAY_KEY_ID}
     container_name: gmb_frontend
     restart: always
     ports:

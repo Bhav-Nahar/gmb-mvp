@@ -20,7 +20,7 @@ ANNUAL_MONTHS = 12
 ANNUAL_DISCOUNT = 0.20
 
 # Entitlements that scale with the number of locations purchased.
-CREDITS_PER_LOCATION = 100
+CREDITS_PER_LOCATION = 30
 
 # Bounds for a single subscription.
 MIN_LOCATIONS = 1

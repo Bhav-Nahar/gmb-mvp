@@ -12,8 +12,21 @@ const inter = Inter({subsets:['latin'],variable:'--font-sans'});
 import { BillingProvider } from "@/components/billing/BillingProvider";
 
 export const metadata: Metadata = {
-  title: 'GMB Sync Engine',
-  description: 'Manage and synchronize Google Business Profile locations instantly.',
+  title: 'GBP Manager Pro — Manage every Google Business Profile from one dashboard',
+  description: 'Centralize reviews, AI-assisted replies, multi-location Google Posts, analytics, audits, and team roles for all your Google Business Profile locations. Secure Google OAuth. 7-day free trial, no card required.',
+  applicationName: 'GBP Manager Pro',
+  keywords: ['Google Business Profile', 'GBP management', 'local SEO', 'review management', 'multi-location', 'Google Posts'],
+  openGraph: {
+    title: 'GBP Manager Pro — Manage every Google Business Profile from one dashboard',
+    description: 'Reviews, AI replies, Google Posts, analytics, audits and team roles for every location. Secure Google OAuth. 7-day free trial.',
+    siteName: 'GBP Manager Pro',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'GBP Manager Pro',
+    description: 'Manage every Google Business Profile from one dashboard. Secure Google OAuth. 7-day free trial.',
+  },
 }
 
 export default function RootLayout({
@@ -23,12 +36,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={cn("font-sans", inter.variable)}>
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-      </head>
-      <body className="antialiased min-h-screen bg-background text-foreground gradient-bg bg-no-repeat bg-cover">
+      <body className="antialiased min-h-screen bg-background text-foreground">
         <QueryProvider>
           <TooltipProvider>
             <AuthProvider>

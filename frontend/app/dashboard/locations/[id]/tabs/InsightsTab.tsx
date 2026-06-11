@@ -165,7 +165,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
           </div>
         </div>
         <div className="mt-3 flex items-baseline justify-between">
-          <span className="text-2xl font-extrabold text-white">
+          <span className="text-2xl font-extrabold text-foreground">
             {metric.current.toLocaleString()}
           </span>
           <div className="flex items-center gap-1">
@@ -299,7 +299,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
       {/* Subheader Filters */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-4">
         <div>
-          <h2 className="text-lg font-bold text-white">Location Analytics</h2>
+          <h2 className="text-lg font-bold text-foreground">Location Analytics</h2>
           {data?.last_insights_sync_at && (
             <p className="text-xs text-muted-foreground mt-0.5">
               Last synchronized: {new Date(data.last_insights_sync_at).toLocaleString()}
@@ -312,7 +312,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
             <select
               value={range}
               onChange={(e) => setRange(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-white outline-none border-none cursor-pointer"
+              className="bg-transparent text-xs font-semibold text-foreground outline-none border-none cursor-pointer"
             >
               <option value="7">Last 7 Days</option>
               <option value="30">Last 30 Days</option>
@@ -372,7 +372,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
           <div className="bg-muted/10 border border-border/40 rounded-xl p-5">
             <div className="flex justify-between items-center mb-4">
               <div>
-                <h4 className="text-sm font-bold text-white">Daily Metrics Distribution</h4>
+                <h4 className="text-sm font-bold text-foreground">Daily Metrics Distribution</h4>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Profile views vs search impressions</p>
               </div>
               <div className="flex gap-3 text-[10px] font-bold">
@@ -394,22 +394,22 @@ export function InsightsTab({ locationId }: { locationId: number }) {
             {/* Sentiment Breakdown */}
             <div className="bg-muted/10 border border-border/40 rounded-xl p-5 flex flex-col justify-between">
               <div>
-                <h4 className="text-sm font-bold text-white flex items-center gap-1.5"><Smile className="h-4 w-4 text-emerald-400" />Customer Sentiment</h4>
+                <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5"><Smile className="h-4 w-4 text-emerald-400" />Customer Sentiment</h4>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Breakdown of positive vs negative tags</p>
               </div>
               
               <div className="my-4 space-y-3">
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-emerald-400 font-semibold flex items-center gap-1"><Smile className="h-3.5 w-3.5" />Positive</span>
-                  <span className="text-white font-bold">{data.sentiment.positive_percentage.toFixed(0)}%</span>
+                  <span className="text-foreground font-bold">{data.sentiment.positive_percentage.toFixed(0)}%</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-gray-400 font-semibold flex items-center gap-1"><MessageSquare className="h-3.5 w-3.5" />Neutral</span>
-                  <span className="text-white font-bold">{data.sentiment.neutral_percentage.toFixed(0)}%</span>
+                  <span className="text-foreground font-bold">{data.sentiment.neutral_percentage.toFixed(0)}%</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-rose-400 font-semibold flex items-center gap-1"><Frown className="h-3.5 w-3.5" />Negative</span>
-                  <span className="text-white font-bold">{data.sentiment.negative_percentage.toFixed(0)}%</span>
+                  <span className="text-foreground font-bold">{data.sentiment.negative_percentage.toFixed(0)}%</span>
                 </div>
               </div>
 
@@ -424,7 +424,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
             {/* SLA Summary */}
             <div className="bg-muted/10 border border-border/40 rounded-xl p-5 flex flex-col justify-between">
               <div>
-                <h4 className="text-sm font-bold text-white flex items-center gap-1.5"><Clock className="h-4 w-4 text-indigo-400" />SLA Performance</h4>
+                <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5"><Clock className="h-4 w-4 text-indigo-400" />SLA Performance</h4>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Reviews reply speeds and statuses</p>
               </div>
 
@@ -453,7 +453,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
 
             {/* Top Issue Categories */}
             <div className="bg-muted/10 border border-border/40 rounded-xl p-5">
-              <h4 className="text-sm font-bold text-white flex items-center gap-1.5"><Heart className="h-4 w-4 text-rose-400" />Customer Themes</h4>
+              <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5"><Heart className="h-4 w-4 text-rose-400" />Customer Themes</h4>
               <p className="text-[10px] text-muted-foreground mt-0.5">Recurring issue categories</p>
               
               <div className="mt-4 space-y-2 max-h-40 overflow-y-auto">
@@ -461,7 +461,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
                   data.top_issue_categories.map((item, idx) => (
                     <div key={idx} className="flex justify-between items-center text-xs border-b border-border/20 pb-1.5">
                       <span className="text-muted-foreground font-semibold capitalize">{item.category}</span>
-                      <span className="text-white font-bold">{item.count} tags</span>
+                      <span className="text-foreground font-bold">{item.count} tags</span>
                     </div>
                   ))
                 ) : (

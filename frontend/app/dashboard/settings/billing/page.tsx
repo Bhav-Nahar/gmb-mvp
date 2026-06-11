@@ -23,7 +23,7 @@ export default function BillingPage() {
     if (!billing) return;
     
     // Poll every 3 seconds if we are in a pending activation or locked state, as webhook might fix it
-    if (billing.subscription_status === 'trial_pending_activation' || billing.is_org_locked) {
+    if ((billing.subscription_status === 'trial' && !billing.trial_ends_at) || billing.is_org_locked) {
       const interval = setInterval(() => {
         refetch();
       }, 3000);

@@ -1,8 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import AuthGuard from '@/components/AuthGuard'
-import Navbar from '@/components/Navbar'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import {
@@ -317,16 +315,14 @@ export default function ReviewsPage(props: any) {
 
 
   return (
-    <AuthGuard>
-      <div className={locationId ? "" : "min-h-screen bg-background"}>
-        {!locationId && <Navbar />}
-        
-        <main className={locationId ? "space-y-6" : "mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8"}>
+    <div className={locationId ? "" : "min-h-screen bg-background text-foreground"}>
+      
+      <main className={locationId ? "space-y-6" : "mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8"}>
           
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             {!locationId && (<div>
-              <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-2">
-                <MessageSquare className="h-8 w-8 text-indigo-400" />
+              <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
+                <MessageSquare className="h-8 w-8 text-primary" />
                 Customer Reviews
               </h1>
               <p className="text-muted-foreground mt-2">Manage and respond to Google Business Profile reviews.</p>
@@ -337,7 +333,7 @@ export default function ReviewsPage(props: any) {
                 <button
                   onClick={handleTriggerSync}
                   disabled={syncing}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                 >
                   <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
                   <span>{syncing ? 'Syncing...' : 'Sync Reviews'}</span>
@@ -371,11 +367,11 @@ export default function ReviewsPage(props: any) {
           )}
 
           {/* Filters */}
-          <div className="glass-panel border border-border p-4 rounded-xl flex flex-wrap items-center gap-4">
+          <div className="bg-card border border-border p-4 rounded-xl shadow-sm flex flex-wrap items-center gap-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Rating</label>
               <select 
-                className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterRating}
                 onChange={e => setFilterRating(e.target.value ? Number(e.target.value) : '')}
               >
@@ -391,7 +387,7 @@ export default function ReviewsPage(props: any) {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Status</label>
               <select 
-                className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterReplied}
                 onChange={e => setFilterReplied(e.target.value as any)}
               >
@@ -404,7 +400,7 @@ export default function ReviewsPage(props: any) {
             {!locationId && (<div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Location</label>
               <select 
-                className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterLocation}
                 onChange={e => setFilterLocation(e.target.value ? Number(e.target.value) : '')}
               >
@@ -418,7 +414,7 @@ export default function ReviewsPage(props: any) {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Sentiment</label>
               <select
-                className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterSentiment}
                 onChange={e => setFilterSentiment(e.target.value)}
               >
@@ -433,7 +429,7 @@ export default function ReviewsPage(props: any) {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category</label>
               <select
-                className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterCategory}
                 onChange={e => { setFilterCategory(e.target.value); setCurrentPage(1); }}
               >
@@ -452,7 +448,7 @@ export default function ReviewsPage(props: any) {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">SLA Tier</label>
               <select
-                className="bg-muted/30 border border-border rounded-lg text-sm px-3 py-1.5 text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterSlaTier}
                 onChange={e => { setFilterSlaTier(e.target.value); setCurrentPage(1); }}
               >
@@ -465,10 +461,10 @@ export default function ReviewsPage(props: any) {
             </div>
             
             <div className="flex items-center gap-2 pt-5">
-              <label className="text-sm font-bold text-white flex items-center gap-2 cursor-pointer">
+              <label className="text-sm font-bold text-foreground flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  className="rounded bg-muted/30 border-border text-indigo-500 focus:ring-indigo-500"
+                  className="rounded bg-background border-input text-primary focus:ring-primary"
                   checked={filterOverdue}
                   onChange={e => { setFilterOverdue(e.target.checked); setCurrentPage(1); }}
                 />
@@ -478,23 +474,23 @@ export default function ReviewsPage(props: any) {
           </div>
 
           {filterLocation !== '' && slaMetrics && (
-            <div className="glass-panel border border-border p-4 rounded-xl flex items-center justify-between">
+            <div className="bg-card shadow-sm border border-border p-4 rounded-xl flex items-center justify-between">
               {!slaMetrics.sla_enabled ? (
                 <div className="flex items-center justify-between w-full">
                   <span className="text-sm text-muted-foreground">SLA Tracking is not enabled for this location.</span>
-                  <button onClick={() => setShowSlaModal(true)} className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors">Enable SLA Tracking</button>
+                  <button onClick={() => setShowSlaModal(true)} className="px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 transition-colors">Enable SLA Tracking</button>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-6">
                   <div className="flex flex-col">
                     <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Avg Response</span>
-                    <span className="text-sm font-semibold text-white">
+                    <span className="text-sm font-semibold text-foreground">
                       {slaMetrics.avg_response_hours !== null ? `${slaMetrics.avg_response_hours}h — ${slaMetrics.avg_sla_tier}` : 'N/A'}
                     </span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Replied</span>
-                    <span className="text-sm font-semibold text-white">{slaMetrics.total_replied}</span>
+                    <span className="text-sm font-semibold text-foreground">{slaMetrics.total_replied}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Overdue</span>
@@ -511,19 +507,19 @@ export default function ReviewsPage(props: any) {
 
           {/* Reviews List */}
           {loading ? (
-             <div className="flex h-48 w-full items-center justify-center rounded-2xl border border-border glass-panel">
-               <RefreshCw className="h-6 w-6 animate-spin text-indigo-500" />
+             <div className="flex h-48 w-full items-center justify-center rounded-xl border border-border bg-card shadow-sm">
+               <RefreshCw className="h-6 w-6 animate-spin text-primary" />
              </div>
           ) : reviews.length === 0 ? (
-             <div className="flex flex-col items-center justify-center p-12 text-center rounded-2xl border border-border glass-panel">
+             <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-border bg-card shadow-sm">
                 <MessageCircle className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm font-bold text-white">No reviews found</p>
+                <p className="text-sm font-bold text-foreground">No reviews found</p>
                 <p className="text-xs text-muted-foreground mt-1">Try adjusting your filters or sync reviews.</p>
              </div>
           ) : (
             <div className="grid gap-6">
               {reviews.map(review => (
-                <div key={review.id} className="glass-panel border border-border rounded-xl p-5 space-y-4">
+                <div key={review.id} className="bg-card shadow-sm border border-border rounded-xl p-5 space-y-4">
                   
                   <div className="flex justify-between items-start gap-4">
                     <div className="flex items-center gap-3">
@@ -535,10 +531,10 @@ export default function ReviewsPage(props: any) {
                         </div>
                       )}
                       <div>
-                        <h4 className="font-bold text-white">{review.reviewer_name}</h4>
+                        <h4 className="font-bold text-foreground">{review.reviewer_name}</h4>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-xs text-muted-foreground">{new Date(review.review_created_at).toLocaleDateString()}</span>
-                          <span className="text-[10px] bg-muted/40 px-2 py-0.5 rounded-full text-indigo-300 font-medium">
+                          <span className="text-[10px] bg-muted/40 px-2 py-0.5 rounded-full text-primary font-medium">
                             {locations.find(l => l.id === review.location_id)?.location_name || 'Unknown Location'}
                           </span>
                         </div>
@@ -575,21 +571,21 @@ export default function ReviewsPage(props: any) {
                   </div>
 
                   {review.comment && (
-                    <p className="text-sm text-white/90 leading-relaxed bg-muted/10 p-4 rounded-lg border border-border/50">
+                    <p className="text-sm text-foreground/90 leading-relaxed bg-muted/20 p-4 rounded-lg border border-border/50">
                       &ldquo;{review.comment}&rdquo;
                     </p>
                   )}
 
                   <div className="pt-2">
                     {review.is_replied ? (
-                      <div className="pl-4 border-l-2 border-indigo-500/50 space-y-1 mt-2">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">Your Reply</span>
-                        <p className="text-sm text-muted-foreground bg-indigo-500/5 p-3 rounded-r-lg border border-indigo-500/10">
+                      <div className="pl-4 border-l-2 border-primary/50 space-y-1 mt-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-primary">Your Reply</span>
+                        <p className="text-sm text-muted-foreground bg-primary/5 p-3 rounded-r-lg border border-primary/10">
                           {review.reply_text}
                         </p>
                       </div>
                     ) : generatedReplies[review.id] ? (
-                      <div className="space-y-3 mt-4 bg-gray-900/50 p-4 rounded-xl border border-violet-500/20">
+                      <div className="space-y-3 mt-4 bg-muted/20 p-4 rounded-xl border border-primary/20">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-semibold text-muted-foreground">AI Tone:</span>
@@ -609,7 +605,7 @@ export default function ReviewsPage(props: any) {
                               </span>
                             )}
                           </div>
-                          <span className={`text-xs ${generatedReplies[review.id].reply.trim().split(/\s+/).filter(Boolean).length > 100 ? 'text-amber-400 font-semibold' : 'text-muted-foreground'}`}>
+                          <span className={`text-xs ${generatedReplies[review.id].reply.trim().split(/\s+/).filter(Boolean).length > 100 ? 'text-amber-500 font-semibold' : 'text-muted-foreground'}`}>
                             {generatedReplies[review.id].reply.trim().split(/\s+/).filter(Boolean).length} words
                           </span>
                         </div>
@@ -624,7 +620,7 @@ export default function ReviewsPage(props: any) {
                               }
                             });
                           }}
-                          className="min-h-[100px] w-full rounded-lg border border-gray-600 bg-gray-800 text-white p-3 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500"
+                          className="min-h-[100px] w-full rounded-lg border border-input bg-background text-foreground p-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                         />
                         <div className="flex gap-3 justify-end">
                           <button
@@ -636,14 +632,14 @@ export default function ReviewsPage(props: any) {
                               delete newErrors[review.id];
                               setGenerationError(newErrors);
                             }}
-                            className="px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-white transition-colors border border-transparent hover:border-gray-700 rounded-lg"
+                            className="px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors border border-transparent hover:border-border rounded-lg"
                           >
                             Discard
                           </button>
                           <button
                             onClick={() => handlePostAiReply(review.id)}
                             disabled={replying || !generatedReplies[review.id].reply.trim()}
-                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                           >
                             <Send className="h-4 w-4" />
                             {replying ? 'Sending...' : 'Send Reply'}
@@ -656,19 +652,19 @@ export default function ReviewsPage(props: any) {
                           value={replyText}
                           onChange={(e) => setReplyText(e.target.value)}
                           placeholder="Write your response..."
-                          className="w-full bg-muted/20 border border-border rounded-lg p-3 text-sm text-white placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500 min-h-[100px]"
+                          className="w-full bg-background border border-input rounded-lg p-3 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary min-h-[100px]"
                         />
                         <div className="flex gap-3 justify-end">
                           <button
                             onClick={() => { setReplyingTo(null); setReplyText(''); }}
-                            className="px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-white transition-colors"
+                            className="px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
                           >
                             Cancel
                           </button>
                           <button
                             onClick={() => handlePostReply(review.id)}
                             disabled={replying || !replyText.trim()}
-                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                           >
                             <Send className="h-4 w-4" />
                             {replying ? 'Sending...' : 'Post Reply'}
@@ -680,14 +676,14 @@ export default function ReviewsPage(props: any) {
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => { setReplyingTo(review.id); setReplyText(''); }}
-                            className="text-sm font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
+                            className="text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
                           >
                             Reply to Review
                           </button>
                           <button
                             onClick={() => handleGenerateReply(review.id)}
                             disabled={generatingFor === review.id}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-400 border border-violet-500/40 hover:bg-violet-500/10 disabled:opacity-50 transition-all"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-purple-600 border border-purple-500/40 hover:bg-purple-500/10 disabled:opacity-50 transition-all"
                           >
                             {generatingFor === review.id ? (
                               <>
@@ -716,7 +712,7 @@ export default function ReviewsPage(props: any) {
                   <button
                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                     disabled={currentPage === 1 || loading}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-muted/30 text-white disabled:opacity-50"
+                    className="px-4 py-2 rounded-lg text-sm font-semibold border border-border text-foreground hover:bg-muted/50 disabled:opacity-50"
                   >
                     Previous
                   </button>
@@ -726,7 +722,7 @@ export default function ReviewsPage(props: any) {
                   <button
                     onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                     disabled={currentPage === totalPages || loading}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-muted/30 text-white disabled:opacity-50"
+                    className="px-4 py-2 rounded-lg text-sm font-semibold border border-border text-foreground hover:bg-muted/50 disabled:opacity-50"
                   >
                     Next
                   </button>
@@ -737,22 +733,22 @@ export default function ReviewsPage(props: any) {
 
           {showSlaModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-              <div className="bg-background border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
-                <h3 className="text-xl font-bold text-white mb-2">Enable SLA Tracking</h3>
+              <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
+                <h3 className="text-xl font-bold text-foreground mb-2">Enable SLA Tracking</h3>
                 <p className="text-sm text-muted-foreground mb-6">
                   Start tracking response times from today? Historical reviews will remain visible but will not affect SLA metrics or rankings.
                 </p>
                 <div className="flex justify-end gap-3">
                   <button
                     onClick={() => setShowSlaModal(false)}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold text-muted-foreground hover:text-white transition-colors"
+                    className="px-4 py-2 rounded-lg text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleEnableSla}
                     disabled={enablingSla}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                    className="px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                   >
                     {enablingSla ? 'Enabling...' : 'Enable from Today'}
                   </button>
@@ -761,8 +757,7 @@ export default function ReviewsPage(props: any) {
             </div>
           )}
 
-        </main>
-      </div>
-    </AuthGuard>
+      </main>
+    </div>
   )
 }

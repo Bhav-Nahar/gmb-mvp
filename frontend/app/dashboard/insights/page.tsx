@@ -1,8 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import AuthGuard from '@/components/AuthGuard'
-import Navbar from '@/components/Navbar'
 import { api } from '@/lib/api'
 import {
   TrendingUp,
@@ -217,14 +215,14 @@ export default function InsightsPage() {
           </div>
         </div>
         <div className="mt-4 flex items-baseline justify-between">
-          <span className="text-3xl font-extrabold text-white">
+          <span className="text-3xl font-extrabold text-foreground">
             {metric.current.toLocaleString()}
           </span>
           <div className="flex items-center gap-1">
             {metric.percentage_change !== null ? (
               <span
                 className={`flex items-center text-xs font-bold ${
-                  isPositive ? 'text-emerald-400' : isNegative ? 'text-rose-400' : 'text-gray-400'
+                  isPositive ? 'text-emerald-600 dark:text-emerald-400' : isNegative ? 'text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400'
                 }`}
               >
                 {isPositive ? (
@@ -381,18 +379,15 @@ export default function InsightsPage() {
   }
 
   return (
-    <AuthGuard>
-      <div className="min-h-screen bg-background text-foreground flex flex-col">
-        <Navbar />
-        
+    <div className="w-full flex flex-col">
         <main className="flex-1 mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 lg:px-8">
           {/* Header */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
             <div>
-              <h1 className="text-3xl font-extrabold tracking-tight text-white">Performance Insights</h1>
+              <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Performance Insights</h1>
               <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                 {syncState.insights_sync_in_progress ? (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20">
                     <RefreshCw className="h-3 w-3 animate-spin" />
                     Updating insights in background...
                   </span>
@@ -407,7 +402,7 @@ export default function InsightsPage() {
                   </span>
                 )}
                 {syncState.last_insights_sync_status === 'failed' && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/10 text-[11px] font-semibold text-rose-400 border border-rose-500/20">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/10 text-[11px] font-semibold text-rose-600 dark:text-rose-400 border border-rose-500/20">
                     Sync failed — showing latest cached data
                   </span>
                 )}
@@ -422,11 +417,11 @@ export default function InsightsPage() {
                 <select
                   value={selectedLocation}
                   onChange={(e) => setSelectedLocation(e.target.value)}
-                  className="bg-transparent text-xs font-semibold text-white outline-none border-none cursor-pointer max-w-[200px]"
+                  className="bg-transparent text-xs font-semibold text-foreground outline-none border-none cursor-pointer max-w-[200px]"
                 >
-                  <option value="all" className="bg-slate-900 text-white">All Locations</option>
+                  <option value="all" className="bg-background text-foreground">All Locations</option>
                   {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id.toString()} className="bg-slate-900 text-white">
+                    <option key={loc.id} value={loc.id.toString()} className="bg-background text-foreground">
                       {loc.location_name}
                     </option>
                   ))}
@@ -439,18 +434,18 @@ export default function InsightsPage() {
                 <select
                   value={range}
                   onChange={(e) => setRange(e.target.value)}
-                  className="bg-transparent text-xs font-semibold text-white outline-none border-none cursor-pointer"
+                  className="bg-transparent text-xs font-semibold text-foreground outline-none border-none cursor-pointer"
                 >
-                  <option value="7" className="bg-slate-900 text-white">Last 7 Days</option>
-                  <option value="30" className="bg-slate-900 text-white">Last 30 Days</option>
-                  <option value="90" className="bg-slate-900 text-white">Last 90 Days</option>
+                  <option value="7" className="bg-background text-foreground">Last 7 Days</option>
+                  <option value="30" className="bg-background text-foreground">Last 30 Days</option>
+                  <option value="90" className="bg-background text-foreground">Last 90 Days</option>
                 </select>
               </div>
               
               <button
                 onClick={fetchOverviewData}
                 disabled={loading}
-                className="p-2 rounded-lg border border-border bg-muted/20 text-muted-foreground hover:text-white transition-colors"
+                className="p-2 rounded-lg border border-border bg-muted/20 text-muted-foreground hover:text-foreground transition-colors"
                 title="Refresh Metrics"
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -475,7 +470,7 @@ export default function InsightsPage() {
 
           {/* Success Alert */}
           {success && (
-            <div className="mb-6 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-400">
+            <div className="mb-6 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-600 dark:text-emerald-400">
               {success}
             </div>
           )}
@@ -499,7 +494,7 @@ export default function InsightsPage() {
                   {/* Attention banner */}
                   {selectedLocation === 'all' ? (
                     data && data.attention_locations_count > 0 && (
-                      <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-amber-300">
+                      <div className="flex items-center gap-3 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/10 p-4 text-amber-600 dark:text-amber-300">
                         <AlertTriangle className="h-5 w-5 flex-shrink-0" />
                         <div className="text-sm font-medium">
                           {data.attention_locations_count} {data.attention_locations_count === 1 ? 'location needs' : 'locations need'} operational attention. Visit individual locations to investigate.
@@ -508,11 +503,11 @@ export default function InsightsPage() {
                     )
                   ) : (
                     locationData && locationData.attention_needed && (
-                      <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-amber-300">
+                      <div className="flex items-start gap-3 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/10 p-4 text-amber-600 dark:text-amber-300">
                         <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
                         <div>
                           <span className="text-sm font-bold block mb-1">Needs Attention</span>
-                          <span className="text-xs text-amber-200 leading-relaxed">
+                          <span className="text-xs text-amber-700 dark:text-amber-200 leading-relaxed">
                             {locationData.attention_reason?.split(' | ').join(' • ')}
                           </span>
                         </div>
@@ -534,7 +529,7 @@ export default function InsightsPage() {
                   <div className="glass-panel p-6">
                     <div className="flex items-center justify-between mb-6">
                       <div>
-                        <h3 className="text-base font-bold text-white">Views vs. Search Impressions</h3>
+                        <h3 className="text-base font-bold text-foreground">Views vs. Search Impressions</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">Daily time-series distribution</p>
                       </div>
                       <div className="flex items-center gap-4 text-xs font-semibold">
@@ -556,7 +551,7 @@ export default function InsightsPage() {
                     <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
                       {/* Leaderboard */}
                       <div className="glass-panel p-6">
-                        <h3 className="text-base font-bold text-white mb-4">Locations Leaderboard</h3>
+                        <h3 className="text-base font-bold text-foreground mb-4">Locations Leaderboard</h3>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
@@ -574,7 +569,7 @@ export default function InsightsPage() {
                                     <td className="py-3 pr-2">
                                       <Link
                                         href={`/dashboard/locations/${item.location_id}`}
-                                        className="text-white hover:underline hover:text-indigo-400 transition-colors"
+                                        className="text-foreground hover:underline hover:text-indigo-600 transition-colors"
                                       >
                                         {item.location_name}
                                       </Link>
@@ -587,7 +582,7 @@ export default function InsightsPage() {
                                     </td>
                                     <td className="py-3 text-right text-muted-foreground">
                                       {item.avg_rating !== null ? (
-                                        <span className="text-amber-400">★ {item.avg_rating.toFixed(1)}</span>
+                                        <span className="text-amber-600 dark:text-amber-400">★ {item.avg_rating.toFixed(1)}</span>
                                       ) : (
                                         '—'
                                       )}
@@ -606,7 +601,7 @@ export default function InsightsPage() {
 
                       {/* MoM comparisons */}
                       <div className="glass-panel p-6">
-                        <h3 className="text-base font-bold text-white mb-4">Period Comparison</h3>
+                        <h3 className="text-base font-bold text-foreground mb-4">Period Comparison</h3>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
@@ -630,10 +625,10 @@ export default function InsightsPage() {
                                 const isNeg = row.delta !== null && row.delta < 0
                                 return (
                                   <tr key={idx} className="hover:bg-muted/10 transition-colors">
-                                    <td className="py-3 text-white">{row.name}</td>
+                                    <td className="py-3 text-foreground">{row.name}</td>
                                     <td className="py-3 text-right text-muted-foreground">{row.current.toLocaleString()}</td>
                                     <td className="py-3 text-right text-muted-foreground">{row.prior.toLocaleString()}</td>
-                                    <td className={`py-3 text-right font-bold ${isPos ? 'text-emerald-400' : isNeg ? 'text-rose-400' : 'text-gray-400'}`}>
+                                    <td className={`py-3 text-right font-bold ${isPos ? 'text-emerald-600 dark:text-emerald-400' : isNeg ? 'text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400'}`}>
                                       {row.delta !== null ? `${isPos ? '+' : ''}${row.delta.toFixed(1)}%` : '—'}
                                     </td>
                                   </tr>
@@ -651,8 +646,8 @@ export default function InsightsPage() {
                         {/* Customer Sentiment */}
                         <div className="glass-panel p-6 flex flex-col justify-between">
                           <div>
-                            <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
-                              <Smile className="h-4 w-4 text-emerald-400" />
+                            <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                              <Smile className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                               Customer Sentiment
                             </h4>
                             <p className="text-[10px] text-muted-foreground mt-0.5">Breakdown of positive vs negative tags</p>
@@ -660,16 +655,16 @@ export default function InsightsPage() {
                           
                           <div className="my-4 space-y-3">
                             <div className="flex justify-between items-center text-xs">
-                              <span className="text-emerald-400 font-semibold flex items-center gap-1"><Smile className="h-3.5 w-3.5" />Positive</span>
-                              <span className="text-white font-bold">{locationData.sentiment.positive_percentage.toFixed(0)}%</span>
+                              <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1"><Smile className="h-3.5 w-3.5" />Positive</span>
+                              <span className="text-foreground font-bold">{locationData.sentiment.positive_percentage.toFixed(0)}%</span>
                             </div>
                             <div className="flex justify-between items-center text-xs">
-                              <span className="text-gray-400 font-semibold flex items-center gap-1"><MessageSquare className="h-3.5 w-3.5" />Neutral</span>
-                              <span className="text-white font-bold">{locationData.sentiment.neutral_percentage.toFixed(0)}%</span>
+                              <span className="text-gray-600 dark:text-gray-400 font-semibold flex items-center gap-1"><MessageSquare className="h-3.5 w-3.5" />Neutral</span>
+                              <span className="text-foreground font-bold">{locationData.sentiment.neutral_percentage.toFixed(0)}%</span>
                             </div>
                             <div className="flex justify-between items-center text-xs">
-                              <span className="text-rose-400 font-semibold flex items-center gap-1"><Frown className="h-3.5 w-3.5" />Negative</span>
-                              <span className="text-white font-bold">{locationData.sentiment.negative_percentage.toFixed(0)}%</span>
+                              <span className="text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1"><Frown className="h-3.5 w-3.5" />Negative</span>
+                              <span className="text-foreground font-bold">{locationData.sentiment.negative_percentage.toFixed(0)}%</span>
                             </div>
                           </div>
 
@@ -683,8 +678,8 @@ export default function InsightsPage() {
                         {/* SLA Summary */}
                         <div className="glass-panel p-6 flex flex-col justify-between">
                           <div>
-                            <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
-                              <Clock className="h-4 w-4 text-indigo-400" />
+                            <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                              <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
                               SLA Performance
                             </h4>
                             <p className="text-[10px] text-muted-foreground mt-0.5">Reviews reply speeds and statuses</p>
@@ -693,13 +688,13 @@ export default function InsightsPage() {
                           <div className="my-4 grid grid-cols-2 gap-4">
                             <div className="bg-muted/30 p-3 rounded-lg text-center border border-border/30">
                               <span className="text-[10px] uppercase font-bold text-muted-foreground block">Response Rate</span>
-                              <span className="text-lg font-extrabold text-indigo-400 mt-1 block">
+                              <span className="text-lg font-extrabold text-indigo-600 dark:text-indigo-400 mt-1 block">
                                 {locationData.sla.response_rate.toFixed(0)}%
                               </span>
                             </div>
                             <div className="bg-muted/30 p-3 rounded-lg text-center border border-border/30">
                               <span className="text-[10px] uppercase font-bold text-muted-foreground block">Avg Reply Time</span>
-                              <span className="text-lg font-extrabold text-indigo-400 mt-1 block">
+                              <span className="text-lg font-extrabold text-indigo-600 dark:text-indigo-400 mt-1 block">
                                 {locationData.sla.avg_response_time_hours !== null 
                                   ? `${locationData.sla.avg_response_time_hours.toFixed(1)}h` 
                                   : '—'
@@ -715,8 +710,8 @@ export default function InsightsPage() {
 
                         {/* Customer Themes */}
                         <div className="glass-panel p-6">
-                          <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
-                            <Heart className="h-4 w-4 text-rose-400" />
+                          <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                            <Heart className="h-4 w-4 text-rose-600 dark:text-rose-400" />
                             Customer Themes
                           </h4>
                           <p className="text-[10px] text-muted-foreground mt-0.5">Recurring issue categories</p>
@@ -726,7 +721,7 @@ export default function InsightsPage() {
                               locationData.top_issue_categories.map((item: any, idx: number) => (
                                 <div key={idx} className="flex justify-between items-center text-xs border-b border-border/20 pb-1.5">
                                   <span className="text-muted-foreground font-semibold capitalize">{item.category}</span>
-                                  <span className="text-white font-bold">{item.count} tags</span>
+                                  <span className="text-foreground font-bold">{item.count} tags</span>
                                 </div>
                               ))
                             ) : (
@@ -738,7 +733,7 @@ export default function InsightsPage() {
 
                       {/* Period Comparison for Single Location */}
                       <div className="glass-panel p-6">
-                        <h3 className="text-base font-bold text-white mb-4">Period Comparison</h3>
+                        <h3 className="text-base font-bold text-foreground mb-4">Period Comparison</h3>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
@@ -762,10 +757,10 @@ export default function InsightsPage() {
                                 const isNeg = row.delta !== null && row.delta < 0
                                 return (
                                   <tr key={idx} className="hover:bg-muted/10 transition-colors">
-                                    <td className="py-3 text-white">{row.name}</td>
+                                    <td className="py-3 text-foreground">{row.name}</td>
                                     <td className="py-3 text-right text-muted-foreground">{row.current.toLocaleString()}</td>
                                     <td className="py-3 text-right text-muted-foreground">{row.prior.toLocaleString()}</td>
-                                    <td className={`py-3 text-right font-bold ${isPos ? 'text-emerald-400' : isNeg ? 'text-rose-400' : 'text-gray-400'}`}>
+                                    <td className={`py-3 text-right font-bold ${isPos ? 'text-emerald-600 dark:text-emerald-400' : isNeg ? 'text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400'}`}>
                                       {row.delta !== null ? `${isPos ? '+' : ''}${row.delta.toFixed(1)}%` : '—'}
                                     </td>
                                   </tr>
@@ -787,6 +782,5 @@ export default function InsightsPage() {
           )}
         </main>
       </div>
-    </AuthGuard>
   )
 }

@@ -12,7 +12,9 @@ class Organization(Base):
     # Billing Fields
     plan = Column(String, nullable=True, default="trial", server_default=text("'trial'"))
     billing_cycle = Column(String, nullable=True)
-    subscription_status = Column(String, nullable=True, default="trial_pending_activation", server_default=text("'trial_pending_activation'"))
+    # States: trial (trial_ends_at NULL = not yet activated), active
+    # (subscription_ends_at set = cancelled but still valid), past_due, locked.
+    subscription_status = Column(String, nullable=True, default="trial", server_default=text("'trial'"))
     trial_ends_at = Column(DateTime(timezone=True), nullable=True)
     grace_period_ends_at = Column(DateTime(timezone=True), nullable=True)
     location_quota = Column(Integer, nullable=True, default=5, server_default=text("5"))

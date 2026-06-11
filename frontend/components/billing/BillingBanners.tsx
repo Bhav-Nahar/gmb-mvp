@@ -1,3 +1,5 @@
+'use client';
+
 import { usePathname } from 'next/navigation';
 import { useBillingStatus } from '@/hooks/useBilling';
 import { useCountdown } from '@/hooks/useCountdown';
@@ -38,7 +40,8 @@ export function BillingBanners() {
   }
 
   // Banners that show up at the top
-  if (billing.subscription_status === 'trial_pending_activation') {
+  // Pending trial: status is 'trial' but the clock hasn't started (no trial_ends_at).
+  if (billing.subscription_status === 'trial' && !billing.trial_ends_at) {
     return (
       <div className="bg-amber-100 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 px-4 py-3 flex items-center justify-center text-sm">
         <AlertCircle className="w-4 h-4 mr-2" />
@@ -51,30 +54,31 @@ export function BillingBanners() {
     return (
       <div className="bg-blue-100 dark:bg-blue-900/30 border-b border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 px-4 py-3 flex items-center justify-center text-sm">
         <p>
-          <strong>Trial Period:</strong> {trialCountdown.days} days, {trialCountdown.hours} hours left. 
+          <strong>Trial Period:</strong> {trialCountdown.days} days, {trialCountdown.hours} hours left.
           <a href="/dashboard/settings/billing" className="ml-2 underline font-medium">Upgrade now</a>
         </p>
       </div>
     );
   }
 
-  if (['grace_period', 'past_due'].includes(billing.subscription_status)) {
+  if (billing.subscription_status === 'past_due') {
     return (
       <div className="bg-destructive/10 border-b border-destructive/20 text-destructive px-4 py-3 flex items-center justify-center text-sm">
         <AlertCircle className="w-4 h-4 mr-2" />
         <p>
-          Payment failed. Your subscription will be locked soon. 
+          Payment failed. Your subscription will be locked soon.
           <a href="/dashboard/settings/billing" className="ml-2 underline font-medium">Update payment method</a>
         </p>
       </div>
     );
   }
 
-  if (billing.subscription_status === 'cancelled_active') {
+  // Cancelled but still valid: status is 'active' with an end date set.
+  if (billing.subscription_status === 'active' && billing.subscription_ends_at) {
     return (
       <div className="bg-muted border-b px-4 py-3 flex items-center justify-center text-sm">
         <p>
-          Your subscription will end on {billing.current_period_end ? new Date(billing.current_period_end).toLocaleDateString() : 'soon'}.
+          Your subscription will end on {billing.subscription_ends_at ? new Date(billing.subscription_ends_at).toLocaleDateString() : 'soon'}.
           <a href="/dashboard/settings/billing" className="ml-2 underline font-medium">Reactivate</a>
         </p>
       </div>

@@ -31,6 +31,12 @@ class QuoteResponse(BaseModel):
     price_paise: int
     monthly_ai_credits: int
 
+class ConfirmRequest(BaseModel):
+    razorpay_payment_id: str
+    razorpay_signature: str
+    razorpay_subscription_id: str | None = None
+    razorpay_order_id: str | None = None
+
 @router.get("/quote", response_model=QuoteResponse)
 def get_quote(location_count: int, interval: str = "monthly"):
     """Server-authoritative price for a given location count (for display)."""
@@ -91,6 +97,57 @@ def buy_credits(
         pack_key=request.pack,
     )
     return {"order": order}
+
+@router.post("/confirm")
+def confirm_payment(
+    request: ConfirmRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """Called from the Razorpay checkout success handler. Verifies the payment
+    signature and immediately reconciles entitlements from Razorpay, so the user
+    is activated right away instead of waiting on the (eventually-consistent)
+    webhook. The webhook remains the source of truth; this is a fast path and a
+    safety net, and both are idempotent."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    client = SubscriptionService.get_razorpay_client()
+    try:
+        if request.razorpay_subscription_id:
+            client.utility.verify_subscription_payment_signature({
+                "razorpay_subscription_id": request.razorpay_subscription_id,
+                "razorpay_payment_id": request.razorpay_payment_id,
+                "razorpay_signature": request.razorpay_signature,
+            })
+        elif request.razorpay_order_id:
+            client.utility.verify_payment_signature({
+                "razorpay_order_id": request.razorpay_order_id,
+                "razorpay_payment_id": request.razorpay_payment_id,
+                "razorpay_signature": request.razorpay_signature,
+            })
+        else:
+            raise HTTPException(status_code=400, detail="Missing subscription or order id")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
+
+    if request.razorpay_subscription_id:
+        # Only reconcile the subscription we actually own.
+        if org.razorpay_subscription_id != request.razorpay_subscription_id:
+            raise HTTPException(status_code=400, detail="Subscription does not belong to this organization")
+        activated = SubscriptionService.reconcile_subscription(db, org.id)
+    else:
+        activated = SubscriptionService.reconcile_topup_payment(db, org.id, request.razorpay_payment_id)
+
+    return {"confirmed": True, "activated": activated}
+
 
 @router.get("/status")
 def get_billing_status(

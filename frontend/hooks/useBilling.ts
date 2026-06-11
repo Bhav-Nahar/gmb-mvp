@@ -51,6 +51,18 @@ export function useBuyCredits() {
   });
 }
 
+export function useConfirmPayment() {
+  return useMutation({
+    mutationFn: (data: {
+      razorpay_payment_id: string;
+      razorpay_signature: string;
+      razorpay_subscription_id?: string;
+      razorpay_order_id?: string;
+    }) =>
+      api.post<{ confirmed: boolean; activated: boolean }>('/billing/confirm', data),
+  });
+}
+
 export function useQuote(locationCount: number, interval: 'monthly' | 'annual', enabled = true) {
   return useQuery({
     queryKey: ['billing_quote', locationCount, interval],

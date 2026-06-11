@@ -1,8 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import AuthGuard from '@/components/AuthGuard'
-import Navbar from '@/components/Navbar'
 import InviteMember from '@/components/InviteMember'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
@@ -106,14 +104,12 @@ export default function TeamSettingsPage() {
   }
 
   return (
-    <AuthGuard>
-      <div className="min-h-screen bg-background text-white">
-        <Navbar />
+    <div className="min-h-screen bg-background text-foreground">
 
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
           {/* Page Title */}
           <div className="space-y-1.5">
-            <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+            <h2 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
               <Users className="h-6 w-6 text-indigo-400" />
               Team Management
             </h2>
@@ -126,7 +122,7 @@ export default function TeamSettingsPage() {
             <div className="flex items-center gap-3 rounded-xl bg-amber-500/10 border border-amber-500/20 p-5 text-sm font-medium text-amber-400">
               <AlertTriangle className="h-5 w-5 shrink-0" />
               <div>
-                <h4 className="font-bold text-white mb-0.5">Management Permissions Required</h4>
+                <h4 className="font-bold text-foreground mb-0.5">Management Permissions Required</h4>
                 <p className="text-xs text-muted-foreground/90 font-semibold leading-relaxed">
                   Only Owners, Admins, and Regional Managers have access to generate invite links or view organization personnel settings.
                 </p>
@@ -142,7 +138,7 @@ export default function TeamSettingsPage() {
               {/* Members Table Column */}
               <div className="lg:col-span-2 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                  <h3 className="text-lg font-bold tracking-tight text-foreground flex items-center gap-2">
                     <Users className="h-4.5 w-4.5 text-indigo-400" />
                     Workspace Personnel ({users.length})
                   </h3>
@@ -197,7 +193,7 @@ export default function TeamSettingsPage() {
                                     <UserIcon className="h-4 w-4" />
                                   </div>
                                 )}
-                                <span className="font-bold text-white">{u.name}</span>
+                                <span className="font-bold text-foreground">{u.name}</span>
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-muted-foreground font-semibold">
@@ -227,7 +223,7 @@ export default function TeamSettingsPage() {
                 {/* Pending Invites Section */}
                 <div className="pt-8 space-y-4 border-t border-border/50">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                    <h3 className="text-lg font-bold tracking-tight text-foreground flex items-center gap-2">
                       <Mail className="h-4.5 w-4.5 text-indigo-400" />
                       Pending Invitations
                     </h3>
@@ -247,14 +243,14 @@ export default function TeamSettingsPage() {
                         <div className="flex items-center gap-2 text-sm font-bold text-indigo-400">
                           <span>Link Regenerated Successfully!</span>
                         </div>
-                        <button onClick={() => setTempInviteUrl('')} className="text-xs text-muted-foreground hover:text-white cursor-pointer">Close</button>
+                        <button onClick={() => setTempInviteUrl('')} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">Close</button>
                       </div>
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
                           readOnly
                           value={tempInviteUrl}
-                          className="w-full rounded-lg border border-border bg-background/70 px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                          className="w-full rounded-lg border border-border bg-background/70 px-3 py-2 text-xs font-mono text-foreground focus:outline-none"
                         />
                         <button
                           onClick={handleCopyTempUrl}
@@ -296,7 +292,7 @@ export default function TeamSettingsPage() {
                         <tbody className="divide-y divide-border/40 text-xs font-medium">
                           {invites.map((inv) => (
                             <tr key={inv.id} className="hover:bg-muted/5 transition-colors">
-                              <td className="px-6 py-4 whitespace-nowrap text-white font-semibold">
+                              <td className="px-6 py-4 whitespace-nowrap text-foreground font-semibold">
                                 {inv.email}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
@@ -352,6 +348,5 @@ export default function TeamSettingsPage() {
           )}
         </main>
       </div>
-    </AuthGuard>
   )
 }

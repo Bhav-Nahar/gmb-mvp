@@ -83,7 +83,7 @@ class WebhookService:
 
     @staticmethod
     def _locked_org(db: Session, payload: Dict[str, Any], entity: str):
-        ent = payload.get("contains", {}).get(entity, {}).get("entity", {})
+        ent = payload.get("payload", {}).get(entity, {}).get("entity", {})
         org_id_str = ent.get("notes", {}).get("organization_id")
         if not org_id_str:
             logger.error(f"No organization_id in {entity} notes")
@@ -99,7 +99,24 @@ class WebhookService:
         org, subscription = WebhookService._locked_org(db, payload, "subscription")
         if not org:
             return
+        payment = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        WebhookService.apply_subscription_charged(db, org, subscription, payment)
 
+    @staticmethod
+    def apply_subscription_charged(
+        db: Session,
+        org: Organization,
+        subscription: Dict[str, Any],
+        payment: Dict[str, Any] | None = None,
+    ) -> None:
+        """Grant the entitlements for an active/charged subscription and record the
+        charge. Shared by the webhook and the reconciliation path so both apply
+        identical state. The caller is responsible for locking `org` and committing.
+
+        If a charge for this payment id has already been recorded, the ledger row is
+        skipped so reconciliation after a delivered webhook (or vice-versa) does not
+        double-count."""
+        payment = payment or {}
         notes = subscription.get("notes", {})
         location_count = int(notes.get("location_count", "0") or 0)
 
@@ -111,6 +128,7 @@ class WebhookService:
         org.subscription_status = "active"
         org.grace_period_ends_at = None
         org.trial_ends_at = None
+        org.subscription_ends_at = None
         org.razorpay_subscription_id = subscription.get("id")
 
         # Grant the entitlements that were paid for.
@@ -118,14 +136,25 @@ class WebhookService:
             org.location_quota = location_count
             org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(location_count)
 
-        payment = payload.get("contains", {}).get("payment", {}).get("entity", {})
+        payment_id = payment.get("id")
+        if not payment_id:
+            # Reconciliation path (no payment entity): entitlements are applied
+            # above; the authoritative ledger row is written by the webhook, which
+            # carries the real payment id. Skip writing a phantom null-id row.
+            return
+        already = db.query(BillingTransaction).filter(
+            BillingTransaction.razorpay_payment_id == payment_id
+        ).first()
+        if already:
+            return
+
         db.add(BillingTransaction(
             organization_id=org.id,
             transaction_type="subscription_charge",
             amount_paise=payment.get("amount", 0),
             currency=payment.get("currency", "INR"),
             status="success",
-            razorpay_payment_id=payment.get("id"),
+            razorpay_payment_id=payment_id,
             razorpay_order_id=payment.get("order_id"),
             razorpay_subscription_id=subscription.get("id"),
         ))
@@ -141,14 +170,17 @@ class WebhookService:
     def _handle_subscription_cancelled(db: Session, payload: Dict[str, Any]) -> None:
         org, subscription = WebhookService._locked_org(db, payload, "subscription")
         if org:
-            org.subscription_status = "cancelled_active"
+            # Cancelled but still valid until the end of the paid period: stays
+            # "active" with subscription_ends_at set; the periodic sweep locks it
+            # once that date passes. A re-charge clears subscription_ends_at.
+            org.subscription_status = "active"
             current_end = subscription.get("current_end")
             if current_end:
                 org.subscription_ends_at = datetime.fromtimestamp(current_end, tz=timezone.utc)
 
     @staticmethod
     def _handle_payment_captured(db: Session, payload: Dict[str, Any]) -> None:
-        payment = payload.get("contains", {}).get("payment", {}).get("entity", {})
+        payment = payload.get("payload", {}).get("payment", {}).get("entity", {})
         notes = payment.get("notes", {})
         if notes.get("type") != "topup":
             # Subscription payments arrive via subscription.charged.
@@ -162,8 +194,16 @@ class WebhookService:
         if not org:
             return
 
+        payment_id = payment.get("id")
+        if payment_id:
+            already = db.query(BillingTransaction).filter(
+                BillingTransaction.razorpay_payment_id == payment_id
+            ).first()
+            if already:
+                return
+
         credits_str = notes.get("credits", "0")
-        credits_to_add = int(credits_str) if credits_str.isdigit() else 0
+        credits_to_add = int(credits_str) if str(credits_str).isdigit() else 0
         org.topup_ai_credits_balance += credits_to_add
 
         db.add(BillingTransaction(

@@ -169,6 +169,7 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
         "/api/v1/auth/refresh",
         "/api/v1/billing/checkout-subscription",
         "/api/v1/billing/buy-credits",
+        "/api/v1/billing/confirm",
         "/api/v1/webhooks/razorpay"
     })
     

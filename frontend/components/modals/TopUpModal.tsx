@@ -1,7 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { useBuyCredits } from '@/hooks/useBilling';
+import { useBuyCredits, useConfirmPayment } from '@/hooks/useBilling';
 import { useRazorpay } from '@/hooks/useRazorpay';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 interface TopUpModalProps {
@@ -11,20 +12,43 @@ interface TopUpModalProps {
 
 export function TopUpModal({ open, onOpenChange }: TopUpModalProps) {
   const { mutateAsync: buyCredits, isPending } = useBuyCredits();
+  const { mutateAsync: confirmPayment } = useConfirmPayment();
   const { openRazorpay } = useRazorpay();
+  const queryClient = useQueryClient();
 
   const handleBuyCredits = async (pack: 'small' | 'large', credits: number) => {
+    const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY;
+    if (!razorpayKey) {
+      toast.error('Payments are not configured (missing key). Please contact support.');
+      return;
+    }
     try {
       const response = await buyCredits({ pack });
 
       const options = {
-        key: response.order.razorpay_key || process.env.NEXT_PUBLIC_RAZORPAY_KEY || '',
+        key: razorpayKey,
         order_id: response.order.id,
         name: 'GMB MVP',
         description: `Buy ${credits} AI Credits`,
-        handler: function (res: any) {
-          toast.success('Credits purchased! Confirming status...');
-          onOpenChange(false);
+        handler: async function (res: any) {
+          try {
+            await confirmPayment({
+              razorpay_payment_id: res.razorpay_payment_id,
+              razorpay_signature: res.razorpay_signature,
+              razorpay_order_id: res.razorpay_order_id,
+            });
+            toast.success('Credits added to your balance!');
+          } catch {
+            toast.success('Payment received! Credits will appear shortly...');
+          } finally {
+            queryClient.invalidateQueries({ queryKey: ['billing_status'] });
+            onOpenChange(false);
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            toast.info('Checkout closed. No payment was made.');
+          },
         },
       };
 

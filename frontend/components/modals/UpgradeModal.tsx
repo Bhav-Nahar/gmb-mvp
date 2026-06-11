@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { useCheckoutSubscription, useQuote } from '@/hooks/useBilling';
+import { useCheckoutSubscription, useConfirmPayment, useQuote } from '@/hooks/useBilling';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRazorpay } from '@/hooks/useRazorpay';
 import { toast } from 'sonner';
 import { useState } from 'react';
@@ -12,7 +13,9 @@ interface UpgradeModalProps {
 
 export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const { mutateAsync: checkoutSubscription, isPending } = useCheckoutSubscription();
+  const { mutateAsync: confirmPayment } = useConfirmPayment();
   const { openRazorpay } = useRazorpay();
+  const queryClient = useQueryClient();
   const [paymentTerm, setPaymentTerm] = useState<'monthly' | 'annual'>('monthly');
   const [locationCount, setLocationCount] = useState<number>(1);
 
@@ -22,20 +25,44 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const totalRupees = quote ? Math.round(quote.price_paise / 100) : null;
 
   const handleUpgrade = async () => {
+    const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY;
+    if (!razorpayKey) {
+      toast.error('Payments are not configured (missing key). Please contact support.');
+      return;
+    }
     try {
       const response = await checkoutSubscription({
         location_count: locationCount,
         interval: paymentTerm,
       });
-      
+
       const options = {
-        key: response.subscription.razorpay_key || process.env.NEXT_PUBLIC_RAZORPAY_KEY || '',
+        key: razorpayKey,
         subscription_id: response.subscription.id,
         name: 'GMB MVP',
         description: `Subscription for ${locationCount} Locations`,
-        handler: function (res: any) {
-          toast.success('Subscription activated! Confirming status...');
-          onOpenChange(false);
+        handler: async function (res: any) {
+          // Verify the payment server-side and activate immediately, rather than
+          // waiting on the webhook. If confirm fails, the webhook / periodic
+          // reconcile is still the backstop.
+          try {
+            await confirmPayment({
+              razorpay_payment_id: res.razorpay_payment_id,
+              razorpay_signature: res.razorpay_signature,
+              razorpay_subscription_id: res.razorpay_subscription_id,
+            });
+            toast.success('Subscription activated!');
+          } catch {
+            toast.success('Payment received! Confirming activation shortly...');
+          } finally {
+            queryClient.invalidateQueries({ queryKey: ['billing_status'] });
+            onOpenChange(false);
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            toast.info('Checkout closed. No payment was made.');
+          },
         },
       };
 

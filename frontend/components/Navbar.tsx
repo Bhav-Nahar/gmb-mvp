@@ -29,7 +29,7 @@ export default function Navbar() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20">
               <RefreshCw className="h-5 w-5 text-white animate-pulse" />
             </div>
-            <span className="bg-gradient-to-r from-white to-gray-400 bg-clip-text text-lg font-bold tracking-tight text-transparent">
+            <span className="bg-gradient-to-r from-indigo-600 to-purple-700 bg-clip-text text-lg font-bold tracking-tight text-transparent">
               GMB Sync Engine
             </span>
           </div>
@@ -37,46 +37,46 @@ export default function Navbar() {
           <nav className="flex items-center gap-6">
             <Link
               href="/dashboard"
-              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
               Dashboard
             </Link>
             <Link
               href="/dashboard/insights"
-              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
               Insights
             </Link>
             {['Owner', 'Admin', 'Regional Manager'].includes(userRole) && (
               <Link
                 href="/dashboard/team"
-                className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+                className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
               >
                 Team
               </Link>
             )}
             <Link
               href="/dashboard/reviews"
-              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
               Reviews
             </Link>
             <Link
               href="/dashboard/posts"
-              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
               Posts & Media
             </Link>
             <Link
               href="/dashboard/settings"
-              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+              className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
               Settings
             </Link>
             {['Owner', 'Admin'].includes(userRole) && (
               <Link
                 href="/dashboard/settings/billing"
-                className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+                className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
               >
                 Billing
               </Link>
@@ -95,7 +95,7 @@ export default function Navbar() {
           {/* User Details */}
           <div className="flex items-center gap-3 border-l border-border pl-4">
             <div className="flex flex-col items-end">
-              <span className="text-xs font-bold text-white leading-tight">{userName}</span>
+              <span className="text-xs font-bold text-foreground leading-tight">{userName}</span>
               <span className="text-[10px] uppercase font-extrabold tracking-wider text-indigo-400 mt-0.5">{userRole}</span>
             </div>
             
