@@ -165,7 +165,7 @@ export function FieldRenderer({
     if (fieldConfig.name === "address") {
       const formatted = formatAddress(val);
       if (!formatted) return <span className="text-muted-foreground italic">Not set</span>;
-      return <span className="text-white/95 font-medium leading-relaxed">{formatted}</span>;
+      return <span className="text-foreground font-medium leading-relaxed">{formatted}</span>;
     }
 
     if (fieldConfig.ui_component === "business_hours_editor" || fieldConfig.name === "business_hours") {
@@ -176,7 +176,7 @@ export function FieldRenderer({
             const config = hoursMap[day]
             return (
               <div key={day} className="flex justify-between items-center text-muted-foreground font-medium border-b border-border/10 pb-1 last:border-0 last:pb-0">
-                <span className="text-white/80 font-semibold">{DAY_LABELS[day]}</span>
+                <span className="text-foreground/80 font-semibold">{DAY_LABELS[day]}</span>
                 {config.isOpen ? (
                   <span className="text-indigo-400 font-bold font-mono">{config.openTime} - {config.closeTime}</span>
                 ) : (
@@ -196,7 +196,7 @@ export function FieldRenderer({
         </pre>
       )
     }
-    return <span className="text-white/95 font-medium leading-relaxed">{String(val)}</span>
+    return <span className="text-foreground font-medium leading-relaxed">{String(val)}</span>
   }
 
   const handleSave = () => {
@@ -281,7 +281,7 @@ export function FieldRenderer({
       <div className="flex justify-between items-start">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <h4 className="text-sm font-bold text-white tracking-wide">{fieldConfig.label}</h4>
+            <h4 className="text-sm font-bold text-foreground tracking-wide">{fieldConfig.label}</h4>
             {fieldConfig.is_critical && (
               <Badge variant="destructive" className="h-5 px-1.5 text-[9px] uppercase tracking-wider font-extrabold bg-red-500/10 text-red-400 border border-red-500/25">
                 Critical
@@ -396,7 +396,7 @@ function BusinessHoursEditor({
                   onChange={() => handleToggle(day)}
                   className="h-4 w-4 rounded border-border/80 bg-background text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                 />
-                <label htmlFor={`open-${day}`} className="text-xs font-bold text-white/90 cursor-pointer select-none min-w-[70px]">
+                <label htmlFor={`open-${day}`} className="text-xs font-bold text-foreground/90 cursor-pointer select-none min-w-[70px]">
                   {DAY_LABELS[day]}
                 </label>
                 <span className={`text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded ${config.isOpen ? 'bg-indigo-500/10 text-indigo-400' : 'bg-muted text-muted-foreground'}`}>
@@ -413,7 +413,7 @@ function BusinessHoursEditor({
                       placeholder="09:00"
                       value={config.openTime}
                       onChange={(e) => handleTimeChange(day, "openTime", e.target.value)}
-                      className="w-14 rounded border border-border bg-background/50 px-2 py-0.5 text-center text-xs font-semibold font-mono text-white focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="w-14 rounded border border-border bg-background/50 px-2 py-0.5 text-center text-xs font-semibold font-mono text-foreground focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -423,7 +423,7 @@ function BusinessHoursEditor({
                       placeholder="17:00"
                       value={config.closeTime}
                       onChange={(e) => handleTimeChange(day, "closeTime", e.target.value)}
-                      className="w-14 rounded border border-border bg-background/50 px-2 py-0.5 text-center text-xs font-semibold font-mono text-white focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="w-14 rounded border border-border bg-background/50 px-2 py-0.5 text-center text-xs font-semibold font-mono text-foreground focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
                 </div>
@@ -519,7 +519,7 @@ function CategoryAutocompleteEditor({
               // BUG-005 fix: Use onMouseDown + preventDefault so the item click
               // fires before the backdrop overlay's onClick closes the dropdown.
               onMouseDown={(e) => { e.preventDefault(); handleSelect(cat) }}
-              className="px-3 py-2 text-xs text-white/90 hover:bg-indigo-600 hover:text-white rounded-md cursor-pointer transition-colors"
+              className="px-3 py-2 text-xs text-foreground hover:bg-indigo-600 hover:text-white rounded-md cursor-pointer transition-colors"
             >
               {cat.displayName}
             </div>

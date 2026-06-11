@@ -1,8 +1,6 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import AuthGuard from '@/components/AuthGuard'
-import Navbar from '@/components/Navbar'
 import { api } from '@/lib/api'
 import {
   Sparkles,
@@ -395,23 +393,21 @@ export default function PostsPage(props: any) {
   const selectedCampaign = campaigns.find(c => c.id === selectedCampaignId)
 
   return (
-    <AuthGuard>
-      <div className={locationId ? "pb-20" : "min-h-screen bg-background text-white pb-20"}>
-        {!locationId && <Navbar />}
-        <main className={locationId ? "" : "mx-auto max-w-7xl px-4 py-8 space-y-8"}>
+    <div className={locationId ? "" : "min-h-screen bg-background text-foreground"}>
+      <main className={locationId ? "" : "mx-auto max-w-7xl px-4 py-8 space-y-8"}>
           
-          {!locationId && (<div className="flex justify-between items-center glass-panel border border-border p-6 rounded-2xl relative overflow-hidden">
-            <div className="absolute -top-12 -right-12 w-32 h-32 rounded-full bg-indigo-500/5 blur-2xl"></div>
+          {!locationId && (<div className="flex justify-between items-center bg-card shadow-sm border border-border p-6 rounded-2xl relative overflow-hidden">
+            <div className="absolute -top-12 -right-12 w-32 h-32 rounded-full bg-primary/5 blur-2xl"></div>
             <div>
-              <h2 className="text-2xl font-bold flex items-center gap-2">
-                <Sparkles className="h-6 w-6 text-indigo-400" />
+              <h2 className="text-2xl font-bold flex items-center gap-2 text-foreground">
+                <Sparkles className="h-6 w-6 text-primary" />
                 Campaign Orchestrator
               </h2>
               <p className="text-muted-foreground text-sm mt-1">Manage bulk publishing campaigns across thousands of locations.</p>
             </div>
             <button
               onClick={() => setIsModalOpen(true)}
-              className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer"
+              className="bg-primary hover:bg-primary/90 px-4 py-2 rounded-lg font-bold text-sm text-primary-foreground flex items-center gap-2 transition-colors cursor-pointer"
             >
               <Plus className="h-4 w-4" /> New Campaign
             </button>
@@ -421,13 +417,13 @@ export default function PostsPage(props: any) {
 
           {locationId && (
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold flex items-center gap-2 text-white">
-                <FileText className="h-5 w-5 text-indigo-400" />
+              <h2 className="text-xl font-bold flex items-center gap-2 text-foreground">
+                <FileText className="h-5 w-5 text-primary" />
                 Location Posts
               </h2>
               <button
                 onClick={() => setIsModalOpen(true)}
-                className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer"
+                className="bg-primary hover:bg-primary/90 px-4 py-2 rounded-lg font-bold text-sm text-primary-foreground flex items-center gap-2 transition-colors cursor-pointer"
               >
                 <Plus className="h-4 w-4" /> New Post
               </button>
@@ -435,9 +431,9 @@ export default function PostsPage(props: any) {
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1 glass-panel border border-border rounded-2xl p-5 h-fit">
+            <div className="lg:col-span-1 bg-card shadow-sm border border-border rounded-2xl p-5 h-fit">
               <h3 className="text-sm font-bold uppercase text-muted-foreground mb-4 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-indigo-400" /> Campaigns
+                <FileText className="w-4 h-4 text-primary" /> Campaigns
               </h3>
               <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
                 {campaigns.length === 0 ? (
@@ -447,7 +443,7 @@ export default function PostsPage(props: any) {
                     <button
                       key={c.id}
                       onClick={() => setSelectedCampaignId(c.id)}
-                      className={`w-full text-left p-4 rounded-xl border transition-all cursor-pointer ${selectedCampaignId === c.id ? 'bg-indigo-600/10 border-indigo-500/50' : 'bg-muted/10 border-border/40 hover:bg-muted/20 hover:border-border/80'}`}
+                      className={`w-full text-left p-4 rounded-xl border transition-all cursor-pointer ${selectedCampaignId === c.id ? 'bg-primary/5 border-primary/30' : 'bg-background border-border/40 hover:bg-muted/30 hover:border-border/80 text-foreground'}`}
                     >
                       <div className="flex justify-between items-start mb-2">
                         <span className="font-bold truncate text-sm">{c.name}</span>
@@ -464,16 +460,16 @@ export default function PostsPage(props: any) {
 
             <div className="lg:col-span-2 space-y-6">
               {selectedCampaign ? (
-                <div className="glass-panel border border-border rounded-2xl p-6">
+                <div className="bg-card shadow-sm border border-border rounded-2xl p-6">
                   <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-bold flex items-center gap-2 text-white">
-                      <History className="w-5 h-5 text-indigo-400" /> Campaign Progress Monitor
+                    <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
+                      <History className="w-5 h-5 text-primary" /> Campaign Progress Monitor
                     </h3>
                     <div className="flex items-center gap-2">
                       {['QUEUED', 'PROCESSING'].includes(selectedCampaign.status.toUpperCase()) && (
                         <button
                           onClick={() => handleCampaignAction('pause')}
-                          className="bg-yellow-600/80 hover:bg-yellow-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                          className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
                         >
                           Pause
                         </button>
@@ -481,7 +477,7 @@ export default function PostsPage(props: any) {
                       {selectedCampaign.status.toUpperCase() === 'PAUSED' && (
                         <button
                           onClick={() => handleCampaignAction('resume')}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                          className="bg-primary hover:bg-primary/90 text-primary-foreground px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
                         >
                           Resume
                         </button>
@@ -499,8 +495,8 @@ export default function PostsPage(props: any) {
                   </div>
                   
                   <div className="grid grid-cols-4 gap-4 mb-8">
-                    <div className="bg-muted/10 p-4 rounded-xl border border-border text-center">
-                      <div className="text-2xl font-bold text-white">{selectedCampaign.total_locations}</div>
+                    <div className="bg-muted/30 p-4 rounded-xl border border-border text-center">
+                      <div className="text-2xl font-bold text-foreground">{selectedCampaign.total_locations}</div>
                       <div className="text-xs text-muted-foreground uppercase mt-1">Total</div>
                     </div>
                     <div className="bg-emerald-500/10 p-4 rounded-xl border border-emerald-500/20 text-center">
@@ -524,7 +520,7 @@ export default function PostsPage(props: any) {
                     </div>
                     <div className="h-3 w-full bg-muted rounded-full overflow-hidden">
                       <div 
-                        className="h-full bg-indigo-500 transition-all duration-500" 
+                        className="h-full bg-primary transition-all duration-500" 
                         style={{ width: `${(selectedCampaign.total_published / (selectedCampaign.total_locations || 1)) * 100}%` }}
                       ></div>
                     </div>
@@ -535,9 +531,9 @@ export default function PostsPage(props: any) {
                       <h4 className="text-sm font-bold text-red-400 uppercase mb-3 flex items-center gap-2">
                         <AlertTriangle className="w-4 h-4" /> Failed Locations
                       </h4>
-                      <div className="bg-muted/10 border border-border rounded-xl overflow-hidden">
+                      <div className="bg-background border border-border rounded-xl overflow-hidden">
                         <table className="w-full text-sm text-left">
-                          <thead className="bg-muted/20 text-xs uppercase text-muted-foreground">
+                          <thead className="bg-muted text-xs uppercase text-muted-foreground">
                             <tr>
                               <th className="px-4 py-3">Location ID</th>
                               <th className="px-4 py-3">Error Reason</th>
@@ -545,9 +541,9 @@ export default function PostsPage(props: any) {
                           </thead>
                           <tbody>
                             {selectedCampaign.jobs.filter((j: CampaignJob) => j.status === 'FAILED').map((job: CampaignJob) => (
-                              <tr key={job.id} className="border-t border-border/50">
-                                <td className="px-4 py-3 font-medium text-white">{locations.find(l => l.id === job.location_id)?.location_name || job.location_id}</td>
-                                <td className="px-4 py-3 text-red-400 font-mono text-xs">{job.last_error || 'Unknown error'}</td>
+                              <tr key={job.id} className="border-t border-border">
+                                <td className="px-4 py-3 font-medium text-foreground">{locations.find(l => l.id === job.location_id)?.location_name || job.location_id}</td>
+                                <td className="px-4 py-3 text-red-600 font-mono text-xs">{job.last_error || 'Unknown error'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -561,9 +557,9 @@ export default function PostsPage(props: any) {
                       <h4 className="text-sm font-bold text-muted-foreground uppercase mb-3 flex items-center gap-2">
                         <FileText className="w-4 h-4" /> Audit Logs
                       </h4>
-                      <div className="bg-muted/10 border border-border rounded-xl overflow-hidden max-h-[250px] overflow-y-auto">
+                      <div className="bg-background border border-border rounded-xl overflow-hidden max-h-[250px] overflow-y-auto">
                         <table className="w-full text-sm text-left">
-                          <thead className="bg-muted/20 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur-md">
+                          <thead className="bg-muted text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur-md">
                             <tr>
                               <th className="px-4 py-3">Action</th>
                               <th className="px-4 py-3">Status Change</th>
@@ -572,11 +568,11 @@ export default function PostsPage(props: any) {
                           </thead>
                           <tbody>
                             {selectedCampaign.audit_logs.map((log: CampaignAuditLog) => (
-                              <tr key={log.id} className="border-t border-border/50 hover:bg-muted/10 transition-colors">
-                                <td className="px-4 py-3 font-medium text-white uppercase text-xs">{log.action}</td>
+                              <tr key={log.id} className="border-t border-border hover:bg-muted/50 transition-colors">
+                                <td className="px-4 py-3 font-medium text-foreground uppercase text-xs">{log.action}</td>
                                 <td className="px-4 py-3 text-muted-foreground">
                                   {log.previous_status ? <span className="line-through opacity-50 mr-2">{log.previous_status}</span> : null}
-                                  <span className="text-indigo-400 font-bold">{log.new_status}</span>
+                                  <span className="text-primary font-bold">{log.new_status}</span>
                                 </td>
                                 <td className="px-4 py-3 text-muted-foreground text-xs">{new Date(log.created_at).toLocaleString()}</td>
                               </tr>
@@ -589,7 +585,7 @@ export default function PostsPage(props: any) {
 
                 </div>
               ) : (
-                <div className="glass-panel border border-border rounded-2xl p-12 text-center text-muted-foreground">
+                <div className="bg-card shadow-sm border border-border rounded-2xl p-12 text-center text-muted-foreground">
                   Select a campaign to view the live monitor
                 </div>
               )}
@@ -601,10 +597,10 @@ export default function PostsPage(props: any) {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <div className="bg-background border border-border rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col relative">
               <div className="p-5 flex justify-between items-center border-b border-border sticky top-0 bg-background/95 backdrop-blur z-10">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-indigo-400" /> New Multi-Location Campaign
+                <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-primary" /> New Multi-Location Campaign
                 </h3>
-                <button onClick={() => setIsModalOpen(false)} className="text-muted-foreground hover:text-white cursor-pointer">
+                <button onClick={() => setIsModalOpen(false)} className="text-muted-foreground hover:text-foreground cursor-pointer">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -614,8 +610,8 @@ export default function PostsPage(props: any) {
                 
                 <div className="space-y-4">
                   <h4 className="text-sm font-bold text-muted-foreground uppercase border-b border-border pb-2">1. Campaign Details</h4>
-                  <input type="text" placeholder="Campaign Name (e.g. Summer Sale)" value={campaignName} onChange={e => setCampaignName(e.target.value)} className="w-full bg-muted/20 border border-border rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-colors" />
-                  <input type="text" placeholder="Post Title (Optional)" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-muted/20 border border-border rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-colors" />
+                  <input type="text" placeholder="Campaign Name (e.g. Summer Sale)" value={campaignName} onChange={e => setCampaignName(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors" />
+                  <input type="text" placeholder="Post Title (Optional)" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors" />
                   
                   <div className="relative">
                     <textarea
@@ -624,17 +620,17 @@ export default function PostsPage(props: any) {
                       placeholder="Post Body... Use {{location}}, {{city}}, {{phone}}"
                       value={summary}
                       onChange={e => handleSummaryChange(e.target.value)}
-                      className="w-full bg-muted/20 border border-border rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-colors"
+                      className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors"
                     />
                     {showSuggest && (
-                      <div className="absolute left-3 bottom-full mb-2 z-50 bg-background border border-indigo-500/50 rounded-xl shadow-2xl p-2 w-48 space-y-1 text-sm">
+                      <div className="absolute left-3 bottom-full mb-2 z-50 bg-card border border-border rounded-xl shadow-2xl p-2 w-48 space-y-1 text-sm">
                         <div className="text-[10px] text-muted-foreground uppercase px-2 py-1 font-bold">Insert Variable</div>
                         {['location', 'city', 'phone'].map((variable) => (
                           <button
                             key={variable}
                             type="button"
                             onClick={() => insertVariable(variable)}
-                            className="w-full text-left px-3 py-2 rounded-lg font-mono text-xs text-white hover:bg-indigo-600 transition-colors cursor-pointer"
+                            className="w-full text-left px-3 py-2 rounded-lg font-mono text-xs text-foreground hover:bg-muted transition-colors cursor-pointer"
                           >
                             {`{{${variable}}}`}
                           </button>
@@ -650,7 +646,7 @@ export default function PostsPage(props: any) {
                       <select
                         value={ctaType}
                         onChange={e => setCtaType(e.target.value)}
-                        className="w-full bg-muted/20 border border-border rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-colors text-white"
+                        className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors"
                       >
                         <option value="NONE" className="bg-background">None (Text-only Post)</option>
                         <option value="LEARN_MORE" className="bg-background">Learn More</option>
@@ -677,7 +673,7 @@ export default function PostsPage(props: any) {
                               setErrorAlert('')
                             }
                           }}
-                          className="w-full bg-muted/20 border border-border rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-colors text-white"
+                          className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors"
                         />
                       </div>
                     )}
@@ -685,31 +681,31 @@ export default function PostsPage(props: any) {
 
 
                   {/* Live Interpolation Preview */}
-                  <div className="bg-muted/10 border border-border/80 rounded-xl p-4 space-y-3">
+                  <div className="bg-card shadow-sm border border-border rounded-xl p-4 space-y-3">
                     <div className="text-xs font-bold uppercase text-muted-foreground flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Live Interpolation Preview
+                      <Sparkles className="w-3.5 h-3.5 text-primary" /> Live Interpolation Preview
                     </div>
-                    <div className="bg-background border border-border/50 rounded-xl p-4 space-y-3 relative overflow-hidden shadow-inner">
+                    <div className="bg-muted/10 border border-border rounded-xl p-4 space-y-3 relative overflow-hidden shadow-inner">
                       <div className="flex items-center gap-2 mb-1">
-                        <div className="w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center font-bold text-xs text-indigo-400">
+                        <div className="w-8 h-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center font-bold text-xs text-primary">
                           G
                         </div>
                         <div>
-                          <div className="text-xs font-bold text-white flex items-center gap-1">
+                          <div className="text-xs font-bold text-foreground flex items-center gap-1">
                             {selectedLocationIds.length > 0
                               ? locations.find(l => l.id === selectedLocationIds[0])?.location_name
                               : 'Your Location Name'}
-                            <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-1 rounded">GBP Post Preview</span>
+                            <span className="text-[10px] text-primary bg-primary/10 px-1 rounded">GBP Post Preview</span>
                           </div>
                           <div className="text-[9px] text-muted-foreground">Just now</div>
                         </div>
                       </div>
-                      <div className="text-xs text-gray-200 whitespace-pre-wrap leading-relaxed">
+                      <div className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">
                         {getLivePreview()}
                       </div>
                       {ctaType !== 'NONE' && (
                         <div className="pt-2">
-                          <span className="inline-block bg-indigo-600 text-white font-bold text-xs px-4 py-2 rounded-lg">
+                          <span className="inline-block bg-primary text-primary-foreground font-bold text-xs px-4 py-2 rounded-lg">
                             {ctaType === 'LEARN_MORE' ? 'Learn More' : ctaType === 'BOOK' ? 'Book' : ctaType === 'ORDER' ? 'Order' : ctaType === 'SHOP' ? 'Shop' : ctaType === 'SIGN_UP' ? 'Sign Up' : 'Call'}
                           </span>
                         </div>
@@ -722,20 +718,20 @@ export default function PostsPage(props: any) {
                 <div className="space-y-4">
                   <h4 className="text-sm font-bold text-muted-foreground uppercase border-b border-border pb-2">2. Media</h4>
                   {mediaUrl ? (
-                    <div className="flex items-center justify-between gap-4 bg-muted/10 border border-border p-4 rounded-xl">
+                    <div className="flex items-center justify-between gap-4 bg-muted/30 border border-border p-4 rounded-xl">
                       <div className="flex items-center gap-4">
-                        <img src={mediaUrl} className="w-16 h-16 object-cover rounded-lg" />
-                        <div className="text-sm text-emerald-400 font-bold flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> Validated</div>
+                        <img src={mediaUrl} className="w-16 h-16 object-cover rounded-lg border border-border" />
+                        <div className="text-sm text-emerald-600 font-bold flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> Validated</div>
                       </div>
-                      <button onClick={handleRemoveMedia} className="p-2 text-muted-foreground hover:text-red-400 transition-colors rounded-lg hover:bg-red-400/10 cursor-pointer">
+                      <button onClick={handleRemoveMedia} className="p-2 text-muted-foreground hover:text-red-500 transition-colors rounded-lg hover:bg-red-500/10 cursor-pointer">
                         <XCircle className="w-5 h-5" />
                       </button>
                     </div>
                   ) : (
                     <div>
                       <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-                      <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-muted/10 border border-border hover:bg-muted/30 px-4 py-3 rounded-xl text-sm font-bold transition-colors cursor-pointer">
-                        {uploading ? <Loader2 className="w-4 h-4 animate-spin"/> : <Upload className="w-4 h-4 text-indigo-400"/>} Upload Validation-Ready Image
+                      <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-muted/30 border border-border hover:bg-muted/50 px-4 py-3 rounded-xl text-sm font-bold text-foreground transition-colors cursor-pointer">
+                        {uploading ? <Loader2 className="w-4 h-4 animate-spin"/> : <Upload className="w-4 h-4 text-primary"/>} Upload Validation-Ready Image
                       </button>
                     </div>
                   )}
@@ -746,22 +742,22 @@ export default function PostsPage(props: any) {
                     <h4 className="text-sm font-bold text-muted-foreground uppercase border-b border-border pb-2 flex justify-between items-center">
                       <span>3. Target Locations</span>
                       <div className="flex items-center gap-4">
-                        <button onClick={handleToggleSelectAll} className="text-xs text-indigo-400 hover:text-indigo-300 font-bold cursor-pointer transition-colors">
+                        <button onClick={handleToggleSelectAll} className="text-xs text-primary hover:text-primary/80 font-bold cursor-pointer transition-colors">
                           {selectedLocationIds.length === filteredLocations.length && filteredLocations.length > 0 ? 'Deselect All' : 'Select All'}
                         </button>
-                        <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-xs">{selectedLocationIds.length} Selected</span>
+                        <span className="text-primary bg-primary/10 px-2 py-0.5 rounded text-xs">{selectedLocationIds.length} Selected</span>
                       </div>
                     </h4>
                     <div className="relative">
                       <Search className="w-4 h-4 absolute left-3 top-3.5 text-muted-foreground" />
-                      <input type="text" placeholder="Search locations..." value={locationSearch} onChange={e => setLocationSearch(e.target.value)} className="w-full bg-muted/20 border border-border rounded-xl pl-10 p-3 text-sm focus:border-indigo-500 outline-none transition-colors" />
+                      <input type="text" placeholder="Search locations..." value={locationSearch} onChange={e => setLocationSearch(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl pl-10 p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors" />
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1">
                       {filteredLocations.map(loc => (
-                        <button key={loc.id} onClick={() => setSelectedLocationIds(p => p.includes(loc.id) ? p.filter(id => id !== loc.id) : [...p, loc.id])} className={`flex items-start text-left p-3 rounded-xl border transition-colors cursor-pointer ${selectedLocationIds.includes(loc.id) ? 'bg-indigo-600/10 border-indigo-500' : 'bg-muted/10 border-border hover:bg-muted/20'}`}>
-                          <input type="checkbox" checked={selectedLocationIds.includes(loc.id)} readOnly className="mt-1 mr-3 rounded text-indigo-600 bg-muted/50 border-border cursor-pointer" />
+                        <button key={loc.id} onClick={() => setSelectedLocationIds(p => p.includes(loc.id) ? p.filter(id => id !== loc.id) : [...p, loc.id])} className={`flex items-start text-left p-3 rounded-xl border transition-colors cursor-pointer ${selectedLocationIds.includes(loc.id) ? 'bg-primary/5 border-primary/50' : 'bg-background border-border hover:bg-muted/50'}`}>
+                          <input type="checkbox" checked={selectedLocationIds.includes(loc.id)} readOnly className="mt-1 mr-3 rounded text-primary bg-background border-input cursor-pointer" />
                           <div>
-                            <div className="text-sm font-bold text-white">{loc.location_name}</div>
+                            <div className="text-sm font-bold text-foreground">{loc.location_name}</div>
                             <div className="text-xs text-muted-foreground truncate max-w-[200px]">{loc.address}</div>
                           </div>
                         </button>
@@ -769,9 +765,9 @@ export default function PostsPage(props: any) {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2 bg-indigo-500/5 border border-indigo-500/10 p-4 rounded-xl">
-                    <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider block">Target Location</span>
-                    <div className="text-sm font-bold text-white mt-1">
+                    <div className="space-y-2 bg-primary/5 border border-primary/20 p-4 rounded-xl">
+                    <span className="text-xs font-bold text-primary uppercase tracking-wider block">Target Location</span>
+                    <div className="text-sm font-bold text-foreground mt-1">
                       {locations.find(l => l.id === Number(locationId))?.location_name || `Storefront Location ID: ${locationId}`}
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">Creating this post from the storefront profile scopes it strictly to this location.</p>
@@ -780,8 +776,8 @@ export default function PostsPage(props: any) {
               </div>
 
               <div className="p-5 border-t border-border flex justify-end gap-3 sticky bottom-0 bg-background/95 backdrop-blur z-10">
-                <button onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 rounded-lg text-sm font-bold bg-muted/30 hover:bg-muted/50 border border-border transition-colors cursor-pointer">Cancel</button>
-                <button onClick={handleCreateCampaign} disabled={submitting || uploading} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors shadow-lg cursor-pointer">
+                <button onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 rounded-lg text-sm font-bold bg-muted/50 text-foreground hover:bg-muted border border-border transition-colors cursor-pointer">Cancel</button>
+                <button onClick={handleCreateCampaign} disabled={submitting || uploading} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm cursor-pointer">
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin"/> : <Send className="w-4 h-4"/>} Launch Campaign
                 </button>
               </div>
@@ -789,6 +785,5 @@ export default function PostsPage(props: any) {
           </div>
         )}
       </div>
-    </AuthGuard>
   )
 }

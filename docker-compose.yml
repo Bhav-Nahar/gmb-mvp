@@ -58,6 +58,9 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER}
       - LLM_MODEL=${LLM_MODEL}
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}
     depends_on:
       db:
         condition: service_healthy
@@ -90,6 +93,9 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER}
       - LLM_MODEL=${LLM_MODEL}
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}
     depends_on:
       db:
         condition: service_healthy
@@ -116,6 +122,9 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER}
       - LLM_MODEL=${LLM_MODEL}
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}
     depends_on:
       db:
         condition: service_healthy
@@ -126,6 +135,11 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* must be available at build time to be inlined into the bundle.
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+        NEXT_PUBLIC_RAZORPAY_KEY: ${RAZORPAY_KEY_ID}
     container_name: gmb_frontend
     restart: always
     ports:
@@ -133,6 +147,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
       - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - NEXT_PUBLIC_RAZORPAY_KEY=${RAZORPAY_KEY_ID}
     depends_on:
       backend:
         condition: service_healthy

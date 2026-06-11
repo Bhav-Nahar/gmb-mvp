@@ -20,3 +20,4 @@ openai>=1.50.0
 boto3>=1.34.0
 Pillow>=10.2.0
 filetype>=1.2.0
+razorpay>=1.4.1

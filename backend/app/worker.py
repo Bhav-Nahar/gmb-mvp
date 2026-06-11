@@ -21,7 +21,7 @@ celery.conf.update(
     timezone="UTC",
     enable_utc=True,
     broker_connection_retry_on_startup=True,
-    broker_heartbeat=120, # Decrease heartbeat frequency to reduce PING commands
+    broker_heartbeat=300, # Heartbeat every 5 minutes to reduce PING commands
     # Redis Broker Optimizations for Upstash/Limited Quotas
     broker_transport_options={
         'visibility_timeout': 3600,
@@ -29,9 +29,9 @@ celery.conf.update(
         'socket_connect_timeout': 30,
         'fanout_prefix': True,
         'fanout_patterns': True,
-        'polling_interval': 10.0, # Poll Redis every 10 seconds instead of continuously
+        'polling_interval': 60.0, # Poll Redis every 60 seconds to save commands
     },
-    broker_pool_limit=10, # Limit concurrent connections
+    broker_pool_limit=5, # Limit concurrent connections
 )
 
 # Auto-discover tasks in app.tasks
@@ -45,7 +45,7 @@ celery.conf.beat_schedule = {
     },
     "check-scheduled-posts-every-minute": {
         "task": "app.tasks.check_scheduled_posts_task",
-        "schedule": 300.0, # Every 5 minutes (300 seconds)
+        "schedule": 900.0, # Every 15 minutes (900 seconds)
     },
     "archive-activity-logs-daily": {
         "task": "app.tasks.archive_old_activity_logs_task",
@@ -58,6 +58,10 @@ celery.conf.beat_schedule = {
     "retry-failed-sentiment-hourly": {
         "task": "app.tasks.retry_failed_sentiment_beat_task",
         "schedule": 900.0, # Every 15 minutes (900 seconds)
+    },
+    "reconcile-pending-subscriptions": {
+        "task": "app.tasks.reconcile_pending_subscriptions_task",
+        "schedule": 600.0, # Every 10 minutes — catch missed payment webhooks
     }
 }
 

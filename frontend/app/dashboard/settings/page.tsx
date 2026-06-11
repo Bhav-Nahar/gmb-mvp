@@ -2,8 +2,6 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import AuthGuard from '@/components/AuthGuard'
-import Navbar from '@/components/Navbar'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import { Settings, Shield, AlertTriangle, User as UserIcon, Trash2, X, Calendar, CheckCircle2, XCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
@@ -103,14 +101,11 @@ export default function SettingsPage() {
   }
 
   return (
-    <AuthGuard>
-      <div className="min-h-screen bg-[#0A0A0B] text-foreground font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
-        <Navbar />
-
+    <div className="w-full font-sans">
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
           <div className="mb-8 flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+              <h1 className="text-3xl font-extrabold tracking-tight text-foreground flex items-center gap-3">
                 <Settings className="h-8 w-8 text-indigo-400" />
                 Settings
               </h1>
@@ -123,7 +118,7 @@ export default function SettingsPage() {
           <div className="space-y-8 max-w-3xl">
             {/* Profile Section */}
             <section className="rounded-2xl border border-border glass-panel p-6 sm:p-8">
-              <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+              <h2 className="text-lg font-bold text-foreground mb-6 flex items-center gap-2">
                 <UserIcon className="h-5 w-5 text-indigo-400" />
                 Profile Details
               </h2>
@@ -150,7 +145,7 @@ export default function SettingsPage() {
                       </div>
                     )}
                     <div>
-                      <h3 className="text-xl font-bold text-white">{userProfile.name}</h3>
+                      <h3 className="text-xl font-bold text-foreground">{userProfile.name}</h3>
                       <p className="text-sm font-medium text-muted-foreground mt-1">{userProfile.email}</p>
                       <div className="mt-2 flex items-center gap-2">
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
@@ -176,9 +171,9 @@ export default function SettingsPage() {
                 Irreversible and destructive actions. Please proceed with caution.
               </p>
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-red-500/20 bg-black/40 gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-red-500/20 bg-muted/40 gap-4">
                 <div>
-                  <h4 className="font-bold text-white">Delete Account</h4>
+                  <h4 className="font-bold text-foreground">Delete Account</h4>
                   <p className="text-xs text-muted-foreground mt-1 max-w-md">
                     Permanently remove your account and active sessions from this application. 
                     <br/><span className="text-red-400 font-semibold">Note: This only deletes your account from this application. Your Google Business Profile data will NOT be deleted.</span>
@@ -195,7 +190,7 @@ export default function SettingsPage() {
             </section>
             {/* Sync logs Table */}
             <section className="rounded-2xl border border-border glass-panel p-6 sm:p-8 space-y-4">
-              <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+              <h2 className="text-lg font-bold text-foreground mb-2 flex items-center gap-2">
                 <Calendar className="h-5 w-5 text-indigo-400" />
                 Synchronization Audits
               </h2>
@@ -213,7 +208,7 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="overflow-x-auto rounded-xl border border-border bg-black/40">
+                  <div className="overflow-x-auto rounded-xl border border-border bg-card">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="border-b border-border/70 text-[10px] uppercase font-bold tracking-wider text-muted-foreground/80 bg-muted/10">
@@ -270,7 +265,7 @@ export default function SettingsPage() {
                         <button
                           onClick={() => loadSyncLogs(currentPage - 1)}
                           disabled={currentPage === 1 || loadingLogs}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-muted/20 text-xs font-bold text-white hover:bg-muted/40 disabled:opacity-50 transition-colors"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-muted/20 text-xs font-bold text-foreground hover:bg-muted/40 disabled:opacity-50 transition-colors"
                         >
                           <ChevronLeft className="h-4 w-4" />
                           Previous
@@ -278,7 +273,7 @@ export default function SettingsPage() {
                         <button
                           onClick={() => loadSyncLogs(currentPage + 1)}
                           disabled={currentPage === totalPages || loadingLogs}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-muted/20 text-xs font-bold text-white hover:bg-muted/40 disabled:opacity-50 transition-colors"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-muted/20 text-xs font-bold text-foreground hover:bg-muted/40 disabled:opacity-50 transition-colors"
                         >
                           Next
                           <ChevronRight className="h-4 w-4" />
@@ -294,10 +289,10 @@ export default function SettingsPage() {
 
         {/* Delete Confirmation Modal */}
         {isDeleteModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="w-full max-w-md rounded-2xl border border-red-500/30 bg-[#121214] p-6 shadow-2xl shadow-red-500/10">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md rounded-2xl border border-red-500/30 bg-card p-6 shadow-2xl shadow-red-500/10">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <h3 className="text-xl font-bold text-foreground flex items-center gap-2">
                   <AlertTriangle className="h-6 w-6 text-red-500" />
                   Delete Account?
                 </h3>
@@ -307,7 +302,7 @@ export default function SettingsPage() {
                     setDeleteConfirmationText('')
                     setDeleteError('')
                   }}
-                  className="rounded-lg p-1 text-muted-foreground hover:bg-white/10 hover:text-white transition-colors"
+                  className="rounded-lg p-1 text-muted-foreground hover:bg-muted/20 hover:text-foreground transition-colors"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -338,7 +333,7 @@ export default function SettingsPage() {
                     type="text"
                     value={deleteConfirmationText}
                     onChange={(e) => setDeleteConfirmationText(e.target.value)}
-                    className="w-full rounded-xl border border-border bg-black/50 px-4 py-2.5 text-sm font-medium text-white placeholder-muted-foreground focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all"
+                    className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground placeholder-muted-foreground focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all"
                     placeholder="DELETE"
                   />
                 </div>
@@ -350,7 +345,7 @@ export default function SettingsPage() {
                       setDeleteConfirmationText('')
                       setDeleteError('')
                     }}
-                    className="flex-1 rounded-xl border border-border bg-transparent px-4 py-2.5 text-sm font-bold text-white hover:bg-white/5 transition-colors"
+                    className="flex-1 rounded-xl border border-border bg-transparent px-4 py-2.5 text-sm font-bold text-foreground hover:bg-muted/50 transition-colors"
                   >
                     Cancel
                   </button>
@@ -374,6 +369,5 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
-    </AuthGuard>
   )
 }

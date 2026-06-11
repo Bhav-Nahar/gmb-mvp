@@ -92,5 +92,16 @@ class Settings(BaseSettings):
 
     # Optional CDN
     CDN_DOMAIN: str = ""
+    # Razorpay Configuration
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+
+    @model_validator(mode="after")
+    def _validate_razorpay(self) -> "Settings":
+        if self.APP_ENV != "development":
+            if not self.RAZORPAY_KEY_ID or not self.RAZORPAY_KEY_SECRET or not self.RAZORPAY_WEBHOOK_SECRET:
+                raise ValueError("FATAL: Razorpay credentials must be set in production")
+        return self
 
 settings = Settings()

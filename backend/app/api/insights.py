@@ -1,6 +1,8 @@
 import datetime
 import logging
+import json
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from typing import List, Optional
@@ -8,6 +10,7 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 from app.api import deps
+from app.api.posts import get_redis
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.models.location import Location
@@ -85,6 +88,20 @@ def get_insights_overview(
                 leaderboard=[],
                 attention_locations_count=0
             )
+
+    # 2.5 Cache Check
+    allowed_ids_key = ",".join(map(str, sorted(allowed_ids))) if allowed_ids is not None else "all"
+    cache_key = f"insights:overview:{current_user.organization_id}:{start_date.isoformat()}:{end_date.isoformat()}:{allowed_ids_key}"
+    
+    redis_client = None
+    try:
+        redis_client = get_redis()
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"Serving cached insights overview for org {current_user.organization_id}")
+            return InsightsOverviewResponse(**json.loads(cached_data))
+    except Exception as e:
+        logger.error(f"Redis cache lookup failed: {e}")
 
     # 3. Retrieve Current and Prior Aggregates for KPIs using ORM
     def _kpi_base_query(start, end):
@@ -182,10 +199,11 @@ def get_insights_overview(
     ]
 
     # 5. Leaderboard of Top Locations using ORM
+    profile_views_sum = func.coalesce(func.sum(LocationDailyInsight.profile_views), 0).label("profile_views")
     leaderboard_q = db.query(
         Location.id.label("location_id"),
         Location.location_name,
-        func.coalesce(func.sum(LocationDailyInsight.profile_views), 0).label("profile_views"),
+        profile_views_sum,
         func.coalesce(func.sum(LocationDailyInsight.search_impressions), 0).label("search_impressions"),
         func.coalesce(func.sum(LocationDailyInsight.reviews_received), 0).label("reviews_count"),
         func.coalesce(func.avg(LocationDailyInsight.avg_rating), 0.0).label("avg_rating"),
@@ -202,7 +220,7 @@ def get_insights_overview(
     leaderboard_res = (
         leaderboard_q
         .group_by(Location.id, Location.location_name)
-        .order_by(text("profile_views DESC"))
+        .order_by(profile_views_sum.desc())
         .limit(10)
         .all()
     )
@@ -235,12 +253,24 @@ def get_insights_overview(
         # Prevent sync errors from blocking data display
         logger.error(f"Failed to check/trigger insights sync on overview load: {str(e)}")
 
-    return InsightsOverviewResponse(
+    response_data = InsightsOverviewResponse(
         kpis=kpis,
         trends=trends,
         leaderboard=leaderboard,
         attention_locations_count=attention_count
     )
+
+    if redis_client:
+        try:
+            redis_client.setex(
+                cache_key,
+                21600, # 6 hours
+                json.dumps(jsonable_encoder(response_data))
+            )
+        except Exception as e:
+            logger.error(f"Redis cache write failed: {e}")
+
+    return response_data
 
 
 @router.get("/locations/{id}", response_model=LocationInsightsResponse)
@@ -295,6 +325,19 @@ def get_location_insights(
     duration = (end_date - start_date).days + 1
     prior_end_date = start_date - datetime.timedelta(days=1)
     prior_start_date = prior_end_date - datetime.timedelta(days=duration - 1)
+
+    # Cache Check
+    cache_key = f"insights:location:{current_user.organization_id}:{id}:{start_date.isoformat()}:{end_date.isoformat()}"
+    
+    redis_client = None
+    try:
+        redis_client = get_redis()
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"Serving cached location insights for location {id} in org {current_user.organization_id}")
+            return LocationInsightsResponse(**json.loads(cached_data))
+    except Exception as e:
+        logger.error(f"Redis cache lookup failed for location insights: {e}")
 
     # 1. KPI delta comparisons
     kpi_query = text("""
@@ -460,7 +503,7 @@ def get_location_insights(
         # Prevent sync errors from blocking data display
         logger.error(f"Failed to check/trigger insights sync on location load: {str(e)}")
 
-    return LocationInsightsResponse(
+    response_data = LocationInsightsResponse(
         location_id=location.id,
         location_name=location.location_name,
         attention_needed=location.attention_needed,
@@ -472,6 +515,18 @@ def get_location_insights(
         sla=sla,
         top_issue_categories=top_issues
     )
+
+    if redis_client:
+        try:
+            redis_client.setex(
+                cache_key,
+                21600, # 6 hours
+                json.dumps(jsonable_encoder(response_data))
+            )
+        except Exception as e:
+            logger.error(f"Redis cache write failed: {e}")
+
+    return response_data
 
 
 @router.get("/sync-status")

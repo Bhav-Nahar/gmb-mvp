@@ -1,0 +1,318 @@
+import pytest
+from unittest.mock import patch, MagicMock
+from fastapi.testclient import TestClient
+from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.db.session import Base, get_db
+from app.main import app
+from app.models.organization import Organization
+from app.models.user import User
+from app.models.billing_webhook_event import BillingWebhookEvent
+from app.models.billing_transaction import BillingTransaction
+from app.services.billing.webhook_service import WebhookService
+from app.services.billing.subscription_service import SubscriptionService
+from app.api.deps import get_current_user
+
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.dialects.postgresql import JSONB
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(element, compiler, **kw):
+    return "TEXT"
+
+# Setup SQLite in-memory database
+SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+@pytest.fixture(name="db")
+def fixture_db():
+    Base.metadata.create_all(bind=engine)
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=engine)
+
+@pytest.fixture(name="client")
+def fixture_client(db):
+    def override_get_db():
+        try:
+            yield db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+def test_webhook_bypasses_auth(client):
+    """Verify that public webhook endpoints bypass authentication/CSRF checks."""
+    # Sending a post request to the webhook without token should not return 401.
+    # It should fail with 400 due to missing signature/invalid signature, not 401 or 403 CSRF.
+    response = client.post("/api/v1/webhooks/razorpay", json={"event": "payment.captured"})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Missing signature"
+
+def test_check_billing_lock_enforces_402_only_on_mutations(client, db):
+    """Verify check_billing_lock blocks mutating actions for locked orgs but allows GET."""
+    # Seed locked organization and active admin user
+    org = Organization(
+        name="Locked Org",
+        plan="starter",
+        subscription_status="locked",
+        monthly_ai_credits_balance=0,
+        topup_ai_credits_balance=0
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    user = User(
+        email="admin@locked.com",
+        name="Admin User",
+        google_id="google_locked",
+        role="Admin",
+        is_active=True,
+        organization_id=org.id
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    # Generate a realistic JWT token for our seeded user and set in client cookies
+    from app.core.security import create_access_token
+    token = create_access_token(user.email, token_version=user.token_version)
+    client.cookies.set("gmb_auth_token", token)
+
+    # 1. GET requests should succeed/pass through billing lock (returns 404 since location 999 doesn't exist, but NOT 402)
+    response = client.get("/api/v1/locations/999")
+    assert response.status_code != 402
+
+    # 2. POST (mutating) requests on locked org should fail with 402
+    response = client.post("/api/v1/locations/sync")
+    assert response.status_code == 402
+    assert "Organization is locked" in response.json()["detail"]
+
+
+
+def test_webhook_processing_success(db):
+    """Test webhook processing saves events with payload and updates organization billing data."""
+    org = Organization(
+        name="Test Org",
+        plan="starter",
+        subscription_status="trial",
+        monthly_ai_credits_balance=200,
+        topup_ai_credits_balance=0
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    # Mirrors Razorpay's real webhook shape: `contains` is a list of entity names,
+    # and the entities themselves live under `payload`.
+    payload = {
+        "event": "subscription.charged",
+        "contains": ["subscription", "payment"],
+        "payload": {
+            "subscription": {
+                "entity": {
+                    "id": "sub_12345",
+                    "current_end": 1774880000,
+                    "notes": {
+                        "organization_id": str(org.id),
+                        "location_count": "2"
+                    }
+                }
+            },
+            "payment": {
+                "entity": {
+                    "id": "pay_12345",
+                    "amount": 100000,
+                    "currency": "INR",
+                    "order_id": "order_12345"
+                }
+            }
+        }
+    }
+
+    # Process the webhook directly via service
+    WebhookService.process_webhook(db, "evt_12345", "subscription.charged", payload)
+
+    # Verify event stored in DB with payload
+    stored_event = db.query(BillingWebhookEvent).filter_by(razorpay_event_id="evt_12345").first()
+    assert stored_event is not None
+    assert stored_event.payload == payload
+
+    # Verify org updated
+    db.refresh(org)
+    assert org.subscription_status == "active"
+    assert org.monthly_ai_credits_balance == 60  # 2 locations * 30 credits
+
+    # Verify transaction logged with correct fields
+    tx = db.query(BillingTransaction).filter_by(organization_id=org.id).first()
+    assert tx is not None
+    assert tx.transaction_type == "subscription_charge"
+    assert tx.amount_paise == 100000
+    assert tx.currency == "INR"
+    assert tx.razorpay_payment_id == "pay_12345"
+    assert tx.razorpay_order_id == "order_12345"
+    assert tx.razorpay_subscription_id == "sub_12345"
+    assert tx.credits is None  # Subscription charged does not change specific topups
+
+def test_webhook_processing_topup(db):
+    """Test webhook processing for topup charge updates balance and logs transaction."""
+    org = Organization(
+        name="Test Org",
+        plan="starter",
+        subscription_status="active",
+        monthly_ai_credits_balance=200,
+        topup_ai_credits_balance=0
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    payload = {
+        "event": "payment.captured",
+        "contains": ["payment"],
+        "payload": {
+            "payment": {
+                "entity": {
+                    "id": "pay_topup",
+                    "amount": 49900,
+                    "currency": "INR",
+                    "order_id": "order_topup",
+                    "notes": {
+                        "type": "topup",
+                        "organization_id": str(org.id),
+                        "credits": "500"
+                    }
+                }
+            }
+        }
+    }
+
+    WebhookService.process_webhook(db, "evt_topup", "payment.captured", payload)
+
+    db.refresh(org)
+    assert org.topup_ai_credits_balance == 500
+
+    tx = db.query(BillingTransaction).filter_by(organization_id=org.id, transaction_type="topup_charge").first()
+    assert tx is not None
+    assert tx.amount_paise == 49900
+    assert tx.razorpay_payment_id == "pay_topup"
+    assert tx.razorpay_order_id == "order_topup"
+
+def test_reconcile_subscription_activates_on_missed_webhook(db):
+    """Safety net: if the subscription.charged webhook never arrived, pulling the
+    live subscription from Razorpay should activate the org and grant entitlements."""
+    org = Organization(
+        name="Pending Org",
+        subscription_status="trial",
+        razorpay_subscription_id="sub_live_1",
+        monthly_ai_credits_balance=0,
+        location_quota=5,
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    fake_client = MagicMock()
+    fake_client.subscription.fetch.return_value = {
+        "id": "sub_live_1",
+        "status": "active",
+        "current_end": 1774880000,
+        "notes": {"organization_id": str(org.id), "location_count": "3"},
+    }
+
+    with patch(
+        "app.services.billing.subscription_service.SubscriptionService.get_razorpay_client",
+        return_value=fake_client,
+    ):
+        activated = SubscriptionService.reconcile_subscription(db, org.id)
+
+    assert activated is True
+    db.refresh(org)
+    assert org.subscription_status == "active"
+    assert org.location_quota == 3
+    assert org.monthly_ai_credits_balance == 90  # 3 locations * 30 credits
+
+
+def test_reconcile_subscription_noop_when_not_active(db):
+    """Reconcile must NOT activate if Razorpay still reports the subscription as
+    not-yet-paid (e.g. created but never charged)."""
+    org = Organization(
+        name="Unpaid Org",
+        subscription_status="trial",
+        razorpay_subscription_id="sub_unpaid",
+        monthly_ai_credits_balance=0,
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    fake_client = MagicMock()
+    fake_client.subscription.fetch.return_value = {"id": "sub_unpaid", "status": "created"}
+
+    with patch(
+        "app.services.billing.subscription_service.SubscriptionService.get_razorpay_client",
+        return_value=fake_client,
+    ):
+        activated = SubscriptionService.reconcile_subscription(db, org.id)
+
+    assert activated is False
+    db.refresh(org)
+    assert org.subscription_status == "trial"
+
+
+def test_is_org_locked_state_matrix(db):
+    """Lock semantics for the collapsed 4-state model."""
+    from datetime import datetime, timezone, timedelta
+    from app.services.billing.entitlement_service import EntitlementService
+
+    now = datetime.now(timezone.utc)
+
+    pending = Organization(name="pending", subscription_status="trial", trial_ends_at=None)
+    active_trial = Organization(name="trial", subscription_status="trial", trial_ends_at=now + timedelta(days=3))
+    expired_trial = Organization(name="exp", subscription_status="trial", trial_ends_at=now - timedelta(days=1))
+    active = Organization(name="active", subscription_status="active")
+    cancelled_valid = Organization(name="cv", subscription_status="active", subscription_ends_at=now + timedelta(days=5))
+    cancelled_ended = Organization(name="ce", subscription_status="active", subscription_ends_at=now - timedelta(days=1))
+    grace = Organization(name="grace", subscription_status="past_due", grace_period_ends_at=now + timedelta(days=1))
+    past_due_done = Organization(name="pd", subscription_status="past_due", grace_period_ends_at=now - timedelta(days=1))
+    locked = Organization(name="locked", subscription_status="locked")
+
+    assert EntitlementService.is_org_locked(pending) is False
+    assert EntitlementService.is_org_locked(active_trial) is False
+    assert EntitlementService.is_org_locked(expired_trial) is True
+    assert EntitlementService.is_org_locked(active) is False
+    assert EntitlementService.is_org_locked(cancelled_valid) is False
+    assert EntitlementService.is_org_locked(cancelled_ended) is True
+    assert EntitlementService.is_org_locked(grace) is False
+    assert EntitlementService.is_org_locked(past_due_done) is True
+    assert EntitlementService.is_org_locked(locked) is True
+
+
+def test_ensure_razorpay_customer_two_pass(db):
+    """Verify ensure_razorpay_customer returns existing customer id without database write locks."""
+    org = Organization(
+        name="Org with Customer",
+        razorpay_customer_id="cust_already_exists"
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    # Calling ensure_razorpay_customer should return the existing customer ID
+    # and not invoke Razorpay client or fail with transaction rollback issues.
+    with patch("app.services.billing.subscription_service.SubscriptionService.get_razorpay_client") as mock_client:
+        customer_id = SubscriptionService.ensure_razorpay_customer(db, org.id, org.name, "admin@test.com")
+        assert customer_id == "cust_already_exists"
+        mock_client.assert_not_called()

@@ -2,9 +2,8 @@
 
 import { useEffect, useState, useRef, useMemo, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import AuthGuard from '@/components/AuthGuard'
-import Navbar from '@/components/Navbar'
 import { useAuth } from '@/hooks/useAuth'
+import { useBillingStatus } from '@/hooks/useBilling'
 import { api } from '@/lib/api'
 import {
   RefreshCw,
@@ -100,6 +99,16 @@ function DashboardContent() {
 
   const { user } = useAuth()
   const userRole = user?.role || 'Viewer'
+  const { data: billing } = useBillingStatus()
+
+  // Computed Summaries
+  const totalLocations = locations.length;
+  const unverifiedCount = locations.filter(l => l.is_verified === false).length;
+  const suspendedCount = locations.filter(l => l.is_suspended).length;
+  const slaNeedsResponseCount = Object.values(slaSummaries).reduce((acc, summary) => acc + summary.pending_count, 0);
+
+  // Filters
+  const [activeFilter, setActiveFilter] = useState<'all' | 'unverified' | 'suspended'>('all');
 
   // Refs for interval tracking to prevent memory leaks
   const onboardingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -449,8 +458,18 @@ function DashboardContent() {
     return 'Pending Sync'
   }, [syncLogs, locations])
 
+  const sortedLocations = useMemo(() => {
+    let filtered = locations;
+    if (activeFilter === 'unverified') {
+      filtered = locations.filter(l => l.is_verified === false);
+    } else if (activeFilter === 'suspended') {
+      filtered = locations.filter(l => l.is_suspended);
+    }
+    return [...filtered].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  }, [locations, activeFilter])
+
   return (
-    <AuthGuard>
+    <>
       {/* Onboarding Fullscreen Sync Overlay */}
       {isOnboarding && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-md">
@@ -468,7 +487,7 @@ function DashboardContent() {
             )}
 
             <div className="space-y-2">
-              <h3 className="text-xl font-bold text-white tracking-tight">
+              <h3 className="text-xl font-bold text-foreground tracking-tight">
                 {onboardingSuccess ? 'Onboarding Complete!' : 'Syncing Workspace...'}
               </h3>
               <p className="text-xs text-muted-foreground leading-relaxed max-w-xs">
@@ -487,9 +506,7 @@ function DashboardContent() {
         </div>
       )}
 
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        
+      <div className="w-full">
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
           {/* Action alerts */}
           {errorAlert && (
@@ -508,15 +525,13 @@ function DashboardContent() {
 
           {/* Connection Status widget & Alert Lifecycles */}
           {userRole !== 'Viewer' && (
-          <section className="glass-panel border border-border rounded-2xl p-6 relative overflow-hidden">
-            <div className="absolute -top-12 -right-12 w-32 h-32 rounded-full bg-indigo-500/5 blur-2xl"></div>
-            
+          <section className="bg-card text-card-foreground border border-border rounded-xl p-6 shadow-sm relative overflow-hidden">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-ping"></span>
-                  <h3 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-indigo-400" />
+                  <h3 className="text-xl font-bold tracking-tight flex items-center gap-2">
+                    <Sparkles className="h-5 w-5 text-primary" />
                     Google Connection Status
                   </h3>
                 </div>
@@ -562,13 +577,13 @@ function DashboardContent() {
               <div className="mt-6 border-t border-border/60 pt-6">
                 {tokenStatus.status === 'active' ? (
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-semibold">
-                    <span className="flex items-center gap-2 text-emerald-400">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                      Account: <strong className="text-white">{tokenStatus.google_email}</strong>
+                    <span className="flex items-center gap-2 text-emerald-600">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      Account: <strong className="text-foreground">{tokenStatus.google_email}</strong>
                     </span>
                     <span className="text-muted-foreground flex items-center gap-1.5">
-                      <Calendar className="h-4 w-4 text-indigo-400" />
-                      Last Sync: <strong className="text-white">{getLastSyncedTime}</strong>
+                      <Calendar className="h-4 w-4 text-primary" />
+                      Last Sync: <strong className="text-foreground">{getLastSyncedTime}</strong>
                     </span>
                   </div>
                 ) : tokenStatus.status === 'requires_refresh' ? (
@@ -592,16 +607,55 @@ function DashboardContent() {
           </section>
           )}
 
+          {/* Summary KPI Cards */}
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+              <div className="text-sm font-medium text-muted-foreground mb-1">Total Locations</div>
+              <div className="text-2xl font-bold text-foreground">{totalLocations}</div>
+            </div>
+            <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+              <div className="text-sm font-medium text-muted-foreground mb-1">Unverified</div>
+              <div className="text-2xl font-bold text-amber-600">{unverifiedCount}</div>
+            </div>
+            <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+              <div className="text-sm font-medium text-muted-foreground mb-1">Suspended</div>
+              <div className="text-2xl font-bold text-destructive">{suspendedCount}</div>
+            </div>
+            <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+              <div className="text-sm font-medium text-muted-foreground mb-1">SLA Needs Response</div>
+              <div className="text-2xl font-bold text-indigo-600">{slaNeedsResponseCount}</div>
+            </div>
+          </section>
+
           {/* Synced Locations */}
           <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-indigo-400" />
-                Synced Storefronts ({locations.length})
-              </h3>
-              <span className="text-xs font-semibold text-muted-foreground">
-                Auto-syncs hourly
-              </span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-5 w-5 text-primary" />
+                <h3 className="text-lg font-bold tracking-tight text-foreground">
+                  Synced Storefronts ({locations.length})
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setActiveFilter('all')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeFilter === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                >
+                  All
+                </button>
+                <button 
+                  onClick={() => setActiveFilter('unverified')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeFilter === 'unverified' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                >
+                  Unverified
+                </button>
+                <button 
+                  onClick={() => setActiveFilter('suspended')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeFilter === 'suspended' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                >
+                  Suspended
+                </button>
+              </div>
             </div>
 
             {loadingLocations ? (
@@ -612,28 +666,43 @@ function DashboardContent() {
                 </div>
               </div>
             ) : locations.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-12 text-center rounded-2xl border border-border glass-panel">
+              <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-border bg-card shadow-sm">
                 <MapPin className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm font-bold text-white">No active storefronts found</p>
+                <p className="text-sm font-bold text-foreground">No active storefronts found</p>
                 <p className="text-xs text-muted-foreground max-w-sm mt-1">
                   We found no GBP storefront locations linked to this account. Refresh or connect a profile.
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {locations.map((loc) => (
-                  <Link href={`/dashboard/locations/${loc.id}`} key={loc.id} className="interactive-card glass-panel border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 hover:border-indigo-500/50 transition-colors group block">
+                {sortedLocations.map((loc, index) => {
+                  const isBlocked = billing?.location_quota !== undefined && index >= billing.location_quota;
+                  
+                  return (
+                  <Link 
+                    href={isBlocked ? '#' : `/dashboard/locations/${loc.id}`} 
+                    key={loc.id} 
+                    onClick={(e) => {
+                      if (isBlocked) e.preventDefault();
+                    }}
+                    className={`bg-card text-card-foreground border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 transition-colors shadow-sm group block ${isBlocked ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:border-primary/50 hover:shadow-md'}`}
+                  >
                     <div className="space-y-2">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
-                          <h4 className="text-base font-bold text-white leading-tight group-hover:text-indigo-400 transition-colors flex items-center gap-2">
+                          <h4 className={`text-base font-bold leading-tight flex items-center gap-2 ${isBlocked ? 'text-muted-foreground' : 'text-foreground group-hover:text-primary'} transition-colors`}>
                             {loc.location_name}
-                            <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            {!isBlocked && <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />}
                           </h4>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">{loc.primary_category || 'Storefront'}</span>
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-primary">{loc.primary_category || 'Storefront'}</span>
                             
                             {/* State Badges */}
+                            {isBlocked && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                Upgrade to Reactivate
+                              </span>
+                            )}
                             {loc.is_suspended && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
                                 Suspended
@@ -718,13 +787,13 @@ function DashboardContent() {
                       )}
                     </div>
                   </Link>
-                ))}
+                )})}
               </div>
             )}
           </section>
         </main>
       </div>
-    </AuthGuard>
+    </>
   )
 }
 

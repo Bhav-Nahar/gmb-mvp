@@ -12,6 +12,7 @@ from app.core.security import decrypt_token, encrypt_token
 from app.providers.factory import ProviderFactory
 from app.providers.base.exceptions import ProviderAuthError
 from app.services.review_sync_service import ReviewSyncService
+from app.core.redis_client import get_redis as _get_redis
 import asyncio
 
 def run_async(coro):
@@ -28,6 +29,7 @@ def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: in
     """
     import redis
     from app.core.config import settings
+    from app.services.billing.entitlement_service import EntitlementService
     
     db: Session = SessionLocal()
     try:
@@ -45,7 +47,11 @@ def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: in
         
         organization_id = location.organization_id
         
-        r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        if org and EntitlementService.is_org_locked(org):
+            return {"status": "skipped", "reason": "organization is locked"}
+        
+        r = _get_redis()
         lock_key = f"lock:sync_reviews:{organization_id}:{location_id}"
         lock = r.lock(lock_key, timeout=300)
         
@@ -98,10 +104,17 @@ def sync_reviews_chunk_task(self, location_ids: list, organization_id: int, run_
     from app.models.location import Location
     from app.models.sync_log import SyncLog
     from app.services.review_sync_service import ReviewSyncService
+    from app.services.billing.entitlement_service import EntitlementService
 
     logger = logging.getLogger(__name__)
     db: Session = SessionLocal()
-    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    
+    org = db.query(Organization).filter(Organization.id == organization_id).first()
+    if org and EntitlementService.is_org_locked(org):
+        db.close()
+        return {"status": "skipped", "reason": "organization is locked"}
+
+    r = _get_redis()
 
     results = []
     
@@ -186,10 +199,16 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
     import redis
     from app.core.config import settings
     from app.models.organization_sync_state import OrganizationSyncState
+    from app.services.billing.entitlement_service import EntitlementService
     
     db: Session = SessionLocal()
     
-    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    org = db.query(Organization).filter(Organization.id == organization_id).first()
+    if org and EntitlementService.is_org_locked(org):
+        db.close()
+        return {"status": "skipped", "reason": "organization is locked"}
+    
+    r = _get_redis()
     lock_key = f"lock:sync_locations:org_{organization_id}"
     lock = r.lock(lock_key, timeout=3600)  # 1-hour lease to protect sync window
     
@@ -325,6 +344,13 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         
         db.commit()
         
+        # Start the trial clock on first successful location sync. A pending trial
+        # is status "trial" with trial_ends_at still NULL.
+        org = db.query(Organization).filter(Organization.id == organization_id).with_for_update().first()
+        if org and org.subscription_status == "trial" and org.trial_ends_at is None:
+            org.trial_ends_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)
+            db.commit()
+        
         return {"status": "success", "result": log_message}
 
     except Exception as e:
@@ -381,6 +407,9 @@ def sync_all_organizations_task() -> str:
     """
     db: Session = SessionLocal()
     try:
+        from app.services.billing.entitlement_service import EntitlementService
+        EntitlementService.transition_expired_subscriptions(db)
+        
         # Fetch all active Owner/Admin users who have a connected OAuth account,
         # ordered so the freshest token comes first within each organization.
         # Deduplicate at the query level or fetch only what we need to avoid massive memory usage
@@ -403,12 +432,57 @@ def sync_all_organizations_task() -> str:
 
         triggered_count = 0
         for org_id, admin_id in best_admin_per_org.items():
+            org = db.query(Organization).filter(Organization.id == org_id).first()
+            if org and EntitlementService.is_org_locked(org):
+                continue
             sync_locations_task.delay(org_id, admin_id, "Scheduled")
             triggered_count += 1
 
         return f"Triggered synchronization for {triggered_count} organizations."
     finally:
         db.close()
+
+
+@shared_task(name="app.tasks.reconcile_pending_subscriptions_task")
+def reconcile_pending_subscriptions_task() -> str:
+    """Safety net for missed/delayed `subscription.charged` webhooks.
+
+    Finds orgs that have a Razorpay subscription id but are not yet marked active,
+    and pulls their real status from Razorpay. If Razorpay says the subscription is
+    active/authenticated, entitlements are granted. Idempotent — re-running is safe.
+    """
+    import logging
+    from app.services.billing.subscription_service import SubscriptionService
+
+    logger = logging.getLogger(__name__)
+    r = _get_redis()
+    lock = r.lock("lock:reconcile_pending_subscriptions", timeout=300)
+    if not lock.acquire(blocking=False):
+        return "skipped: another reconcile in progress"
+
+    db: Session = SessionLocal()
+    reconciled = 0
+    try:
+        pending = db.query(Organization).filter(
+            Organization.razorpay_subscription_id.isnot(None),
+            Organization.subscription_status.notin_(["active", "locked"]),
+        ).all()
+
+        for org in pending:
+            try:
+                if SubscriptionService.reconcile_subscription(db, org.id):
+                    reconciled += 1
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Reconcile failed for org {org.id}: {str(e)}")
+
+        return f"Reconciled {reconciled} subscription(s) of {len(pending)} pending."
+    finally:
+        db.close()
+        try:
+            lock.release()
+        except Exception:
+            pass
 
 
 @shared_task(bind=True, name="app.tasks.tag_reviews_sentiment_task", max_retries=2)
@@ -426,7 +500,7 @@ def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> 
 
     logger = logging.getLogger(__name__)
 
-    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    r = _get_redis()
     lock_key = f"lock:sentiment_tag:{organization_id}:{location_id}"
     lock = r.lock(lock_key, timeout=600)
 
@@ -513,7 +587,7 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
     
     logger = logging.getLogger(__name__)
     
-    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    r = _get_redis()
     lock_key = f"lock:publish_job:{organization_id}:{job_id}"
     lock = r.lock(lock_key, timeout=120)
     
@@ -962,7 +1036,7 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
         shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
         shards_count = len(shards)
         
-        r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+        r = _get_redis()
         r.set(f"campaign:{campaign_id}:pending_shards", len(shards))
         r.set(f"campaign:{campaign_id}:success", 0)
         r.set(f"campaign:{campaign_id}:failed", 0)
@@ -1005,7 +1079,7 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
     from app.providers.gbp.auth import PermanentAuthError
     
     logger = logging.getLogger(__name__)
-    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    r = _get_redis()
     
     shard_success = 0
     shard_failed = 0
@@ -1588,7 +1662,7 @@ def check_scheduled_posts_task() -> dict:
 
     logger = logging.getLogger(__name__)
     db = SessionLocal()
-    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    r = _get_redis()
     
     now = datetime.datetime.now(datetime.timezone.utc)
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -1693,7 +1767,7 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
     
     logger = logging.getLogger(__name__)
     
-    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    r = _get_redis()
     lock_key = f"lock:publish_edit:{edit_id}"
     lock = r.lock(lock_key, timeout=120)
     
@@ -1864,7 +1938,7 @@ def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str,
             logger.error(f"Invalid date format for insights sync: {date_err}")
             return {"status": "error", "reason": f"Invalid date format: {date_err}"}
 
-        r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+        r = _get_redis()
         lock_key = f"lock:sync_insights:{organization_id}:{location_id}"
         lock = r.lock(lock_key, timeout=300)
 
@@ -1907,7 +1981,7 @@ def evaluate_attention_flags_task(organization_id: int) -> dict:
 
     db: Session = SessionLocal()
     try:
-        r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+        r = _get_redis()
         lock_key = f"lock:attention_eval:{organization_id}"
         lock = r.lock(lock_key, timeout=300)
 
@@ -1946,7 +2020,7 @@ def sync_organization_insights_task(organization_id: int, start_date_str: str, e
     logger.info(f"Starting sync_organization_insights_task for org={organization_id}, force={force}")
 
     db: Session = SessionLocal()
-    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    r = _get_redis()
     lock_key = f"insights_sync:org_{organization_id}"
     lock = r.lock(lock_key, timeout=3600)  # 1 hour lease
 
@@ -2554,5 +2628,11 @@ def publish_location_attributes_task(location_id: int) -> dict:
         db.rollback()
         raise e
     finally:
+        try:
+            r = _get_redis()
+            r.delete(f"location:attributes_schema:{location_id}")
+            logger.info(f"Invalidated form schema cache for location {location_id} in publish task finally block")
+        except Exception as cache_err:
+            logger.error(f"Failed to invalidate cache in publish task finally block for location {location_id}: {cache_err}")
         db.close()
 

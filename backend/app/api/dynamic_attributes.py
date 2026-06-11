@@ -9,6 +9,8 @@ import re
 import hashlib
 import json
 
+from app.api.posts import get_redis
+
 from app.api.deps import get_db, get_current_user, staff_required
 from app.models.user import User
 from app.models.location import Location
@@ -66,6 +68,17 @@ async def get_form_schema(
     
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
+
+    cache_key = f"location:attributes_schema:{location_id}"
+    redis_client = None
+    try:
+        redis_client = get_redis()
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"Serving cached form schema for location {location_id}")
+            return json.loads(cached_data)
+    except Exception as e:
+        logger.error(f"Redis cache lookup failed for form schema: {e}")
         
     if not location.primary_category and not location.google_category_resource_name:
         return {"schema": []}
@@ -178,7 +191,18 @@ async def get_form_schema(
             "rejected_value": extract_val(rejected_val_map.get(attr_id)) if attr_id in rejected_ids else None
         })
         
-    return {"schema": schema}
+    res = {"schema": schema}
+    if redis_client:
+        try:
+            redis_client.setex(
+                cache_key,
+                86400, # 24h
+                json.dumps(res)
+            )
+        except Exception as e:
+            logger.error(f"Redis cache write failed for form schema: {e}")
+            
+    return res
 
 @router.post("/{location_id}/draft-attributes")
 def save_draft_attributes(
@@ -288,6 +312,14 @@ def save_draft_attributes(
         logger.error("draft_save_failed", extra={"location_id": location_id, "error_type": type(e).__name__, "error": str(e)})
         raise HTTPException(status_code=500, detail="Failed to save draft attributes")
     
+    # Invalidate cached form schema
+    try:
+        r = get_redis()
+        r.delete(f"location:attributes_schema:{location_id}")
+        logger.info(f"Invalidated form schema cache for location {location_id} on draft save")
+    except Exception as cache_err:
+        logger.error(f"Failed to invalidate cache on draft save for location {location_id}: {cache_err}")
+
     return {"status": "success", "message": "Draft saved"}
 
 @router.post("/{location_id}/publish-attributes")

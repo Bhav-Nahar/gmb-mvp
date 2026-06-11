@@ -23,6 +23,8 @@ from app.models.organization_sync_state import OrganizationSyncState
 from app.models.gbp_attribute_metadata import GbpAttributeMetadata
 from app.models.gbp_attribute_definition import GbpAttributeDefinition
 from app.models.gbp_location_attribute_rejection import GbpLocationAttributeRejection
+from app.models.billing_webhook_event import BillingWebhookEvent
+from app.models.billing_transaction import BillingTransaction
 
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location", 
@@ -30,6 +32,6 @@ __all__ = [
     "Campaign", "Post", "PostVariant", "PostMedia", "PublishJob", "PostAuditLog",
     "CampaignAuditLog", "LocationEdit", "ActivityLog", "ActivityLogArchive",
     "LocationDailyInsight", "OrganizationSyncState", "GbpAttributeMetadata", "GbpAttributeDefinition",
-    "GbpLocationAttributeRejection"
+    "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction"
 ]
 

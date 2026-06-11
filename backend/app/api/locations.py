@@ -14,6 +14,7 @@ from app.schemas.location import LocationSyncStatus
 from app.schemas.sla import LocationSLAMetrics, LocationSLASummary
 from app.services.sla_service import get_location_sla_metrics, get_organization_sla_summary
 from app.worker import celery
+from app.api.posts import get_redis
 import logging
 
 logger = logging.getLogger(__name__)
@@ -255,6 +256,17 @@ def trigger_sync(
 
     task = celery.send_task("app.tasks.sync_locations_task", args=[current_user.organization_id, admin_user.id, "Manual"])
     
+    # Invalidate cache for all locations belonging to the organization
+    try:
+        r = get_redis()
+        locations = db.query(Location.id).filter(Location.organization_id == current_user.organization_id).all()
+        for (loc_id,) in locations:
+            cache_key = f"location:attributes_schema:{loc_id}"
+            r.delete(cache_key)
+            logger.info(f"Invalidated form schema cache for location {loc_id} on manual sync")
+    except Exception as e:
+        logger.error(f"Failed to invalidate attributes schema cache on manual sync: {e}")
+
     return {"message": "Sync task has been queued in the background.", "task_id": task.id}
 
 @router.get("/{location_id}/sync-status", response_model=LocationSyncStatus)
