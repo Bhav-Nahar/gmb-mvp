@@ -14,6 +14,7 @@ from app.schemas.review import ReviewResponse, ReviewListResponse, ReviewReplyRe
 from app.providers.factory import ProviderFactory
 from app.worker import celery as celery_app
 from app.services.ai_reply_service import generate_reply
+from app.services.billing.credit_service import CreditService
 from app.llm.exceptions import LLMProviderError
 from app.constants.review_sentiment import ALLOWED_SENTIMENTS, ALLOWED_ISSUE_CATEGORIES
 from app.constants.sla import SLA_TIER_LIST
@@ -241,7 +242,8 @@ async def generate_review_reply(
         raise HTTPException(status_code=404, detail="Location not found")
         
     try:
-        result = await generate_reply(review, location)
+        with CreditService.consume_ai_credit(db, current_user.organization_id, "generate_review_reply"):
+            result = await generate_reply(review, location)
     except LLMProviderError as e:
         logger.error("LLM generation failed for review %s: %s", review_id, e, exc_info=True)
         raise HTTPException(

@@ -203,5 +203,65 @@ class InsightsSystemTests(unittest.TestCase):
         # Verify it raises HTTP 403 or 404/Scope exception
         self.assertIn("403", str(context.exception))
 
+    @patch("app.api.insights.get_redis")
+    def test_get_insights_overview_caching(self, mock_get_redis):
+        mock_redis_client = MagicMock()
+        mock_get_redis.return_value = mock_redis_client
+        mock_redis_client.get.return_value = None # Cache miss first
+        
+        # Test cache miss (should compute and write to cache)
+        response = get_insights_overview(
+            start_date=datetime.date.today(),
+            end_date=datetime.date.today(),
+            current_user=self.user,
+            db=self.db
+        )
+        self.assertIsNotNone(response)
+        mock_redis_client.setex.assert_called_once()
+        
+        # Test cache hit
+        mock_redis_client.setex.reset_mock()
+        mock_redis_client.get.return_value = '{"kpis": {"profile_views": {"current": 0, "prior": 0}, "search_impressions": {"current": 0, "prior": 0}, "maps_views": {"current": 0, "prior": 0}, "phone_calls": {"current": 0, "prior": 0}, "website_clicks": {"current": 0, "prior": 0}, "direction_requests": {"current": 0, "prior": 0}}, "trends": [], "leaderboard": [], "attention_locations_count": 0}'
+        response2 = get_insights_overview(
+            start_date=datetime.date.today(),
+            end_date=datetime.date.today(),
+            current_user=self.user,
+            db=self.db
+        )
+        self.assertIsNotNone(response2)
+        mock_redis_client.setex.assert_not_called()
+
+    @patch("app.api.deps.get_user_location_ids")
+    @patch("app.api.insights.get_redis")
+    def test_get_location_insights_caching(self, mock_get_redis, mock_get_location_ids):
+        mock_get_location_ids.return_value = None # No restrictions
+        
+        mock_redis_client = MagicMock()
+        mock_get_redis.return_value = mock_redis_client
+        mock_redis_client.get.return_value = None # Cache miss first
+        
+        response = get_location_insights(
+            id=self.location.id,
+            start_date=datetime.date.today(),
+            end_date=datetime.date.today(),
+            current_user=self.user,
+            db=self.db
+        )
+        self.assertIsNotNone(response)
+        mock_redis_client.setex.assert_called_once()
+        
+        # Test cache hit
+        mock_redis_client.setex.reset_mock()
+        mock_redis_client.get.return_value = '{"location_id": 1, "location_name": "Test", "attention_needed": false, "attention_reason": "", "last_insights_sync_at": null, "kpis": {"profile_views": {"current": 0, "prior": 0}, "search_impressions": {"current": 0, "prior": 0}, "maps_views": {"current": 0, "prior": 0}, "phone_calls": {"current": 0, "prior": 0}, "website_clicks": {"current": 0, "prior": 0}, "direction_requests": {"current": 0, "prior": 0}}, "trends": [], "sentiment": {"positive": 0, "neutral": 0, "negative": 0, "positive_percentage": 0.0, "neutral_percentage": 0.0, "negative_percentage": 0.0}, "sla": {"total_reviews": 0, "replied_reviews": 0, "response_rate": 0.0, "avg_response_time_hours": null}, "top_issue_categories": []}'
+        response2 = get_location_insights(
+            id=self.location.id,
+            start_date=datetime.date.today(),
+            end_date=datetime.date.today(),
+            current_user=self.user,
+            db=self.db
+        )
+        self.assertIsNotNone(response2)
+        mock_redis_client.setex.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()

@@ -133,6 +133,11 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
         errorMessage = errorData.message
       }
       
+      if (response.status === 402 && typeof window !== 'undefined') {
+        const event = new CustomEvent('billing-error-402', { detail: { detail: errorMessage } })
+        window.dispatchEvent(event)
+      }
+
       throw new Error(errorMessage)
     }
 

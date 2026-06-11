@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import AuthGuard from '@/components/AuthGuard'
 import Navbar from '@/components/Navbar'
 import { useAuth } from '@/hooks/useAuth'
+import { useBillingStatus } from '@/hooks/useBilling'
 import { api } from '@/lib/api'
 import {
   RefreshCw,
@@ -100,6 +101,7 @@ function DashboardContent() {
 
   const { user } = useAuth()
   const userRole = user?.role || 'Viewer'
+  const { data: billing } = useBillingStatus()
 
   // Refs for interval tracking to prevent memory leaks
   const onboardingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -449,6 +451,10 @@ function DashboardContent() {
     return 'Pending Sync'
   }, [syncLogs, locations])
 
+  const sortedLocations = useMemo(() => {
+    return [...locations].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  }, [locations])
+
   return (
     <AuthGuard>
       {/* Onboarding Fullscreen Sync Overlay */}
@@ -621,19 +627,34 @@ function DashboardContent() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {locations.map((loc) => (
-                  <Link href={`/dashboard/locations/${loc.id}`} key={loc.id} className="interactive-card glass-panel border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 hover:border-indigo-500/50 transition-colors group block">
+                {sortedLocations.map((loc, index) => {
+                  const isBlocked = billing?.location_quota !== undefined && index >= billing.location_quota;
+                  
+                  return (
+                  <Link 
+                    href={isBlocked ? '#' : `/dashboard/locations/${loc.id}`} 
+                    key={loc.id} 
+                    onClick={(e) => {
+                      if (isBlocked) e.preventDefault();
+                    }}
+                    className={`interactive-card glass-panel border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 transition-colors group block ${isBlocked ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:border-indigo-500/50'}`}
+                  >
                     <div className="space-y-2">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
-                          <h4 className="text-base font-bold text-white leading-tight group-hover:text-indigo-400 transition-colors flex items-center gap-2">
+                          <h4 className={`text-base font-bold leading-tight flex items-center gap-2 ${isBlocked ? 'text-muted-foreground' : 'text-white group-hover:text-indigo-400'} transition-colors`}>
                             {loc.location_name}
-                            <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            {!isBlocked && <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />}
                           </h4>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">{loc.primary_category || 'Storefront'}</span>
                             
                             {/* State Badges */}
+                            {isBlocked && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                Upgrade to Reactivate
+                              </span>
+                            )}
                             {loc.is_suspended && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
                                 Suspended
@@ -718,7 +739,7 @@ function DashboardContent() {
                       )}
                     </div>
                   </Link>
-                ))}
+                )})}
               </div>
             )}
           </section>

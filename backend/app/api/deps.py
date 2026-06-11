@@ -6,6 +6,13 @@ from app.db.session import get_db
 from app.core.security import decode_access_token_payload
 from app.models.user import User
 from app.models.user_location_access import UserLocationAccess
+from app.models.organization import Organization
+from app.models.location import Location
+from app.services.billing.entitlement_service import EntitlementService
+from app.core import plan_config
+import redis
+from app.core.config import settings
+from sqlalchemy import select
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
@@ -124,6 +131,7 @@ def check_csrf(request: Request):
         "/api/v1/auth/google/callback",
         "/api/v1/auth/google/login",
         "/api/v1/auth/refresh",
+        "/api/v1/webhooks/razorpay",
         "/api/v1/",
         "/",
     })
@@ -146,3 +154,65 @@ def check_csrf(request: Request):
             status_code=status.HTTP_403_FORBIDDEN,
             detail=detail_msg.strip()
         )
+
+def get_redis_client() -> redis.Redis:
+    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+def check_billing_lock(request: Request, db: Session = Depends(get_db)):
+    """Global dependency to block write operations if organization is locked."""
+    if request.method in ["GET", "OPTIONS", "HEAD"]:
+        return
+
+    _WHITELIST = frozenset({
+        "/api/v1/auth/google/callback",
+        "/api/v1/auth/google/login",
+        "/api/v1/auth/refresh",
+        "/api/v1/billing/checkout-subscription",
+        "/api/v1/billing/buy-credits",
+        "/api/v1/webhooks/razorpay"
+    })
+    
+    if request.url.path in _WHITELIST:
+        return
+
+    # Manually resolve get_current_user only when not on whitelisted/public endpoints
+    current_user = get_current_user(request=request, db=db)
+
+    if not current_user.organization_id:
+        return
+
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if org and EntitlementService.is_org_locked(org):
+        raise HTTPException(status_code=402, detail="Organization is locked. Please update your subscription.")
+
+
+def check_location_quota(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Dependency to check if the organization has reached its location quota."""
+    if not current_user.organization_id:
+        return
+
+    org_id = current_user.organization_id
+    
+    redis_client = get_redis_client()
+    lock = redis_client.lock(f"lock:add_location:{org_id}", timeout=10)
+    
+    if not lock.acquire(blocking=True, blocking_timeout=5):
+        raise HTTPException(status_code=429, detail="Too many concurrent requests. Please try again.")
+
+    try:
+        stmt = select(Organization).where(Organization.id == org_id).with_for_update()
+        org = db.scalars(stmt).first()
+        
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        # location_quota reflects what the org has actually paid for (set on
+        # subscription.charged). Falls back to the trial quota before activation.
+        quota = org.location_quota if org.location_quota is not None else plan_config.TRIAL_LOCATION_QUOTA
+
+        current_count = db.query(Location).filter(Location.organization_id == org_id).count()
+        if current_count >= quota:
+            raise HTTPException(status_code=402, detail=f"location_quota_exceeded: limit {quota} reached.")
+            
+    finally:
+        lock.release()

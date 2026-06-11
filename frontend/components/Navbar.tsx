@@ -73,6 +73,14 @@ export default function Navbar() {
             >
               Settings
             </Link>
+            {['Owner', 'Admin'].includes(userRole) && (
+              <Link
+                href="/dashboard/settings/billing"
+                className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-white transition-colors"
+              >
+                Billing
+              </Link>
+            )}
           </nav>
         </div>
 

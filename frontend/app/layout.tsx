@@ -9,6 +9,8 @@ import { AuthProvider } from "@/hooks/useAuth";
 
 const inter = Inter({subsets:['latin'],variable:'--font-sans'});
 
+import { BillingProvider } from "@/components/billing/BillingProvider";
+
 export const metadata: Metadata = {
   title: 'GMB Sync Engine',
   description: 'Manage and synchronize Google Business Profile locations instantly.',
@@ -30,7 +32,9 @@ export default function RootLayout({
         <QueryProvider>
           <TooltipProvider>
             <AuthProvider>
-              {children}
+              <BillingProvider>
+                {children}
+              </BillingProvider>
               <Toaster />
             </AuthProvider>
           </TooltipProvider>
