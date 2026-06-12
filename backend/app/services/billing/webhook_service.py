@@ -7,9 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from app.core.config import settings
 from app.models.organization import Organization
+from app.models.location import Location
 from app.models.billing_webhook_event import BillingWebhookEvent
 from app.models.billing_transaction import BillingTransaction
 from app.services.billing.pricing_service import PricingService
+from app.core import plan_config
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +120,8 @@ class WebhookService:
         double-count."""
         payment = payment or {}
         notes = subscription.get("notes", {})
-        location_count = int(notes.get("location_count", "0") or 0)
+        notes_location_count = int(notes.get("location_count", "0") or 0)
+        subscription_id = subscription.get("id")
 
         current_end = subscription.get("current_end")
         if current_end:
@@ -129,12 +132,35 @@ class WebhookService:
         org.grace_period_ends_at = None
         org.trial_ends_at = None
         org.subscription_ends_at = None
-        org.razorpay_subscription_id = subscription.get("id")
+        org.razorpay_subscription_id = subscription_id
 
-        # Grant the entitlements that were paid for.
-        if location_count > 0:
-            org.location_quota = location_count
-            org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(location_count)
+        # Decide the paid location count.
+        #
+        # The notes carry the count chosen at checkout — authoritative for the FIRST
+        # charge of a subscription (initial signup or an upgrade-via-re-checkout, where
+        # org.location_quota may still hold the trial default or a previous count).
+        #
+        # On RENEWALS of a subscription we've already charged, the ORG is the source of
+        # truth: mid-cycle location unlocks bump org.location_quota (and the Razorpay
+        # plan amount) without touching subscription notes, so we must NOT reset quota
+        # back to the stale notes value. We detect a renewal by the presence of a prior
+        # subscription_charge ledger row for this subscription id.
+        prior_charge = None
+        if subscription_id:
+            prior_charge = db.query(BillingTransaction).filter(
+                BillingTransaction.razorpay_subscription_id == subscription_id,
+                BillingTransaction.transaction_type == "subscription_charge",
+            ).first()
+        is_renewal = prior_charge is not None
+
+        if is_renewal and org.location_quota:
+            effective_count = org.location_quota
+        else:
+            effective_count = notes_location_count or (org.location_quota or 0)
+
+        if effective_count and effective_count > 0:
+            org.location_quota = effective_count
+            org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(effective_count)
 
         payment_id = payment.get("id")
         if not payment_id:
@@ -182,7 +208,11 @@ class WebhookService:
     def _handle_payment_captured(db: Session, payload: Dict[str, Any]) -> None:
         payment = payload.get("payload", {}).get("payment", {}).get("entity", {})
         notes = payment.get("notes", {})
-        if notes.get("type") != "topup":
+        note_type = notes.get("type")
+        if note_type == "location_addon":
+            WebhookService._handle_location_addon_captured(db, payment, notes)
+            return
+        if note_type != "topup":
             # Subscription payments arrive via subscription.charged.
             return
 
@@ -216,3 +246,76 @@ class WebhookService:
             razorpay_payment_id=payment.get("id"),
             razorpay_order_id=payment.get("order_id"),
         ))
+
+    @staticmethod
+    def _handle_location_addon_captured(db: Session, payment: Dict[str, Any], notes: Dict[str, Any]) -> None:
+        """Unlock locations paid for by a prorated add-on charge: bump quota, grant the
+        full per-location credits, flip the locations to 'active', and enqueue their
+        deferred sync. Idempotent on the payment id."""
+        org_id_str = notes.get("organization_id")
+        if not org_id_str:
+            return
+        stmt = select(Organization).where(Organization.id == int(org_id_str)).with_for_update()
+        org = db.scalars(stmt).first()
+        if not org:
+            return
+
+        payment_id = payment.get("id")
+        if payment_id:
+            already = db.query(BillingTransaction).filter(
+                BillingTransaction.razorpay_payment_id == payment_id
+            ).first()
+            if already:
+                return
+
+        added = int(notes.get("added", "0") or 0)
+        loc_ids = [int(x) for x in str(notes.get("location_ids", "")).split(",") if x.strip().isdigit()]
+
+        # Only unlock locations that are still pending and belong to this org.
+        unlocked_ids = []
+        if loc_ids:
+            rows = db.query(Location).filter(
+                Location.id.in_(loc_ids),
+                Location.organization_id == org.id,
+                Location.billing_status == "pending_payment",
+            ).all()
+            for loc in rows:
+                loc.billing_status = "active"
+                unlocked_ids.append(loc.id)
+
+        # Grant entitlements for what was actually unlocked (defensive: never grant for
+        # already-active or foreign ids). The ORG is the source of truth for quota.
+        granted = len(unlocked_ids)
+        if granted > 0:
+            org.location_quota = (org.location_quota or 0) + granted
+            org.monthly_ai_credits_balance = (org.monthly_ai_credits_balance or 0) \
+                + granted * plan_config.CREDITS_PER_LOCATION
+
+        db.add(BillingTransaction(
+            organization_id=org.id,
+            transaction_type="location_addon",
+            amount_paise=payment.get("amount", 0),
+            currency=payment.get("currency", "INR"),
+            status="success",
+            razorpay_payment_id=payment_id,
+            razorpay_order_id=payment.get("order_id"),
+            razorpay_subscription_id=org.razorpay_subscription_id,
+        ))
+
+        # Raise the recurring amount for future cycles (best-effort) and kick off the
+        # deferred sync for the freshly-unlocked locations. Both are outside the DB
+        # entitlement grant so a transient failure can't undo a paid unlock.
+        if granted > 0:
+            from app.services.billing.subscription_service import SubscriptionService
+            SubscriptionService.update_subscription_plan_for_quota(db, org.id)
+            try:
+                from app.worker import celery as celery_app
+                celery_app.send_task(
+                    "app.tasks.sync_reviews_chunk_task",
+                    args=[unlocked_ids, org.id, "Manual", None],
+                )
+                for loc_id in unlocked_ids:
+                    celery_app.send_task("app.tasks.sync_location_attributes_task", args=[loc_id])
+            except Exception as e:
+                logger.error("Failed to enqueue deferred sync for unlocked locations %s: %s",
+                             unlocked_ids, e, exc_info=True)

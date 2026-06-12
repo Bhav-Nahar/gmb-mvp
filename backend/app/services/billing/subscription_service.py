@@ -1,11 +1,23 @@
+import logging
 import razorpay
-from typing import Dict, Any
+from datetime import datetime, timezone
+from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from fastapi import HTTPException
 from app.core.config import settings
+from app.core import plan_config
 from app.models.organization import Organization
+from app.models.location import Location
 from app.services.billing.pricing_service import PricingService
+
+logger = logging.getLogger(__name__)
+
+# Approximate cycle lengths used for proration when we don't fetch the exact
+# current_start from Razorpay. Conventional billing-month / billing-year.
+_DAYS_IN_CYCLE = {"monthly": 30, "annual": 365}
+# Razorpay rejects orders below ₹1. Floor tiny prorated amounts to this.
+_MIN_ORDER_PAISE = 100
 
 
 _plan_id_cache: dict = {}
@@ -144,6 +156,148 @@ class SubscriptionService:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to create top-up order: {str(e)}")
 
+
+    @staticmethod
+    def _cycle_days_remaining(org: Organization, interval: str) -> tuple[int, int]:
+        """(days_left, days_in_cycle) for the org's current billing cycle.
+
+        Uses ai_credits_reset_date (the Razorpay current_end we persist) as the cycle
+        end. Falls back to a full cycle if we don't have a reset date yet."""
+        days_in_cycle = _DAYS_IN_CYCLE.get(interval, 30)
+        reset = org.ai_credits_reset_date
+        if not reset:
+            return days_in_cycle, days_in_cycle
+        now = datetime.now(timezone.utc)
+        days_left = (reset - now).days
+        return max(0, min(days_left, days_in_cycle)), days_in_cycle
+
+    @staticmethod
+    def quote_location_unlock(db: Session, org_id: int, location_ids: List[int]) -> Dict[str, Any]:
+        """Compute the prorated charge to unlock the given pending locations. Read-only."""
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        pending = db.query(Location.id).filter(
+            Location.organization_id == org_id,
+            Location.id.in_(location_ids),
+            Location.billing_status == "pending_payment",
+        ).all()
+        pending_ids = [row[0] for row in pending]
+        added = len(pending_ids)
+
+        interval = org.billing_cycle or "monthly"
+        current_quota = org.location_quota if org.location_quota is not None else plan_config.TRIAL_LOCATION_QUOTA
+        days_left, days_in_cycle = SubscriptionService._cycle_days_remaining(org, interval)
+
+        amount = PricingService.prorated_addon_paise(current_quota, added, interval, days_left, days_in_cycle)
+        if added > 0:
+            amount = max(amount, _MIN_ORDER_PAISE)
+
+        return {
+            "location_ids": pending_ids,
+            "added": added,
+            "interval": interval,
+            "days_left": days_left,
+            "days_in_cycle": days_in_cycle,
+            "amount_paise": amount,
+            "credits_granted": added * plan_config.CREDITS_PER_LOCATION,
+        }
+
+    @staticmethod
+    def create_location_addon_order(db: Session, org_id: int, org_name: str,
+                                    user_email: str, location_ids: List[int]) -> Dict[str, Any]:
+        """Create a one-time Razorpay order for the prorated cost of unlocking the
+        given pending locations. The actual unlock happens on payment.captured."""
+        quote = SubscriptionService.quote_location_unlock(db, org_id, location_ids)
+        if quote["added"] == 0:
+            raise HTTPException(status_code=400, detail="No pending locations to unlock.")
+
+        # A subscription must exist to add to (trial users should subscribe instead).
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        if not org or not org.razorpay_subscription_id or org.subscription_status != "active":
+            raise HTTPException(
+                status_code=409,
+                detail="no_active_subscription: subscribe to a plan before adding locations.",
+            )
+
+        customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
+        client = SubscriptionService.get_razorpay_client()
+        try:
+            order = client.order.create(data={
+                "amount": quote["amount_paise"],
+                "currency": "INR",
+                "receipt": f"addon_org_{org_id}",
+                "notes": {
+                    "organization_id": str(org_id),
+                    "type": "location_addon",
+                    "added": str(quote["added"]),
+                    "location_ids": ",".join(map(str, quote["location_ids"])),
+                    "interval": quote["interval"],
+                    "credits": str(quote["credits_granted"]),
+                },
+            })
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create add-on order: {str(e)}")
+
+        return {"order": order, "quote": quote}
+
+    @staticmethod
+    def update_subscription_plan_for_quota(db: Session, org_id: int) -> None:
+        """Best-effort: raise the recurring subscription amount to match the org's
+        (post-unlock) location_quota, effective at the next cycle. Entitlements are the
+        ORG's responsibility (see apply_subscription_charged), so a failure here only
+        means the NEXT renewal may bill the prior amount — logged for reconciliation,
+        never blocks the unlock."""
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        if not org or not org.razorpay_subscription_id:
+            return
+        interval = org.billing_cycle or "monthly"
+        try:
+            new_plan_id = SubscriptionService._get_or_create_plan(org.location_quota, interval)
+            client = SubscriptionService.get_razorpay_client()
+            client.subscription.update(org.razorpay_subscription_id, {
+                "plan_id": new_plan_id,
+                "schedule_change_at": "cycle_end",
+            })
+        except Exception as e:
+            logger.error(
+                "Failed to update subscription plan for org %s after unlock (next renewal "
+                "may bill the old amount): %s", org_id, e, exc_info=True
+            )
+
+    @staticmethod
+    def reconcile_location_addon_payment(db: Session, org_id: int, payment_id: str) -> bool:
+        """Safety net for a missed payment.captured on a location add-on, mirroring
+        reconcile_topup_payment."""
+        from app.services.billing.webhook_service import WebhookService
+
+        client = SubscriptionService.get_razorpay_client()
+        try:
+            payment = client.payment.fetch(payment_id)
+        except Exception:
+            return False
+        if payment.get("status") != "captured":
+            return False
+
+        notes = payment.get("notes") or {}
+        order_id = payment.get("order_id")
+        if order_id:
+            try:
+                order = client.order.fetch(order_id)
+                notes = order.get("notes") or notes
+            except Exception:
+                pass
+
+        if notes.get("type") != "location_addon" or str(notes.get("organization_id")) != str(org_id):
+            return False
+
+        payment_with_notes = {**payment, "notes": notes}
+        WebhookService._handle_payment_captured(
+            db, {"payload": {"payment": {"entity": payment_with_notes}}}
+        )
+        db.commit()
+        return True
 
     @staticmethod
     def reconcile_subscription(db: Session, org_id: int) -> bool:

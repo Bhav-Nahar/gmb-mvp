@@ -46,6 +46,37 @@ class PricingService:
         return location_count * plan_config.CREDITS_PER_LOCATION
 
     @staticmethod
+    def marginal_monthly_paise(current_quota: int, added: int, interval: str = "monthly") -> int:
+        """Cost of going from current_quota -> current_quota + added.
+
+        Pricing is graduated, so the marginal cost is the DELTA of the two totals,
+        not a flat per-location price (the added locations sit in whatever band they
+        fall into)."""
+        if added <= 0:
+            return 0
+        new_total = current_quota + added
+        return PricingService.compute_price_paise(new_total, interval) \
+            - PricingService.compute_price_paise(current_quota, interval)
+
+    @staticmethod
+    def prorated_addon_paise(
+        current_quota: int,
+        added: int,
+        interval: str,
+        days_left: int,
+        days_in_cycle: int,
+    ) -> int:
+        """Prorate the marginal monthly/annual cost for the remainder of the current
+        billing cycle. Clamped to [0, full marginal]."""
+        marginal = PricingService.marginal_monthly_paise(current_quota, added, interval)
+        if marginal <= 0:
+            return 0
+        if days_in_cycle <= 0:
+            return marginal
+        days_left = max(0, min(days_left, days_in_cycle))
+        return max(0, min(marginal, round(marginal * days_left / days_in_cycle)))
+
+    @staticmethod
     def get_topup_pack(pack_key: str) -> Dict[str, int]:
         pack = plan_config.AI_TOPUP_PACKS.get(pack_key)
         if not pack:

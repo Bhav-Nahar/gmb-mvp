@@ -188,7 +188,13 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
 
 
 def check_location_quota(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Dependency to check if the organization has reached its location quota."""
+    """Dependency to check if the organization has reached its location quota.
+
+    NOTE: Authoritative quota enforcement lives in the location sync Celery task
+    (app.tasks), which marks over-quota locations 'pending_payment' at insert time —
+    an HTTP dependency cannot gate a background task. This dependency is retained only
+    for any future *manual* add-location endpoint and is currently unused.
+    """
     if not current_user.organization_id:
         return
 

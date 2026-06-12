@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.api.deps import get_current_user, admin_required
 from app.models.user import User
 from app.models.organization import Organization
+from app.models.location import Location
 from app.services.billing.pricing_service import PricingService
 from app.services.billing.subscription_service import SubscriptionService
 from app.services.billing.webhook_service import WebhookService
@@ -144,7 +145,16 @@ def confirm_payment(
             raise HTTPException(status_code=400, detail="Subscription does not belong to this organization")
         activated = SubscriptionService.reconcile_subscription(db, org.id)
     else:
-        activated = SubscriptionService.reconcile_topup_payment(db, org.id, request.razorpay_payment_id)
+        # Order payments are either a credit top-up or a location add-on. Try the
+        # add-on path first (it no-ops unless the order's notes say location_addon),
+        # then fall back to top-up. Both verify the notes belong to this org.
+        activated = SubscriptionService.reconcile_location_addon_payment(
+            db, org.id, request.razorpay_payment_id
+        )
+        if not activated:
+            activated = SubscriptionService.reconcile_topup_payment(
+                db, org.id, request.razorpay_payment_id
+            )
 
     return {"confirmed": True, "activated": activated}
 
@@ -162,12 +172,21 @@ def get_billing_status(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    active_count = db.query(Location).filter(
+        Location.organization_id == org.id, Location.billing_status == "active"
+    ).count()
+    pending_count = db.query(Location).filter(
+        Location.organization_id == org.id, Location.billing_status == "pending_payment"
+    ).count()
+
     return {
         "plan": org.plan,
         "subscription_status": org.subscription_status,
         "monthly_ai_credits_balance": org.monthly_ai_credits_balance,
         "topup_ai_credits_balance": org.topup_ai_credits_balance,
         "location_quota": org.location_quota,
+        "active_location_count": active_count,
+        "pending_location_count": pending_count,
         "is_org_locked": EntitlementService.is_org_locked(org),
         "ai_credits_reset_date": org.ai_credits_reset_date,
         "current_period_end": org.ai_credits_reset_date,
@@ -175,6 +194,66 @@ def get_billing_status(
         "grace_period_ends_at": org.grace_period_ends_at,
         "subscription_ends_at": org.subscription_ends_at,
     }
+
+
+@router.get("/pending-locations")
+def get_pending_locations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List locations locked pending payment, plus the prorated quote to unlock them all."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    pending = db.query(Location).filter(
+        Location.organization_id == current_user.organization_id,
+        Location.billing_status == "pending_payment",
+    ).all()
+
+    quote = None
+    if pending:
+        quote = SubscriptionService.quote_location_unlock(
+            db, current_user.organization_id, [loc.id for loc in pending]
+        )
+
+    return {
+        "pending_locations": [
+            {"id": loc.id, "location_name": loc.location_name, "address": loc.address}
+            for loc in pending
+        ],
+        "quote": quote,
+    }
+
+
+class UnlockLocationsRequest(BaseModel):
+    location_ids: list[int]
+
+
+@router.post("/locations/unlock")
+def unlock_locations(
+    request: UnlockLocationsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """Create a Razorpay order for the prorated cost of unlocking the given pending
+    locations. The actual unlock is applied on payment.captured (and reconciled on
+    /confirm). Price is computed server-side; the client cannot specify an amount."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    result = SubscriptionService.create_location_addon_order(
+        db=db,
+        org_id=org.id,
+        org_name=org.name,
+        user_email=current_user.email,
+        location_ids=request.location_ids,
+    )
+    return result
 
 
 @webhook_router.post("/razorpay")

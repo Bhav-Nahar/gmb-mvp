@@ -316,3 +316,154 @@ def test_ensure_razorpay_customer_two_pass(db):
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org.id, org.name, "admin@test.com")
         assert customer_id == "cust_already_exists"
         mock_client.assert_not_called()
+
+
+def test_renewal_preserves_unlocked_quota(db):
+    """A renewal of an already-charged subscription must NOT reset quota back to the
+    stale notes count. Mid-cycle unlocks bump org.location_quota; renewals trust the org."""
+    org = Organization(
+        name="Unlocked Org",
+        subscription_status="active",
+        razorpay_subscription_id="sub_renew",
+        monthly_ai_credits_balance=0,
+        location_quota=5,  # started at 4, unlocked a 5th mid-cycle
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    # Simulate a PRIOR charge for this subscription so this counts as a renewal.
+    db.add(BillingTransaction(
+        organization_id=org.id,
+        transaction_type="subscription_charge",
+        amount_paise=1,
+        currency="INR",
+        status="success",
+        razorpay_payment_id="pay_prev",
+        razorpay_subscription_id="sub_renew",
+    ))
+    db.commit()
+
+    subscription = {
+        "id": "sub_renew",
+        "current_end": 1774880000,
+        "notes": {"organization_id": str(org.id), "location_count": "4"},  # stale: was 4
+    }
+    payment = {"id": "pay_renew", "amount": 1000000, "currency": "INR"}
+    WebhookService.apply_subscription_charged(db, org, subscription, payment)
+    db.commit()
+    db.refresh(org)
+
+    # Quota stays at the unlocked 5, NOT reset to the notes' 4.
+    assert org.location_quota == 5
+    assert org.monthly_ai_credits_balance == 150  # 5 * 30
+
+
+def test_assert_location_active_blocks_locked():
+    """The paid-feature guard raises 402 for a locked location and passes for active."""
+    from app.core.authorization import assert_location_active, assert_locations_active
+
+    class FakeQuery:
+        def __init__(self, value): self._value = value
+        def filter(self, *a, **k): return self
+        def scalar(self): return self._value
+        def first(self): return (1,) if self._value not in ("active", None) else None
+
+    class FakeDB:
+        def __init__(self, value): self._value = value
+        def query(self, *a, **k): return FakeQuery(self._value)
+
+    # Locked -> 402
+    with pytest.raises(HTTPException) as exc:
+        assert_location_active(FakeDB("pending_payment"), 1)
+    assert exc.value.status_code == 402
+
+    # Active -> no raise
+    assert_location_active(FakeDB("active"), 1)
+
+    # Bulk: any locked -> 402
+    with pytest.raises(HTTPException) as exc2:
+        assert_locations_active(FakeDB("pending_payment"), [1, 2])
+    assert exc2.value.status_code == 402
+
+
+def test_proration_math():
+    """Graduated marginal delta and time-based proration."""
+    from app.services.billing.pricing_service import PricingService
+
+    # Band 1 is ₹2,500 (250000 paise) per location for 1-10. 4 -> 5 adds one band-1 slot.
+    assert PricingService.marginal_monthly_paise(4, 1, "monthly") == 250000
+    # 10 -> 11 crosses into band 2 (₹2,000 = 200000) for the 11th.
+    assert PricingService.marginal_monthly_paise(10, 1, "monthly") == 200000
+
+    # Half a cycle -> half the marginal cost.
+    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=15, days_in_cycle=30) == 125000
+    # Start of cycle -> full marginal.
+    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=30, days_in_cycle=30) == 250000
+    # End of cycle -> 0.
+    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=0, days_in_cycle=30) == 0
+    # Guard against div-by-zero.
+    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=5, days_in_cycle=0) == 250000
+
+
+def test_location_addon_unlock_grants_and_activates(db):
+    """A captured location_addon payment unlocks the locations, bumps quota, grants full
+    per-location credits, and is idempotent on re-delivery."""
+    from app.models.location import Location
+
+    org = Organization(
+        name="Addon Org",
+        subscription_status="active",
+        razorpay_subscription_id="sub_addon",
+        location_quota=4,
+        monthly_ai_credits_balance=120,  # 4 * 30
+        billing_cycle="monthly",
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    locked = Location(
+        organization_id=org.id,
+        google_location_id="loc_pending_1",
+        location_name="Pending Branch",
+        sync_status="Synced",
+        billing_status="pending_payment",
+    )
+    db.add(locked)
+    db.commit()
+    db.refresh(locked)
+
+    payload = {"payload": {"payment": {"entity": {
+        "id": "pay_addon_1",
+        "amount": 125000,
+        "currency": "INR",
+        "order_id": "order_addon_1",
+        "notes": {
+            "organization_id": str(org.id),
+            "type": "location_addon",
+            "added": "1",
+            "location_ids": str(locked.id),
+        },
+    }}}}
+
+    # Avoid real Razorpay calls from the best-effort plan update / celery enqueue.
+    with patch("app.services.billing.subscription_service.SubscriptionService.update_subscription_plan_for_quota"), \
+         patch("app.worker.celery.send_task"):
+        WebhookService._handle_payment_captured(db, payload)
+        db.commit()
+
+    db.refresh(org)
+    db.refresh(locked)
+    assert locked.billing_status == "active"
+    assert org.location_quota == 5
+    assert org.monthly_ai_credits_balance == 150  # 120 + 30
+
+    # Idempotent: re-delivering the same payment must not double-grant.
+    with patch("app.services.billing.subscription_service.SubscriptionService.update_subscription_plan_for_quota"), \
+         patch("app.worker.celery.send_task"):
+        WebhookService._handle_payment_captured(db, payload)
+        db.commit()
+    db.refresh(org)
+    assert org.location_quota == 5
+    assert org.monthly_ai_credits_balance == 150

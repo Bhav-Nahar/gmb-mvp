@@ -150,9 +150,10 @@ def launch_campaign(
     current_user: User = Depends(staff_required)
 ):
     """Launches a campaign by enqueuing the orchestrator task."""
-    from app.core.authorization import validate_location_access
+    from app.core.authorization import validate_location_access, assert_locations_active
     validate_location_access(db, current_user, payload.location_ids)
-    
+    assert_locations_active(db, payload.location_ids)
+
     campaign = post_service._verify_ownership(db, Campaign, id, current_user.organization_id)
     
     if campaign.status.upper() not in ["DRAFT", "FAILED", "PAUSED", "COMPLETED"]:
@@ -295,8 +296,9 @@ def launch_publish_jobs(
     # Verify post ownership
     post = post_service._verify_ownership(db, Post, id, current_user.organization_id)
 
-    from app.core.authorization import validate_location_access
+    from app.core.authorization import validate_location_access, assert_locations_active
     validate_location_access(db, current_user, payload.location_ids)
+    assert_locations_active(db, payload.location_ids)
 
     # Post MUST be APPROVED
     if post.status.upper() != "APPROVED":

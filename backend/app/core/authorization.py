@@ -31,6 +31,39 @@ def validate_location_access(db: Session, user: User, location_ids: list[int]) -
             
     return location_ids
 
+def assert_location_active(db: Session, location_id: int) -> None:
+    """Guard paid features against locations that are locked pending payment.
+
+    A location in 'pending_payment' state is visible but excluded from all paid
+    processing (AI replies, posts, listing edits, etc.) until a prorated mid-cycle
+    charge unlocks it. Raises 402 so the frontend can prompt the unlock flow.
+
+    Assumes org-boundary/RBAC checks have already run for `location_id`.
+    """
+    billing_status = db.query(Location.billing_status).filter(Location.id == location_id).scalar()
+    if billing_status is not None and billing_status != "active":
+        raise HTTPException(
+            status_code=402,
+            detail="location_locked: this location is pending payment. Unlock it to use this feature.",
+        )
+
+
+def assert_locations_active(db: Session, location_ids: list[int]) -> None:
+    """Bulk variant of assert_location_active for multi-location actions (campaigns,
+    batch publish). Raises 402 if ANY target location is locked pending payment."""
+    if not location_ids:
+        return
+    locked = db.query(Location.id).filter(
+        Location.id.in_(location_ids),
+        Location.billing_status != "active",
+    ).first()
+    if locked is not None:
+        raise HTTPException(
+            status_code=402,
+            detail="location_locked: one or more locations are pending payment. Unlock them to use this feature.",
+        )
+
+
 def validate_user_access(db: Session, current_user: User, target_user_id: int) -> User:
     """
     Validates that the target user exists and belongs to the same organization.

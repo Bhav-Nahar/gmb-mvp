@@ -50,6 +50,8 @@ def create_edit(
     _access: int = Depends(verify_location_access)
 ):
     """Staff: creates a Draft. Admin: creates and auto-advances to Pending."""
+    from app.core.authorization import assert_location_active
+    assert_location_active(db, location_id)
     try:
         edit = ListingEditService.create_draft(
             db,

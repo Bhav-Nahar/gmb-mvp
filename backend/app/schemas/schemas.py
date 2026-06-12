@@ -73,6 +73,7 @@ class LocationOut(BaseModel):
     average_rating: Optional[float] = None
     total_reviews: Optional[int] = None
     sync_status: str
+    billing_status: str = "active"  # 'active' | 'pending_payment' (locked over-quota)
     last_synced_at: Optional[datetime] = None
     sla_tracking_started_at: Optional[datetime] = None
     created_at: datetime

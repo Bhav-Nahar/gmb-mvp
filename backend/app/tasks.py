@@ -12,6 +12,7 @@ from app.core.security import decrypt_token, encrypt_token
 from app.providers.factory import ProviderFactory
 from app.providers.base.exceptions import ProviderAuthError
 from app.services.review_sync_service import ReviewSyncService
+from app.core import plan_config
 from app.core.redis_client import get_redis as _get_redis
 import asyncio
 
@@ -253,8 +254,17 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         # Pre-fetch all locations for this org to prevent N+1 query inside loop
         existing_locations = db.query(Location).filter(Location.organization_id == organization_id).all()
         existing_locs_map = {loc.google_location_id: loc for loc in existing_locations}
-        
+
+        # Per-location quota enforcement. Existing locations keep their billing_status
+        # (grandfathered — never flipped active->locked). A NEWLY detected location is
+        # admitted as 'active' only while we are under the paid quota; otherwise it is
+        # inserted 'pending_payment' (visible, but excluded from all paid processing
+        # until a prorated charge unlocks it).
+        quota = org.location_quota if (org and org.location_quota is not None) else plan_config.TRIAL_LOCATION_QUOTA
+        active_count = sum(1 for loc in existing_locations if loc.billing_status == "active")
+
         synced_count = 0
+        locked_count = 0
         sync_jobs = []
         for p_loc in provider_locations:
             # Removed debug print
@@ -287,8 +297,15 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 existing_loc.last_synced_at = datetime.datetime.now(datetime.timezone.utc)
                 db.flush()
                 loc_id = existing_loc.id
+                billing_status = existing_loc.billing_status
             else:
-                # Insert new
+                # Insert new — admit as 'active' only while under quota.
+                if active_count < quota:
+                    billing_status = "active"
+                    active_count += 1
+                else:
+                    billing_status = "pending_payment"
+
                 new_loc = Location(
                     organization_id=organization_id,
                     google_account_id=p_loc.google_account_id,
@@ -305,16 +322,22 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     is_verified=p_loc.is_verified,
                     is_suspended=p_loc.is_suspended,
                     is_duplicate=p_loc.is_duplicate,
+                    billing_status=billing_status,
                     sync_status="Synced",
                     last_synced_at=datetime.datetime.now(datetime.timezone.utc)
                 )
                 db.add(new_loc)
                 db.flush()
                 loc_id = new_loc.id
-                
-            sync_jobs.append(loc_id)
-            synced_count += 1
-            
+
+            # Only active locations receive paid downstream processing (review sync,
+            # attribute sync, insights). Locked locations are visible but inert.
+            if billing_status == "active":
+                sync_jobs.append(loc_id)
+                synced_count += 1
+            else:
+                locked_count += 1
+
         # Commit once after the loop
         db.commit()
         
@@ -332,6 +355,8 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             
         # Log successful sync operation
         log_message = f"Synchronized {synced_count} locations successfully."
+        if locked_count:
+            log_message += f" {locked_count} location(s) pending payment (over quota)."
         sync_log.status = "Success"
         sync_log.error_message = log_message
         
@@ -2053,7 +2078,8 @@ def sync_organization_insights_task(organization_id: int, start_date_str: str, e
             # Query all active locations
             locations = db.query(Location).filter(
                 Location.organization_id == organization_id,
-                Location.sync_status != "Failed"
+                Location.sync_status != "Failed",
+                Location.billing_status == "active"  # locked locations get no paid processing
             ).all()
 
             logger.info(f"Syncing insights for {len(locations)} locations in org={organization_id}")
