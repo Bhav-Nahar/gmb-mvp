@@ -17,6 +17,7 @@ export function DynamicFormEngine({ locationId }: DynamicFormEngineProps) {
   const [draftState, setDraftState] = useState<Record<string, any>>({})
   const [hasChanges, setHasChanges] = useState(false)
   const [isSeeded, setIsSeeded] = useState(false)
+  const [showNotApplicable, setShowNotApplicable] = useState(false)
   const [isPublishing, setIsPublishing] = useState(false)
   const [publishTimedOut, setPublishTimedOut] = useState(false)
   const publishStartTimeRef = useRef<number | null>(null)
@@ -57,16 +58,21 @@ export function DynamicFormEngine({ locationId }: DynamicFormEngineProps) {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['location-attributes', locationId],
     queryFn: async () => {
-      const res = await api.get<{ schema: any[] }>(`/locations/${locationId}/form-schema`)
-      return res.schema
-    }
+      return await api.get<{ schema: any[]; not_applicable?: any[]; is_seeding?: boolean }>(`/locations/${locationId}/form-schema`)
+    },
+    // While Google attribute metadata is being seeded for this category, poll until it lands.
+    refetchInterval: (query) => (query.state.data?.is_seeding ? 4000 : false)
   })
+
+  const fields = data?.schema ?? []
+  const notApplicable = data?.not_applicable ?? []
+  const isSeeding = data?.is_seeding === true
 
   // Seed draft state from existing drafts on first load
   useEffect(() => {
     if (!data || isSeeded) return
     const initialDrafts: Record<string, any> = {}
-    data.forEach(field => {
+    fields.forEach(field => {
       if (field.draft_value !== undefined && field.draft_value !== null) {
         initialDrafts[field.attribute_id] = field.draft_value
       } else if (field.is_rejected && field.rejected_value !== undefined && field.rejected_value !== null) {
@@ -96,6 +102,7 @@ export function DynamicFormEngine({ locationId }: DynamicFormEngineProps) {
     onSuccess: async () => {
       toast.success("Draft attributes saved")
       setIsSeeded(false)
+      setHasChanges(false)
       await queryClient.invalidateQueries({ queryKey: ['location-attributes', locationId] })
       queryClient.invalidateQueries({ queryKey: ['location', locationId] })
     },
@@ -138,7 +145,16 @@ export function DynamicFormEngine({ locationId }: DynamicFormEngineProps) {
       </Button>
     </div>
   )
-  if (!data || data.length === 0) return (
+  if (isSeeding) return (
+    <div className="p-6 border border-dashed border-border/50 rounded-lg text-center text-muted-foreground text-sm flex flex-col items-center gap-3">
+      <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+      <div>
+        <p className="font-medium text-foreground">Setting up attributes for this category…</p>
+        <p className="text-xs mt-1">Fetching the available fields from Google. This usually takes a few seconds.</p>
+      </div>
+    </div>
+  )
+  if (fields.length === 0 && notApplicable.length === 0) return (
     <div className="p-4 border border-dashed border-border/50 rounded-lg text-center text-muted-foreground text-sm">
       No dynamic attributes available for this location&apos;s category.
     </div>
@@ -360,7 +376,7 @@ export function DynamicFormEngine({ locationId }: DynamicFormEngineProps) {
 
   // Group fields by group_display_name
   const groups: Record<string, any[]> = {}
-  data.forEach(field => {
+  fields.forEach(field => {
     const group = field.group_display_name || "General"
     if (!groups[group]) groups[group] = []
     groups[group].push(field)
@@ -430,6 +446,42 @@ export function DynamicFormEngine({ locationId }: DynamicFormEngineProps) {
           </div>
         </div>
       ))}
+
+      {notApplicable.length > 0 && (
+        <div className="border-t pt-4">
+          <button
+            type="button"
+            onClick={() => setShowNotApplicable(v => !v)}
+            className="flex items-center gap-2 text-[11px] font-bold text-muted-foreground uppercase tracking-[0.1em] hover:text-foreground transition-colors"
+          >
+            <svg className={`w-3 h-3 transition-transform ${showNotApplicable ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+            Not supported for this location ({notApplicable.length})
+          </button>
+          {showNotApplicable && (
+            <div className="mt-3 space-y-2 animate-in fade-in duration-200">
+              <p className="text-xs text-muted-foreground">
+                Google rejected these attributes as not applicable to this location&apos;s category. Dismiss to make a field editable again and retry.
+              </p>
+              {notApplicable.map(field => (
+                <div key={field.attribute_id} className="flex items-center justify-between gap-4 text-sm py-1.5 px-3 rounded-md bg-muted/30 border border-border/40">
+                  <span className="text-muted-foreground">{field.display_name}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-[10px] h-5 px-1.5 text-muted-foreground hover:text-foreground shrink-0"
+                    onClick={() => suppressMutation.mutate(field.attribute_id)}
+                    disabled={suppressMutation.isPending}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

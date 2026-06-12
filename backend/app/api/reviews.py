@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.api.deps import get_current_user, staff_required, get_user_location_ids
+from app.core.authorization import assert_location_active
 from app.models.user import User
 from app.models.location import Location
 from app.models.review import Review
@@ -177,7 +178,9 @@ async def reply_to_review(
     allowed_location_ids = get_user_location_ids(current_user, db)
     if allowed_location_ids is not None and review.location_id not in allowed_location_ids:
         raise HTTPException(status_code=403, detail="You do not have access to this location")
-        
+
+    assert_location_active(db, review.location_id)
+
     provider = ProviderFactory.get_provider(review.provider, current_user.organization_id, db)
     
     try:
@@ -240,7 +243,9 @@ async def generate_review_reply(
     
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-        
+
+    assert_location_active(db, location.id)
+
     try:
         with CreditService.consume_ai_credit(db, current_user.organization_id, "generate_review_reply"):
             result = await generate_reply(review, location)

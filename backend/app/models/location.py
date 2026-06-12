@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, Float, Index, Boolean, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, Float, Index, Boolean, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -20,6 +20,14 @@ class Location(Base):
     average_rating = Column(Float, nullable=True) # Average rating out of 5 (e.g. 4.5)
     total_reviews = Column(Integer, nullable=True)
     
+    # Billing state for per-location quota enforcement.
+    #   'active'          -> counts against location_quota, fully processed
+    #   'pending_payment' -> locked: visible but excluded from all paid processing
+    #                        until a prorated mid-cycle charge unlocks it.
+    # Existing rows are backfilled to 'active' (grandfathered); only newly detected
+    # over-quota locations are ever inserted as 'pending_payment'.
+    billing_status = Column(String, default="active", server_default=text("'active'"), nullable=False)
+
     sync_status = Column(String, default="Pending", nullable=False)  # Pending, Synced, Failed
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     last_insights_sync_at = Column(DateTime(timezone=True), nullable=True)
@@ -49,6 +57,12 @@ class Location(Base):
     publish_jobs = relationship("PublishJob", back_populates="location", cascade="all, delete-orphan")
     edits = relationship("LocationEdit", back_populates="location", cascade="all, delete-orphan")
     daily_insights = relationship("LocationDailyInsight", back_populates="location", cascade="all, delete-orphan")
+    keyword_metrics = relationship("KeywordMonthlyMetric", back_populates="location", cascade="all, delete-orphan")
+    # Named *_record to avoid colliding with the LocationOut.health_score (int)
+    # schema field, which breaks LocationOut.model_validate(location).
+    health_score_record = relationship("LocationHealthScore", back_populates="location", uselist=False, cascade="all, delete-orphan")
+    
     __table_args__ = (
         Index("ix_locations_sla_tracking_started_at", "sla_tracking_started_at"),
+        Index("ix_locations_org_billing_status", "organization_id", "billing_status"),
     )

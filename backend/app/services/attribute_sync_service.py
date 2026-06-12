@@ -345,3 +345,11 @@ class AttributeSyncService:
         location.google_attributes_stale = False
         self.db.commit()
 
+        # Invalidate cached form schema: current_value is derived from google_attributes,
+        # so a stale cache would show outdated values for up to 24h after a sync.
+        try:
+            from app.core.redis_client import get_redis
+            get_redis().delete(f"location:attributes_schema:{location_id}")
+        except Exception as cache_err:
+            logger.warning(f"Failed to invalidate form schema cache for location {location_id}: {cache_err}")
+

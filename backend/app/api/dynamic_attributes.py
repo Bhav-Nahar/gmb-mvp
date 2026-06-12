@@ -112,11 +112,9 @@ async def get_form_schema(
             )
             return {"schema": [], "is_seeding": True}
         except Exception as celery_err:
-            logger.error(f"Failed to trigger attribute metadata sync: {str(celery_err)}")
+            logger.warning(f"Auto-seed attributes failed for {category_id}: {celery_err}")
             # Fallback: return empty schema instead of 500 error
             return {"schema": [], "is_seeding": False, "error": "Metadata sync temporarily unavailable"}
-        except Exception as e:
-            logger.warning(f"Auto-seed attributes failed for {category_id}: {e}")
     
     # Query rejections for capability memory (sliding 30-day window to allow for Google feature rollouts)
     expiry_limit = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
@@ -146,10 +144,18 @@ async def get_form_schema(
             return [u.get("uri") for u in val_obj["uriValues"] if u.get("uri")]
         return None
 
+    # Google reports per-location applicability only at write time. An attribute
+    # rejected with INVALID_ATTRIBUTE_NAME genuinely does not apply to THIS location,
+    # so it is hidden from the main form (surfaced separately as "not supported")
+    # rather than shown as an editable field with a warning. Value-level rejections
+    # (bad URL, bad social handle) stay in-form so the user can correct them.
+    NOT_APPLICABLE_REASONS = {"INVALID_ATTRIBUTE_NAME"}
+
     schema = []
+    not_applicable = []
     for df in definitions:
         attr_id = df.attribute_id
-        
+
         current_val_obj = google_attrs.get(attr_id, {})
         draft_val_obj = draft_attrs.get(attr_id, {})
         
@@ -177,7 +183,10 @@ async def get_form_schema(
             if draft_val and isinstance(draft_val, list):
                 draft_val = draft_val[0]
                 
-        schema.append({
+        is_rejected = attr_id in rejected_ids
+        reason = rejection_map.get(attr_id) if is_rejected else None
+
+        item = {
             "attribute_id": attr_id,
             "display_name": df.display_name,
             "group_display_name": df.group_display_name,
@@ -186,12 +195,17 @@ async def get_form_schema(
             "options": df.options_json,
             "current_value": current_val,
             "draft_value": draft_val,
-            "is_rejected": attr_id in rejected_ids,
-            "rejection_reason": rejection_map.get(attr_id) if attr_id in rejected_ids else None,
-            "rejected_value": extract_val(rejected_val_map.get(attr_id)) if attr_id in rejected_ids else None
-        })
-        
-    res = {"schema": schema}
+            "is_rejected": is_rejected,
+            "rejection_reason": reason,
+            "rejected_value": extract_val(rejected_val_map.get(attr_id)) if is_rejected else None
+        }
+
+        if is_rejected and reason in NOT_APPLICABLE_REASONS:
+            not_applicable.append(item)
+        else:
+            schema.append(item)
+
+    res = {"schema": schema, "not_applicable": not_applicable}
     if redis_client:
         try:
             redis_client.setex(
@@ -233,7 +247,8 @@ def save_draft_attributes(
     # Query definitions for validation
     definitions = {
         d.attribute_id: d for d in db.query(GbpAttributeDefinition).filter(
-            GbpAttributeDefinition.category_id == category_id
+            GbpAttributeDefinition.category_id == category_id,
+            GbpAttributeDefinition.is_active == True
         ).all()
     }
     
@@ -420,5 +435,11 @@ def suppress_rejection(
         db.rollback()
         logger.error("suppression_failed", extra={"location_id": location_id, "error": str(e)})
         raise HTTPException(status_code=500, detail="Failed to suppress warning")
-        
+
+    # Invalidate cached form schema so the dismissed attribute re-appears in the form
+    try:
+        get_redis().delete(f"location:attributes_schema:{location_id}")
+    except Exception as cache_err:
+        logger.error(f"Failed to invalidate cache on suppress for location {location_id}: {cache_err}")
+
     return {"status": "success"}

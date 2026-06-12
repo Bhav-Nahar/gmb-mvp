@@ -12,6 +12,7 @@ from app.core.security import decrypt_token, encrypt_token
 from app.providers.factory import ProviderFactory
 from app.providers.base.exceptions import ProviderAuthError
 from app.services.review_sync_service import ReviewSyncService
+from app.core import plan_config
 from app.core.redis_client import get_redis as _get_redis
 import asyncio
 
@@ -156,6 +157,12 @@ def sync_reviews_chunk_task(self, location_ids: list, organization_id: int, run_
                 })
 
                 result = run_async(ReviewSyncService.sync_location_reviews(db, loc_id, run_type, sync_log_id=sync_log.id))
+                
+                # Recalculate health score after review sync completes
+                from app.services.health_score_service import HealthScoreService
+                HealthScoreService.recalculate_health_score(db, loc_id, reason="review_sync")
+                db.commit()
+
                 results.append({"location_id": loc_id, "status": "success", "result": result})
 
             except Exception as e:
@@ -253,8 +260,17 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         # Pre-fetch all locations for this org to prevent N+1 query inside loop
         existing_locations = db.query(Location).filter(Location.organization_id == organization_id).all()
         existing_locs_map = {loc.google_location_id: loc for loc in existing_locations}
-        
+
+        # Per-location quota enforcement. Existing locations keep their billing_status
+        # (grandfathered — never flipped active->locked). A NEWLY detected location is
+        # admitted as 'active' only while we are under the paid quota; otherwise it is
+        # inserted 'pending_payment' (visible, but excluded from all paid processing
+        # until a prorated charge unlocks it).
+        quota = org.location_quota if (org and org.location_quota is not None) else plan_config.TRIAL_LOCATION_QUOTA
+        active_count = sum(1 for loc in existing_locations if loc.billing_status == "active")
+
         synced_count = 0
+        locked_count = 0
         sync_jobs = []
         for p_loc in provider_locations:
             # Removed debug print
@@ -287,8 +303,15 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 existing_loc.last_synced_at = datetime.datetime.now(datetime.timezone.utc)
                 db.flush()
                 loc_id = existing_loc.id
+                billing_status = existing_loc.billing_status
             else:
-                # Insert new
+                # Insert new — admit as 'active' only while under quota.
+                if active_count < quota:
+                    billing_status = "active"
+                    active_count += 1
+                else:
+                    billing_status = "pending_payment"
+
                 new_loc = Location(
                     organization_id=organization_id,
                     google_account_id=p_loc.google_account_id,
@@ -305,19 +328,33 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     is_verified=p_loc.is_verified,
                     is_suspended=p_loc.is_suspended,
                     is_duplicate=p_loc.is_duplicate,
+                    billing_status=billing_status,
                     sync_status="Synced",
                     last_synced_at=datetime.datetime.now(datetime.timezone.utc)
                 )
                 db.add(new_loc)
                 db.flush()
                 loc_id = new_loc.id
-                
-            sync_jobs.append(loc_id)
-            synced_count += 1
-            
+
+            # Only active locations receive paid downstream processing (review sync,
+            # attribute sync, insights). Locked locations are visible but inert.
+            if billing_status == "active":
+                sync_jobs.append(loc_id)
+                synced_count += 1
+            else:
+                locked_count += 1
+
         # Commit once after the loop
         db.commit()
-        
+
+        # Recalculate health scores for all synced (active) locations now that
+        # their profile details have been updated (location_sync trigger).
+        from app.services.health_score_service import HealthScoreService
+        for loc_id in sync_jobs:
+            HealthScoreService.recalculate_health_score(db, loc_id, reason="location_sync")
+        if sync_jobs:
+            db.commit()
+
         # Trigger review sync in chunks
         import time
         chunk_size = getattr(settings, "REVIEW_SYNC_CHUNK_SIZE", 20)
@@ -332,6 +369,8 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             
         # Log successful sync operation
         log_message = f"Synchronized {synced_count} locations successfully."
+        if locked_count:
+            log_message += f" {locked_count} location(s) pending payment (over quota)."
         sync_log.status = "Success"
         sync_log.error_message = log_message
         
@@ -456,7 +495,9 @@ def reconcile_pending_subscriptions_task() -> str:
 
     logger = logging.getLogger(__name__)
     r = _get_redis()
-    lock = r.lock("lock:reconcile_pending_subscriptions", timeout=300)
+    # 30-min lease: this loops over all pending orgs making a synchronous Razorpay call
+    # each, which can exceed a 5-min TTL and let the lock expire mid-run → concurrent runs.
+    lock = r.lock("lock:reconcile_pending_subscriptions", timeout=1800)
     if not lock.acquire(blocking=False):
         return "skipped: another reconcile in progress"
 
@@ -477,6 +518,85 @@ def reconcile_pending_subscriptions_task() -> str:
                 logger.error(f"Reconcile failed for org {org.id}: {str(e)}")
 
         return f"Reconciled {reconciled} subscription(s) of {len(pending)} pending."
+    finally:
+        db.close()
+        try:
+            lock.release()
+        except Exception:
+            pass
+
+
+@shared_task(name="app.tasks.enforce_upi_remandate_grace_task")
+def enforce_upi_remandate_grace_task() -> str:
+    """Enforce the UPI re-mandate grace deadline.
+
+    When a location add-on raises a UPI org's quota, Razorpay won't raise the mandate
+    amount, so the org is flagged `subscription_needs_remandate` with a deadline of the
+    renewal date + 3 days. If the user never approves the new (higher) mandate by then,
+    claw the entitled quota back down to what the current mandate actually pays for
+    (`paid_location_quota`) and re-lock the surplus locations to 'pending_payment'.
+
+    Idempotent: clears the flag once enforced, and a successful re-mandate (handled at
+    cutover) clears the flag first, so re-authorized orgs are never swept.
+    """
+    import logging
+    from datetime import datetime, timezone
+    from app.services.billing.pricing_service import PricingService
+
+    logger = logging.getLogger(__name__)
+    r = _get_redis()
+    lock = r.lock("lock:enforce_upi_remandate_grace", timeout=1800)
+    if not lock.acquire(blocking=False):
+        return "skipped: another sweep in progress"
+
+    db: Session = SessionLocal()
+    locked_orgs = 0
+    locked_locs = 0
+    try:
+        now = datetime.now(timezone.utc)
+        candidate_ids = [row[0] for row in db.query(Organization.id).filter(
+            Organization.subscription_needs_remandate.is_(True),
+            Organization.remandate_due_at.isnot(None),
+            Organization.remandate_due_at < now,
+        ).all()]
+
+        for org_id in candidate_ids:
+            try:
+                # Lock the org row and RE-CHECK under the lock: a concurrent re-mandate
+                # cutover or renewal webhook (which takes the same row lock) may have
+                # cleared the flag or moved the deadline since we listed candidates.
+                org = db.query(Organization).filter(
+                    Organization.id == org_id
+                ).with_for_update().first()
+                if not org or not org.subscription_needs_remandate:
+                    db.rollback()
+                    continue
+                if not org.remandate_due_at or org.remandate_due_at >= datetime.now(timezone.utc):
+                    db.rollback()
+                    continue
+                paid = org.paid_location_quota
+                if paid is None:
+                    paid = org.location_quota or 0
+                active_locs = db.query(Location).filter(
+                    Location.organization_id == org.id,
+                    Location.billing_status == "active",
+                ).order_by(Location.id.asc()).all()
+                # Keep the oldest `paid` active locations; re-lock the surplus.
+                for loc in active_locs[paid:]:
+                    loc.billing_status = "pending_payment"
+                    locked_locs += 1
+                org.location_quota = paid
+                org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(paid)
+                # Resolved either way: entitled quota now matches the mandate.
+                org.subscription_needs_remandate = False
+                org.remandate_due_at = None
+                db.commit()
+                locked_orgs += 1
+            except Exception as e:
+                db.rollback()
+                logger.error(f"UPI grace enforcement failed for org {org.id}: {e}")
+
+        return f"Re-locked {locked_locs} location(s) across {locked_orgs} org(s) past grace."
     finally:
         db.close()
         try:
@@ -696,6 +816,11 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
         
         db.commit()
         
+        # Recalculate health score
+        from app.services.health_score_service import HealthScoreService
+        HealthScoreService.recalculate_health_score(db, location.id, reason="post_publish")
+        db.commit()
+
         return {"status": "completed", "google_post_id": job.google_post_id}
     except Exception as e:
         logger.error(f"PublishJob {job_id} failed: {str(e)}")
@@ -1909,11 +2034,18 @@ def archive_old_activity_logs_task() -> dict:
         db.close()
 
 @shared_task(name="app.tasks.sync_insights_task")
-def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str, run_type: str = "Scheduled") -> dict:
+def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str, run_type: str = "Scheduled", scope: str = "all") -> dict:
     """
     Celery task to synchronize daily performance insights for a location.
     Enforces Redis locking to prevent concurrent synchronizations.
+
+    `scope` controls which data is synced:
+      - "daily":    only daily performance metrics (Performance Insights page)
+      - "keywords": only monthly search keywords (Search Intelligence page)
+      - "all":      both (nightly beat / full refresh)
     """
+    if scope not in ("daily", "keywords", "all"):
+        scope = "all"
     import redis
     import datetime
     import logging
@@ -1938,6 +2070,17 @@ def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str,
             logger.error(f"Invalid date format for insights sync: {date_err}")
             return {"status": "error", "reason": f"Invalid date format: {date_err}"}
 
+        # Sync Window Protection
+        if run_type != "Manual":
+            today = datetime.date.today()
+            first_day_this_month = today.replace(day=1)
+            last_day_prev_month = first_day_this_month - datetime.timedelta(days=1)
+            first_day_prev_month = last_day_prev_month.replace(day=1)
+            
+            if start_date < first_day_prev_month:
+                start_date = first_day_prev_month
+                logger.info(f"Background sync window restricted. Adjusted start_date to {start_date}")
+
         r = _get_redis()
         lock_key = f"lock:sync_insights:{organization_id}:{location_id}"
         lock = r.lock(lock_key, timeout=300)
@@ -1947,17 +2090,43 @@ def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str,
             return {"status": "skipped", "reason": "insights sync already in progress"}
 
         try:
-            logger.info(f"Executing InsightSyncService for location {location_id}...")
-            # Import and run async function inside Celery worker thread
-            res_msg = run_async(InsightSyncService.sync_location_insights(
-                db=db,
-                location_id=location_id,
-                start_date=start_date,
-                end_date=end_date,
-                run_type=run_type
-            ))
-            logger.info(f"Insights sync completed for location {location_id}: {res_msg}")
-            return {"status": "success", "message": res_msg}
+            res_msg = None
+            res_kw_msg = None
+
+            # Daily performance metrics.
+            if scope in ("daily", "all"):
+                logger.info(f"Executing InsightSyncService for location {location_id}...")
+                # Import and run async function inside Celery worker thread
+                res_msg = run_async(InsightSyncService.sync_location_insights(
+                    db=db,
+                    location_id=location_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    run_type=run_type
+                ))
+                logger.info(f"Insights sync completed for location {location_id}: {res_msg}")
+
+            # Search keywords. Keyword insights are monthly, so we use a dedicated
+            # (wider) window than the daily-insights sync: a manual/force refresh
+            # backfills a full year so the 6/12-month range selector has data;
+            # scheduled runs stay light (current + previous month).
+            if scope in ("keywords", "all"):
+                from app.services.keyword_sync_service import KeywordSyncService
+                kw_end = datetime.date.today()
+                kw_months_back = 12 if run_type == "Manual" else 1
+                _m = kw_end.month - 1 - kw_months_back
+                kw_start = datetime.date(kw_end.year + _m // 12, _m % 12 + 1, 1)
+                logger.info(f"Executing KeywordSyncService for location {location_id} ({kw_start}..{kw_end})...")
+                res_kw_msg = run_async(KeywordSyncService.sync_location_keywords(
+                    db=db,
+                    location_id=location_id,
+                    start_date=kw_start,
+                    end_date=kw_end,
+                    run_type=run_type
+                ))
+                logger.info(f"Keyword sync completed for location {location_id}: {res_kw_msg}")
+
+            return {"status": "success", "scope": scope, "message": res_msg, "keyword_message": res_kw_msg}
         finally:
             try:
                 lock.release()
@@ -2004,11 +2173,17 @@ def evaluate_attention_flags_task(organization_id: int) -> dict:
         db.close()
 
 @shared_task(name="app.tasks.sync_organization_insights_task")
-def sync_organization_insights_task(organization_id: int, start_date_str: str, end_date_str: str, run_type: str = "Scheduled", force: bool = False) -> dict:
+def sync_organization_insights_task(organization_id: int, start_date_str: str, end_date_str: str, run_type: str = "Scheduled", force: bool = False, scope: str = "all") -> dict:
     """
     Celery task to orchestrate insights synchronization for an entire organization.
     Uses organization-level Redis lock and OrganizationSyncState.
+
+    `scope` ("daily" | "keywords" | "all") is forwarded to each per-location
+    sync so the Performance Insights and Search Intelligence pages can refresh
+    independently.
     """
+    if scope not in ("daily", "keywords", "all"):
+        scope = "all"
     import redis
     import datetime
     import logging
@@ -2053,7 +2228,8 @@ def sync_organization_insights_task(organization_id: int, start_date_str: str, e
             # Query all active locations
             locations = db.query(Location).filter(
                 Location.organization_id == organization_id,
-                Location.sync_status != "Failed"
+                Location.sync_status != "Failed",
+                Location.billing_status == "active"  # locked locations get no paid processing
             ).all()
 
             logger.info(f"Syncing insights for {len(locations)} locations in org={organization_id}")
@@ -2065,7 +2241,8 @@ def sync_organization_insights_task(organization_id: int, start_date_str: str, e
                         location_id=loc.id,
                         start_date_str=start_date_str,
                         end_date_str=end_date_str,
-                        run_type=run_type
+                        run_type=run_type,
+                        scope=scope
                     )
                 except Exception as ex:
                     errors.append(f"Location {loc.id}: {str(ex)}")

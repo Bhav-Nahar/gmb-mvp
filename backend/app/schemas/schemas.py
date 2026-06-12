@@ -73,6 +73,7 @@ class LocationOut(BaseModel):
     average_rating: Optional[float] = None
     total_reviews: Optional[int] = None
     sync_status: str
+    billing_status: str = "active"  # 'active' | 'pending_payment' (locked over-quota)
     last_synced_at: Optional[datetime] = None
     sla_tracking_started_at: Optional[datetime] = None
     created_at: datetime
@@ -84,6 +85,10 @@ class LocationOut(BaseModel):
     is_verified: Optional[bool] = None
     is_suspended: Optional[bool] = None
     is_duplicate: Optional[bool] = None
+
+    # Embedded Health Score
+    health_score: Optional[int] = None
+    health_score_label: Optional[str] = None
 
     class Config:
         from_attributes = True

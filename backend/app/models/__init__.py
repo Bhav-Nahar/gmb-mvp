@@ -25,6 +25,10 @@ from app.models.gbp_attribute_definition import GbpAttributeDefinition
 from app.models.gbp_location_attribute_rejection import GbpLocationAttributeRejection
 from app.models.billing_webhook_event import BillingWebhookEvent
 from app.models.billing_transaction import BillingTransaction
+from app.models.razorpay_plan import RazorpayPlan
+from app.models.location_health_score import LocationHealthScore
+from app.models.keyword_monthly_metrics import KeywordMonthlyMetric
+from app.models.organization_brand_terms import OrganizationBrandTerm
 
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location", 
@@ -32,6 +36,7 @@ __all__ = [
     "Campaign", "Post", "PostVariant", "PostMedia", "PublishJob", "PostAuditLog",
     "CampaignAuditLog", "LocationEdit", "ActivityLog", "ActivityLogArchive",
     "LocationDailyInsight", "OrganizationSyncState", "GbpAttributeMetadata", "GbpAttributeDefinition",
-    "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction"
+    "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction",
+    "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm"
 ]
 

@@ -29,6 +29,35 @@ export interface ActivityLog {
   created_at: string;
 }
 
+export interface HealthScoreBreakdown {
+  score: number;
+  max_score: number;
+}
+
+export interface HealthScoreRecommendation {
+  title: string;
+  description: string;
+  potential_gain: number;
+  target_tab: string;
+}
+
+export interface LocationHealthScoreOut {
+  location_id: number;
+  score: number;
+  potential_score: number;
+  label: string;
+  breakdown: {
+    profile_completeness: HealthScoreBreakdown;
+    reviews_rating: HealthScoreBreakdown;
+    response_rate: HealthScoreBreakdown;
+    post_activity: HealthScoreBreakdown;
+    photos_media: HealthScoreBreakdown;
+  };
+  recommendations: HealthScoreRecommendation[];
+  last_recalculated_reason: string;
+  calculated_at: string;
+}
+
 export function useLocationWorkspace(locationId: string | number) {
   const queryClient = useQueryClient();
   const id = Number(locationId);
@@ -56,6 +85,13 @@ export function useLocationWorkspace(locationId: string | number) {
   const { data: activityLog, isLoading: isActivityLoading } = useQuery<ActivityLog[]>({
     queryKey: ['activity-log', id],
     queryFn: () => api.get(`/locations/${id}/activity`),
+    enabled: !!id,
+  });
+
+  // 4. Fetch Health Score
+  const { data: healthScore, isLoading: isHealthScoreLoading, isError: isHealthScoreError, refetch: refetchHealthScore } = useQuery<LocationHealthScoreOut>({
+    queryKey: ['health-score', id],
+    queryFn: () => api.get(`/locations/${id}/health-score`),
     enabled: !!id,
   });
 
@@ -174,6 +210,10 @@ export function useLocationWorkspace(locationId: string | number) {
     refetchEdits,
     activityLog,
     isActivityLoading,
+    healthScore,
+    isHealthScoreLoading,
+    isHealthScoreError,
+    refetchHealthScore,
     approveMutation,
     rejectMutation,
     publishMutation,

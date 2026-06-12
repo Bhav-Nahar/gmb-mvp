@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter, usePathname } from 'next/navigation'
-import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard } from 'lucide-react'
+import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -22,6 +22,7 @@ export default function Sidebar() {
   const menuItems = [
     { label: 'Dashboard', href: '/dashboard', icon: MapPin },
     { label: 'Insights', href: '/dashboard/insights', icon: TrendingUp },
+    { label: 'Search Intelligence', href: '/dashboard/insights/search-intelligence', icon: Search },
     { label: 'Reviews', href: '/dashboard/reviews', icon: MessageSquare },
     { label: 'Posts & Media', href: '/dashboard/posts', icon: Calendar },
     ...(userRole && ['Owner', 'Admin', 'Regional Manager'].includes(userRole) 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, func, Index, text
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, func, Index, text
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 
@@ -17,13 +17,28 @@ class Organization(Base):
     subscription_status = Column(String, nullable=True, default="trial", server_default=text("'trial'"))
     trial_ends_at = Column(DateTime(timezone=True), nullable=True)
     grace_period_ends_at = Column(DateTime(timezone=True), nullable=True)
-    location_quota = Column(Integer, nullable=True, default=5, server_default=text("5"))
-    monthly_ai_credits_balance = Column(Integer, nullable=True, default=200, server_default=text("200"))
+    location_quota = Column(Integer, nullable=True, default=3, server_default=text("3"))
+    monthly_ai_credits_balance = Column(Integer, nullable=True, default=10, server_default=text("10"))
     topup_ai_credits_balance = Column(Integer, nullable=True, default=0, server_default=text("0"))
     ai_credits_reset_date = Column(DateTime(timezone=True), nullable=True)
     razorpay_customer_id = Column(String, index=True, nullable=True)
     razorpay_subscription_id = Column(String, nullable=True)
     subscription_ends_at = Column(DateTime(timezone=True), nullable=True)
+
+    # UPI re-mandate flow: Razorpay forbids changing the amount of a UPI Autopay
+    # subscription, so raising the recurring charge (after a location add-on) needs a
+    # brand-new mandate the user must approve. While that is pending:
+    #   - subscription_payment_mode: 'upi' | 'card' | None (how the active mandate pays)
+    #   - subscription_needs_remandate: True when location_quota outgrew what the
+    #     current mandate pays for and a new mandate is required (UPI only)
+    #   - paid_location_quota: how many locations the CURRENT mandate actually bills
+    #     (the surplus above this is locked if the user never re-authorizes)
+    #   - remandate_due_at: deadline (renewal date + 3 days) after which the surplus
+    #     locations are re-locked to 'pending_payment'
+    subscription_payment_mode = Column(String, nullable=True)
+    subscription_needs_remandate = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    paid_location_quota = Column(Integer, nullable=True)
+    remandate_due_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("idx_org_subscription_status_ends_at", "subscription_status", "subscription_ends_at"),
@@ -37,3 +52,4 @@ class Organization(Base):
     campaigns = relationship("Campaign", back_populates="organization", cascade="all, delete-orphan")
     posts = relationship("Post", back_populates="organization", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="organization", cascade="all, delete-orphan")
+    brand_terms = relationship("OrganizationBrandTerm", back_populates="organization", cascade="all, delete-orphan")

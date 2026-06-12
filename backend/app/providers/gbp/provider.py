@@ -4,7 +4,7 @@ import logging
 import asyncio
 from sqlalchemy.orm import Session
 from app.providers.base.provider import BaseProvider
-from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric
+from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric, KeywordInsightMetric
 from app.providers.base.exceptions import ProviderAPIError, ProviderError
 from app.providers.base.auth import AuthContext
 from app.core.config import settings
@@ -613,6 +613,132 @@ class GBPProvider(BaseProvider):
                         continue
                         
         return sorted(day_data.values(), key=lambda x: x.date)
+
+    async def get_search_keyword_insights(self, location_id: str, start_date: datetime.date, end_date: datetime.date, account_id: Optional[str] = None) -> List[KeywordInsightMetric]:
+        """
+        Fetch monthly search keyword impressions from GBP Performance API.
+        Uses GET locations.searchkeywords.impressions.monthly.list
+        """
+        access_token = await self._auth.get_valid_token()
+        
+        if "mock_access_token" in access_token:
+            import random
+            insights = []
+            
+            curr_date = start_date.replace(day=1)
+            while curr_date <= end_date.replace(day=1):
+                mock_keywords = [
+                    ("coffee near me", random.randint(100, 500)),
+                    ("best espresso", random.randint(50, 200)),
+                    ("cafe with wifi", random.randint(20, 100)),
+                    ("latte art", random.randint(10, 50))
+                ]
+                for kw, imp in mock_keywords:
+                    insights.append(KeywordInsightMetric(
+                        keyword=kw, impressions=imp, period_start=curr_date
+                    ))
+                
+                # Move to next month
+                next_month = curr_date.month % 12 + 1
+                next_year = curr_date.year + (1 if curr_date.month == 12 else 0)
+                curr_date = curr_date.replace(year=next_year, month=next_month, day=1)
+                
+            return insights
+
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+
+        loc_path = location_id.strip("/")
+        if not loc_path.startswith("locations/"):
+            loc_path = f"locations/{loc_path}"
+
+        full_path = loc_path
+        if account_id:
+            acc_clean = account_id.strip("/")
+            if not acc_clean.startswith("accounts/"):
+                acc_clean = f"accounts/{acc_clean}"
+            full_path = f"{acc_clean}/{loc_path}"
+
+        # The GBP monthly search-keywords endpoint aggregates impressions over the
+        # *entire* requested monthlyRange and does NOT break results down by month.
+        # To get a true per-month series we request one month at a time and stamp
+        # each keyword with that month's period_start. (Requesting a multi-month
+        # range in one call and labelling everything start_date's month silently
+        # collapses/overwrites months under the UPSERT key.)
+        def _month_starts(s, e):
+            cur = s.replace(day=1)
+            last = e.replace(day=1)
+            months = []
+            while cur <= last:
+                months.append(cur)
+                if cur.month == 12:
+                    cur = cur.replace(year=cur.year + 1, month=1)
+                else:
+                    cur = cur.replace(month=cur.month + 1)
+            return months
+
+        async def _fetch_month(target_path, month_start):
+            results = []
+            page_token = None
+            url = f"https://businessprofileperformance.googleapis.com/v1/{target_path}/searchkeywords/impressions/monthly"
+            while True:
+                params = {
+                    "monthlyRange.startMonth.year": month_start.year,
+                    "monthlyRange.startMonth.month": month_start.month,
+                    "monthlyRange.endMonth.year": month_start.year,
+                    "monthlyRange.endMonth.month": month_start.month,
+                    "pageSize": 100,
+                }
+                if page_token:
+                    params["pageToken"] = page_token
+                async with GBPAsyncClient(self.auth_context.organization_id) as client:
+                    resp = await client.request("GET", url, headers=headers, params=params)
+                if resp.status_code != 200:
+                    logger.error(f"GBP Keyword Performance API call failed: {resp.status_code} - {resp.text}")
+                    raise ProviderAPIError(self.provider_name, resp.status_code, resp.text)
+                data = resp.json()
+                for item in data.get("searchKeywordsCounts", []):
+                    kw = item.get("searchKeyword")
+                    val_obj = item.get("insightsValue", {}) or {}
+                    # Google returns a `threshold` instead of an exact `value` for
+                    # very low-volume keywords; fall back to it as a lower bound.
+                    val = val_obj.get("value")
+                    if val is None:
+                        val = val_obj.get("threshold")
+                    if kw and val is not None:
+                        results.append(KeywordInsightMetric(
+                            keyword=kw,
+                            impressions=int(val),
+                            period_start=month_start,
+                        ))
+                page_token = data.get("nextPageToken")
+                if not page_token:
+                    break
+            return results
+
+        insights = []
+        for month_start in _month_starts(start_date, end_date):
+            try:
+                insights.extend(await _fetch_month(full_path, month_start))
+            except ProviderError as e:
+                if getattr(e, "status_code", None) == 404 and account_id and full_path != loc_path:
+                    logger.warning(f"Keyword Performance API full path failed (404). Retrying with short path: {loc_path}")
+                    insights.extend(await _fetch_month(loc_path, month_start))
+                elif getattr(e, "status_code", None) == 404:
+                    raise ProviderAPIError(
+                        self.provider_name, 404,
+                        f"Performance API returned 404. Ensure 'Business Profile Performance API' is enabled and location {loc_path} is verified."
+                    )
+                else:
+                    raise
+            except ProviderAPIError:
+                raise
+            except Exception as e:
+                logger.error(f"Network error during keyword insights fetch: {str(e)}")
+                raise ProviderAPIError(self.provider_name, 500, f"Network error during keyword insights fetch: {str(e)}")
+
+        return insights
 
     async def get_location(self, google_location_id: str) -> Dict[str, Any]:
         access_token = await self._auth.get_valid_token()

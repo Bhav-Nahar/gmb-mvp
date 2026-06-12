@@ -19,9 +19,13 @@ import {
   Sparkles,
   LogOut,
   ChevronRight,
-  PlusCircle
+  PlusCircle,
+  MoreHorizontal,
+  Lock
 } from 'lucide-react'
 import Link from 'next/link'
+import { UpgradeModal } from '@/components/modals/UpgradeModal'
+import { RemandateBanner } from '@/components/billing/RemandateBanner'
 
 interface Location {
   id: number
@@ -34,6 +38,7 @@ interface Location {
   total_reviews?: number
   average_rating?: number
   sync_status: string
+  billing_status?: string  // 'active' | 'pending_payment' (locked, needs upgrade)
   last_synced_at?: string
   created_at: string
   is_verified?: boolean | null
@@ -42,6 +47,9 @@ interface Location {
   // Embedded from latest SyncLog by the backend — no extra fetch needed
   latest_sync_status?: string | null
   latest_sync_error?: string | null
+  // Embedded Health Score
+  health_score?: number | null
+  health_score_label?: string | null
 }
 
 interface SyncLog {
@@ -72,6 +80,16 @@ interface LocationSLASummary {
   pending_count: number
 }
 
+interface OrganizationHealthSummaryOut {
+  average_score: number
+  total_locations: number
+  excellent_count: number
+  good_count: number
+  average_count: number
+  poor_count: number
+  critical_count: number
+}
+
 function DashboardContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -83,6 +101,7 @@ function DashboardContent() {
   const [syncStatuses, setSyncStatuses] = useState<Record<number, { status: string, error_message: string | null, last_synced_at: string | null }>>({})
   const [pollingLocationIds, setPollingLocationIds] = useState<number[]>([])
   const [slaSummaries, setSlaSummaries] = useState<Record<number, LocationSLASummary>>({})
+  const [healthSummary, setHealthSummary] = useState<OrganizationHealthSummaryOut | null>(null)
   
   // Loaders
   const [loadingLocations, setLoadingLocations] = useState(true)
@@ -109,6 +128,8 @@ function DashboardContent() {
 
   // Filters
   const [activeFilter, setActiveFilter] = useState<'all' | 'unverified' | 'suspended'>('all');
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [connMenuOpen, setConnMenuOpen] = useState(false);
 
   // Refs for interval tracking to prevent memory leaks
   const onboardingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -215,6 +236,14 @@ function DashboardContent() {
     }
   }, [pollingLocationIds.length]);
 
+  // Refresh the (imperatively-loaded) locations grid after a billing change — payment
+  // flows dispatch 'billing:refresh' since locations aren't in the react-query cache.
+  useEffect(() => {
+    const onBillingRefresh = () => loadLocations(false);
+    window.addEventListener('billing:refresh', onBillingRefresh);
+    return () => window.removeEventListener('billing:refresh', onBillingRefresh);
+  }, []);
+
   const handleLocationSync = async (locationId: number) => {
     try {
       await api.post(`/reviews/sync?location_id=${locationId}`);
@@ -319,7 +348,17 @@ function DashboardContent() {
       loadLocations(),
       loadSyncLogs(),
       loadSlaSummary(),
+      loadHealthSummary(),
     ])
+  }
+
+  const loadHealthSummary = async () => {
+    try {
+      const data = await api.get<OrganizationHealthSummaryOut>('/locations/health-score-summary')
+      setHealthSummary(data)
+    } catch (e: any) {
+      console.error('Failed to load health summary:', e)
+    }
   }
 
   const loadSlaSummary = async () => {
@@ -458,6 +497,26 @@ function DashboardContent() {
     return 'Pending Sync'
   }, [syncLogs, locations])
 
+  const storefrontsRef = useRef<HTMLElement>(null)
+
+  // Compact "4m ago" / "2h ago" / "3d ago" relative time for sync timestamps.
+  const relativeTime = (dateStr?: string | null) => {
+    if (!dateStr) return null
+    const diffMs = Date.now() - new Date(dateStr).getTime()
+    const mins = Math.floor(diffMs / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    return `${Math.floor(hrs / 24)}d ago`
+  }
+
+  // KPI cards click to filter + scroll to the storefront grid.
+  const focusStorefronts = (filter: 'all' | 'unverified' | 'suspended') => {
+    setActiveFilter(filter)
+    storefrontsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   const sortedLocations = useMemo(() => {
     let filtered = locations;
     if (activeFilter === 'unverified') {
@@ -523,112 +582,149 @@ function DashboardContent() {
             </div>
           )}
 
-          {/* Connection Status widget & Alert Lifecycles */}
-          {userRole !== 'Viewer' && (
-          <section className="bg-card text-card-foreground border border-border rounded-xl p-6 shadow-sm relative overflow-hidden">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-ping"></span>
-                  <h3 className="text-xl font-bold tracking-tight flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-primary" />
-                    Google Connection Status
-                  </h3>
-                </div>
-                <p className="text-sm text-muted-foreground max-w-2xl">
-                  Configure real-time storefront synchronization. We check and fetch data hourly from your Google Business Profile endpoints.
-                </p>
-              </div>
+          {/* UPI AutoPay needs re-approval after a location add-on raised the plan */}
+          {userRole !== 'Viewer' && <RemandateBanner />}
 
-              <div className="flex flex-wrap items-center gap-3 shrink-0">
-                {tokenStatus?.status === 'active' || tokenStatus?.status === 'requires_refresh' ? (
-                  <>
-                    <button
-                      onClick={handleTriggerSync}
-                      disabled={syncing}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors cursor-pointer"
-                    >
-                      <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-                      <span>{syncing ? 'Syncing...' : 'Sync Locations'}</span>
-                    </button>
-                    
-                    <button
-                      onClick={handleDisconnectGoogle}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-muted-foreground bg-muted/20 border border-border hover:bg-red-500/10 hover:text-red-400 transition-colors cursor-pointer"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      <span>Disconnect</span>
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    onClick={handleConnectGoogle}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white gradient-border-btn shadow-lg cursor-pointer"
-                  >
-                    <PlusCircle className="h-4 w-4" />
-                    <span>Connect Google Account</span>
-                  </button>
-                )}
+          {/* Billing / quota bar — only when something needs attention (locked locations) */}
+          {userRole !== 'Viewer' && billing && (billing.pending_location_count ?? 0) > 0 && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-amber-500/5 border border-amber-500/20 px-4 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-amber-500">
+                <Lock className="h-4 w-4 shrink-0" />
+                <span>
+                  {billing.pending_location_count} location{billing.pending_location_count === 1 ? '' : 's'} locked &middot;{' '}
+                  {billing.active_location_count ?? 0} of {(billing.active_location_count ?? 0) + (billing.pending_location_count ?? 0)} active on your plan
+                </span>
               </div>
+              <button
+                onClick={() => setShowUpgrade(true)}
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm cursor-pointer transition-colors shrink-0"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Upgrade to unlock
+              </button>
             </div>
-
-            {/* Token expiry / re-auth warnings */}
-            {tokenStatus && (
-              <div className="mt-6 border-t border-border/60 pt-6">
-                {tokenStatus.status === 'active' ? (
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-semibold">
-                    <span className="flex items-center gap-2 text-emerald-600">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                      Account: <strong className="text-foreground">{tokenStatus.google_email}</strong>
-                    </span>
-                    <span className="text-muted-foreground flex items-center gap-1.5">
-                      <Calendar className="h-4 w-4 text-primary" />
-                      Last Sync: <strong className="text-foreground">{getLastSyncedTime}</strong>
-                    </span>
-                  </div>
-                ) : tokenStatus.status === 'requires_refresh' ? (
-                  <div className="flex items-center gap-3 rounded-lg bg-indigo-500/5 border border-indigo-500/10 p-3 text-xs font-semibold text-indigo-400">
-                    <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
-                    <span>Google tokens expired. A silent refresh will occur automatically during the next synchronization run.</span>
-                  </div>
-                ) : tokenStatus.status === 'expired' ? (
-                  <div className="flex items-center gap-3 rounded-lg bg-amber-500/5 border border-amber-500/10 p-3 text-xs font-semibold text-amber-400">
-                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                    <span>Google account expired or revoked! Re-authentication required to resume background sync loops. Please reconnect your account.</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3 text-xs font-semibold text-muted-foreground">
-                    <HelpCircle className="h-4 w-4" />
-                    <span>Operating in Sandbox Mock mode. Link your real Google account to fetch production storefront data.</span>
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
           )}
 
-          {/* Summary KPI Cards */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+          {/* Compact Google connection strip — whispers when healthy, shouts on error */}
+          {userRole !== 'Viewer' && (
+            (tokenStatus?.status === 'active' || tokenStatus?.status === 'requires_refresh') ? (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
+                <div className="flex items-center gap-2 min-w-0 text-xs font-semibold">
+                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 shrink-0"></span>
+                  <span className="truncate text-foreground">{tokenStatus.google_email || 'Google connected'}</span>
+                  <span className="text-muted-foreground/40 hidden sm:inline">&middot;</span>
+                  <span className="text-muted-foreground hidden sm:inline">
+                    Synced {relativeTime(locations[0]?.last_synced_at) || getLastSyncedTime}
+                  </span>
+                  {tokenStatus.status === 'requires_refresh' && (
+                    <span className="ml-1 text-indigo-400 hidden md:inline">&middot; token refresh pending</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 relative">
+                  <button
+                    onClick={handleTriggerSync}
+                    disabled={syncing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
+                    <span>{syncing ? 'Syncing...' : 'Sync'}</span>
+                  </button>
+                  <button
+                    onClick={() => setConnMenuOpen(o => !o)}
+                    className="flex items-center justify-center p-1.5 rounded-lg text-muted-foreground hover:bg-muted/40 transition-colors cursor-pointer"
+                    aria-label="Connection options"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                  {connMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setConnMenuOpen(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-20 w-40 rounded-lg border border-border bg-card shadow-lg py-1">
+                        <button
+                          onClick={() => { setConnMenuOpen(false); handleDisconnectGoogle(); }}
+                          className="flex items-center gap-2 w-full px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-colors cursor-pointer"
+                        >
+                          <LogOut className="h-3.5 w-3.5" />
+                          Disconnect Google
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : tokenStatus?.status === 'expired' ? (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-amber-500/5 border border-amber-500/20 px-4 py-3 text-xs font-semibold text-amber-400">
+                <span className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  Google account expired or revoked — reconnect to resume background sync.
+                </span>
+                <button
+                  onClick={handleConnectGoogle}
+                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white gradient-border-btn shadow cursor-pointer shrink-0"
+                >
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  Reconnect
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-xs font-semibold text-muted-foreground shadow-sm">
+                <span className="flex items-center gap-2">
+                  <HelpCircle className="h-4 w-4 shrink-0" />
+                  {tokenStatus ? 'Sandbox mode — connect Google for live storefront data.' : 'Connect your Google Business Profile to get started.'}
+                </span>
+                <button
+                  onClick={handleConnectGoogle}
+                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white gradient-border-btn shadow cursor-pointer shrink-0"
+                >
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  Connect Google Account
+                </button>
+              </div>
+            )
+          )}
+
+          {/* Summary KPI Cards — clickable to filter the storefront grid below */}
+          <section className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            <div className="text-left bg-card border border-border rounded-xl p-5 shadow-sm">
+              <div className="text-sm font-medium text-muted-foreground mb-1">Avg Health Score</div>
+              <div className={`text-2xl font-bold ${healthSummary?.average_score ? (healthSummary.average_score >= 75 ? 'text-emerald-600' : healthSummary.average_score >= 60 ? 'text-amber-600' : 'text-red-600') : 'text-muted-foreground'}`}>
+                {healthSummary ? healthSummary.average_score : '--'}
+              </div>
+            </div>
+            <button
+              onClick={() => focusStorefronts('all')}
+              className="text-left bg-card border border-border rounded-xl p-5 shadow-sm hover:border-primary/50 transition-colors cursor-pointer"
+            >
               <div className="text-sm font-medium text-muted-foreground mb-1">Total Locations</div>
               <div className="text-2xl font-bold text-foreground">{totalLocations}</div>
-            </div>
-            <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+            </button>
+            <button
+              onClick={() => focusStorefronts('unverified')}
+              disabled={unverifiedCount === 0}
+              className={`text-left bg-card border border-border rounded-xl p-5 shadow-sm transition-colors ${unverifiedCount === 0 ? 'opacity-50 cursor-default' : 'hover:border-amber-500/50 cursor-pointer'}`}
+            >
               <div className="text-sm font-medium text-muted-foreground mb-1">Unverified</div>
-              <div className="text-2xl font-bold text-amber-600">{unverifiedCount}</div>
-            </div>
-            <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+              <div className={`text-2xl font-bold ${unverifiedCount === 0 ? 'text-muted-foreground' : 'text-amber-600'}`}>{unverifiedCount}</div>
+            </button>
+            <button
+              onClick={() => focusStorefronts('suspended')}
+              disabled={suspendedCount === 0}
+              className={`text-left bg-card border border-border rounded-xl p-5 shadow-sm transition-colors ${suspendedCount === 0 ? 'opacity-50 cursor-default' : 'hover:border-destructive/50 cursor-pointer'}`}
+            >
               <div className="text-sm font-medium text-muted-foreground mb-1">Suspended</div>
-              <div className="text-2xl font-bold text-destructive">{suspendedCount}</div>
-            </div>
-            <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+              <div className={`text-2xl font-bold ${suspendedCount === 0 ? 'text-muted-foreground' : 'text-destructive'}`}>{suspendedCount}</div>
+            </button>
+            <button
+              onClick={() => focusStorefronts('all')}
+              className="text-left bg-card border border-border rounded-xl p-5 shadow-sm hover:border-indigo-500/50 transition-colors cursor-pointer"
+            >
               <div className="text-sm font-medium text-muted-foreground mb-1">SLA Needs Response</div>
-              <div className="text-2xl font-bold text-indigo-600">{slaNeedsResponseCount}</div>
-            </div>
+              <div className={`text-2xl font-bold ${slaNeedsResponseCount === 0 ? 'text-muted-foreground' : 'text-indigo-600'}`}>{slaNeedsResponseCount}</div>
+            </button>
           </section>
 
           {/* Synced Locations */}
-          <section className="space-y-4">
+          <section ref={storefrontsRef} className="space-y-4 scroll-mt-20">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-2">
                 <MapPin className="h-5 w-5 text-primary" />
@@ -676,8 +772,13 @@ function DashboardContent() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {sortedLocations.map((loc, index) => {
-                  const isBlocked = billing?.location_quota !== undefined && index >= billing.location_quota;
-                  
+                  // Source of truth is the backend's per-location billing_status.
+                  // Fall back to the quota heuristic only for older payloads that
+                  // don't carry it yet.
+                  const isBlocked = loc.billing_status
+                    ? loc.billing_status === 'pending_payment'
+                    : (billing?.location_quota !== undefined && index >= billing.location_quota);
+
                   return (
                   <Link 
                     href={isBlocked ? '#' : `/dashboard/locations/${loc.id}`} 
@@ -699,29 +800,42 @@ function DashboardContent() {
                             
                             {/* State Badges */}
                             {isBlocked && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  // The card is a disabled Link; intercept so the
+                                  // click opens the upgrade flow instead of navigating.
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setShowUpgrade(true);
+                                }}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 cursor-pointer transition-colors"
+                              >
+                                <Sparkles className="h-3 w-3" />
                                 Upgrade to Reactivate
-                              </span>
+                              </button>
                             )}
-                            {loc.is_suspended && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
-                                Suspended
-                              </span>
-                            )}
-                            {loc.is_duplicate && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                Duplicate
-                              </span>
-                            )}
-                            {loc.is_verified === false && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
-                                Unverified
-                              </span>
-                            )}
-                            {loc.is_verified === true && !loc.is_suspended && !loc.is_duplicate && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                Verified
-                              </span>
+                            {/* Single primary status badge (priority: suspended > duplicate
+                                > unverified > verified). Suppressed when locked — the
+                                upgrade button above is the primary status. */}
+                            {!isBlocked && (
+                              loc.is_suspended ? (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
+                                  Suspended
+                                </span>
+                              ) : loc.is_duplicate ? (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                  Duplicate
+                                </span>
+                              ) : loc.is_verified === false ? (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
+                                  Unverified
+                                </span>
+                              ) : loc.is_verified === true ? (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                  Verified
+                                </span>
+                              ) : null
                             )}
                             
                             {/* SLA Badge */}
@@ -744,6 +858,16 @@ function DashboardContent() {
                                 {loc.total_reviews !== undefined && loc.total_reviews !== null && (
                                   <span className="text-muted-foreground/70 ml-0.5">({loc.total_reviews})</span>
                                 )}
+                              </div>
+                            )}
+
+                            {loc.health_score !== undefined && loc.health_score !== null && (
+                              <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                loc.health_score >= 75 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                loc.health_score >= 60 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                                'bg-red-500/10 text-red-400 border-red-500/20'
+                              }`}>
+                                Health: {loc.health_score} ({loc.health_score_label})
                               </div>
                             )}
                           </div>
@@ -780,9 +904,12 @@ function DashboardContent() {
                         </span>
                       )}
                       {loc.last_synced_at && (
-                        <span className="ml-auto text-[10px] text-muted-foreground/60 flex items-center gap-1">
+                        <span
+                          className="ml-auto text-[10px] text-muted-foreground/60 flex items-center gap-1"
+                          title={new Date(loc.last_synced_at).toLocaleString()}
+                        >
                           <Calendar className="h-3.5 w-3.5" />
-                          {new Date(loc.last_synced_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          Synced {relativeTime(loc.last_synced_at)}
                         </span>
                       )}
                     </div>
@@ -793,6 +920,8 @@ function DashboardContent() {
           </section>
         </main>
       </div>
+
+      <UpgradeModal open={showUpgrade} onOpenChange={setShowUpgrade} />
     </>
   )
 }

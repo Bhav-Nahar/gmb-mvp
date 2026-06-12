@@ -4,7 +4,8 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
+from sqlalchemy import func, text, or_, case
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
@@ -26,8 +27,21 @@ from app.schemas.insights import (
     LeaderboardLocation,
     SentimentBreakdown,
     SLAMetricsSummary,
-    IssueCategorySummary
+    IssueCategorySummary,
+    KeywordMetricsResponse,
+    BrandTermResponse,
+    BrandTermCreate,
+    SearchKeywordMetric,
+    KeywordKpis,
+    KeywordTrendPoint,
+    KeywordLocationComparison,
+    KeywordSummaryResponse,
 )
+from app.models.keyword_monthly_metrics import KeywordMonthlyMetric
+from app.models.organization_brand_terms import OrganizationBrandTerm
+import io
+import csv
+from fastapi.responses import StreamingResponse
 from app.worker import celery
 
 router = APIRouter()
@@ -36,6 +50,70 @@ def calculate_delta(curr: float, prior: float) -> Optional[float]:
     if prior == 0:
         return None
     return ((curr - prior) / prior) * 100.0
+
+
+# Whitelist of sortable columns for keyword endpoints — never pass raw user
+# input to getattr()/order_by() (could resolve a relationship/method -> 500).
+KEYWORD_SORT_COLUMNS = {"impressions", "keyword", "period_start"}
+
+
+def _brand_terms_lower(db: Session, organization_id: int) -> list:
+    """Lowercased brand terms for case-insensitive substring matching."""
+    rows = db.query(OrganizationBrandTerm.term).filter(
+        OrganizationBrandTerm.organization_id == organization_id
+    ).all()
+    return [r.term.lower() for r in rows if r.term]
+
+
+def _is_branded(keyword: str, brand_terms_lower: list) -> bool:
+    """A keyword is branded if it contains any brand term (case-insensitive)."""
+    kw = (keyword or "").lower()
+    return any(term in kw for term in brand_terms_lower)
+
+
+def _branded_condition(brand_terms_lower: list):
+    """SQL boolean expression that is true when a keyword contains a brand term."""
+    if not brand_terms_lower:
+        return text("1=0")
+    return or_(*[KeywordMonthlyMetric.keyword.ilike(f"%{t}%") for t in brand_terms_lower])
+
+
+def _month_floor(d: datetime.date) -> datetime.date:
+    return d.replace(day=1)
+
+
+def _add_months(d: datetime.date, n: int) -> datetime.date:
+    """Add n (can be negative) months to a month-start date."""
+    m = d.month - 1 + n
+    year = d.year + m // 12
+    month = m % 12 + 1
+    return datetime.date(year, month, 1)
+
+
+def _branded_filter(brand_terms_lower: list, is_brand: bool):
+    """SQLAlchemy condition: keyword contains (or not) any brand term.
+
+    Brand classification is substring + case-insensitive (e.g. brand term
+    "lucira" tags "lucira jewellery"). Exact-equality IN(...) would miss those
+    and is case-sensitive against how terms are stored.
+    """
+    if not brand_terms_lower:
+        # No brand terms => nothing is branded.
+        return text("1=0") if is_brand else text("1=1")
+    contains = or_(*[KeywordMonthlyMetric.keyword.ilike(f"%{t}%") for t in brand_terms_lower])
+    return contains if is_brand else ~contains
+
+
+def _csv_safe(value):
+    """Neutralise CSV/spreadsheet formula injection.
+
+    Keyword data originates from Google search terms (externally influenced); a
+    cell beginning with = + - @ (or tab/CR) can execute as a formula in Excel/
+    Sheets. Prefix such values with a single quote.
+    """
+    if isinstance(value, str) and value and value[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
 
 @router.get("/overview", response_model=InsightsOverviewResponse)
 def get_insights_overview(
@@ -91,7 +169,9 @@ def get_insights_overview(
 
     # 2.5 Cache Check
     allowed_ids_key = ",".join(map(str, sorted(allowed_ids))) if allowed_ids is not None else "all"
-    cache_key = f"insights:overview:{current_user.organization_id}:{start_date.isoformat()}:{end_date.isoformat()}:{allowed_ids_key}"
+    # v2: response shape gained reputation aggregates + conversion-rate trend
+    # fields; bump the namespace so pre-deploy cached payloads are bypassed.
+    cache_key = f"insights:overview:v2:{current_user.organization_id}:{start_date.isoformat()}:{end_date.isoformat()}:{allowed_ids_key}"
     
     redis_client = None
     try:
@@ -171,6 +251,7 @@ def get_insights_overview(
         func.sum(LocationDailyInsight.searches_chain).label("searches_chain"),
         func.sum(LocationDailyInsight.reviews_received).label("reviews_received"),
         func.avg(LocationDailyInsight.avg_rating).label("avg_rating"),
+        func.avg(LocationDailyInsight.avg_sentiment_score).label("avg_sentiment_score"),
     ).filter(
         LocationDailyInsight.organization_id == current_user.organization_id,
         LocationDailyInsight.date >= start_date,
@@ -179,7 +260,12 @@ def get_insights_overview(
     if allowed_ids is not None:
         trend_q = trend_q.filter(LocationDailyInsight.location_id.in_(allowed_ids))
     trend_res = trend_q.group_by(LocationDailyInsight.date).order_by(LocationDailyInsight.date.asc()).all()
-    
+
+    def _rate(numer, denom):
+        # Conversion rates are recomputed from the day's summed totals (a ratio
+        # of sums), never an average of per-location ratios.
+        return round(numer / denom * 100.0, 2) if denom else None
+
     trends = [
         DailyMetricPoint(
             date=row.date,
@@ -193,7 +279,11 @@ def get_insights_overview(
             searches_indirect=row.searches_indirect,
             searches_chain=row.searches_chain,
             reviews_received=row.reviews_received,
-            avg_rating=float(row.avg_rating) if row.avg_rating is not None else None
+            avg_rating=float(row.avg_rating) if row.avg_rating is not None else None,
+            click_through_rate=_rate(row.website_clicks, row.profile_views),
+            call_conversion_rate=_rate(row.phone_calls, row.profile_views),
+            direction_conversion_rate=_rate(row.direction_requests, row.profile_views),
+            avg_sentiment_score=float(row.avg_sentiment_score) if row.avg_sentiment_score is not None else None,
         )
         for row in trend_res
     ]
@@ -206,7 +296,6 @@ def get_insights_overview(
         profile_views_sum,
         func.coalesce(func.sum(LocationDailyInsight.search_impressions), 0).label("search_impressions"),
         func.coalesce(func.sum(LocationDailyInsight.reviews_received), 0).label("reviews_count"),
-        func.coalesce(func.avg(LocationDailyInsight.avg_rating), 0.0).label("avg_rating"),
     ).outerjoin(
         LocationDailyInsight,
         (Location.id == LocationDailyInsight.location_id) &
@@ -224,7 +313,33 @@ def get_insights_overview(
         .limit(10)
         .all()
     )
-    
+
+    # avg_rating is a cumulative standing rating reported each day, so the
+    # representative value for a range is the latest day's rating per location —
+    # NOT AVG() across days (which double-counts unchanged ratings and is
+    # weighted by how many days were synced).
+    rating_rn = func.row_number().over(
+        partition_by=LocationDailyInsight.location_id,
+        order_by=LocationDailyInsight.date.desc(),
+    ).label("rn")
+    rating_sq = db.query(
+        LocationDailyInsight.location_id.label("lid"),
+        LocationDailyInsight.avg_rating.label("avg_rating"),
+        rating_rn,
+    ).filter(
+        LocationDailyInsight.organization_id == current_user.organization_id,
+        LocationDailyInsight.date >= start_date,
+        LocationDailyInsight.date <= end_date,
+        LocationDailyInsight.avg_rating.isnot(None),
+    )
+    if allowed_ids is not None:
+        rating_sq = rating_sq.filter(LocationDailyInsight.location_id.in_(allowed_ids))
+    rating_sq = rating_sq.subquery()
+    latest_rating = {
+        r.lid: float(r.avg_rating)
+        for r in db.query(rating_sq.c.lid, rating_sq.c.avg_rating).filter(rating_sq.c.rn == 1).all()
+    }
+
     leaderboard = [
         LeaderboardLocation(
             location_id=row.location_id,
@@ -232,7 +347,7 @@ def get_insights_overview(
             profile_views=row.profile_views,
             search_impressions=row.search_impressions,
             reviews_count=row.reviews_count,
-            avg_rating=float(row.avg_rating)
+            avg_rating=latest_rating.get(row.location_id)
         )
         for row in leaderboard_res
     ]
@@ -246,9 +361,99 @@ def get_insights_overview(
         attention_query = attention_query.filter(Location.id.in_(allowed_ids))
     attention_count = attention_query.scalar() or 0
 
-    # Auto-trigger synchronization if stale (cached-first logic)
+    # 7. Organization-wide reputation aggregates (sentiment / SLA / themes),
+    #    so the "All Locations" view has the same reputation snapshot the
+    #    single-location view already shows.
+    rep_base = db.query(LocationDailyInsight).filter(
+        LocationDailyInsight.organization_id == current_user.organization_id,
+        LocationDailyInsight.date >= start_date,
+        LocationDailyInsight.date <= end_date,
+    )
+    if allowed_ids is not None:
+        rep_base = rep_base.filter(LocationDailyInsight.location_id.in_(allowed_ids))
+
+    # Weight each day's avg_sentiment_score by that day's review volume so the
+    # org-wide score is the true mean over reviews, not a mean of daily means.
+    sentiment_score_weighted = func.sum(
+        LocationDailyInsight.avg_sentiment_score * LocationDailyInsight.reviews_received
+    )
+    sentiment_score_weight = func.sum(
+        case((LocationDailyInsight.avg_sentiment_score.isnot(None), LocationDailyInsight.reviews_received), else_=0)
+    )
+    sentiment_agg = rep_base.with_entities(
+        func.coalesce(func.sum(LocationDailyInsight.positive_review_count), 0).label("pos"),
+        func.coalesce(func.sum(LocationDailyInsight.neutral_review_count), 0).label("neu"),
+        func.coalesce(func.sum(LocationDailyInsight.negative_review_count), 0).label("neg"),
+        sentiment_score_weighted.label("score_sum"),
+        sentiment_score_weight.label("score_wt"),
+    ).one()
+    pos_c, neu_c, neg_c = sentiment_agg.pos, sentiment_agg.neu, sentiment_agg.neg
+    total_rev = pos_c + neu_c + neg_c
+    avg_sent_score = (
+        float(sentiment_agg.score_sum) / float(sentiment_agg.score_wt)
+        if sentiment_agg.score_wt else None
+    )
+    if total_rev > 0:
+        sentiment = SentimentBreakdown(
+            positive=pos_c, neutral=neu_c, negative=neg_c,
+            positive_percentage=pos_c / total_rev * 100.0,
+            neutral_percentage=neu_c / total_rev * 100.0,
+            negative_percentage=neg_c / total_rev * 100.0,
+            avg_sentiment_score=avg_sent_score,
+        )
+    else:
+        sentiment = SentimentBreakdown(
+            positive=0, neutral=0, negative=0,
+            positive_percentage=0.0, neutral_percentage=0.0, negative_percentage=0.0,
+            avg_sentiment_score=avg_sent_score,
+        )
+
+    # SLA: response rate and reply time weighted by replies (not a flat mean of
+    # per-day rates), aggregated across every accessible location.
+    sla_rows = rep_base.with_entities(
+        LocationDailyInsight.reviews_received,
+        LocationDailyInsight.response_rate,
+        LocationDailyInsight.avg_response_time_hours,
+    ).all()
+    total_reviews = sum(int(r.reviews_received or 0) for r in sla_rows)
+    total_replied = sum(int((r.reviews_received or 0) * ((r.response_rate or 0) / 100.0)) for r in sla_rows)
+    sla_resp_rate = (total_replied / total_reviews * 100.0) if total_reviews > 0 else 0.0
+    total_time_hours = 0.0
+    replies_with_time = 0
+    for r in sla_rows:
+        if r.avg_response_time_hours is not None and (r.reviews_received or 0) > 0:
+            replies = int((r.reviews_received or 0) * ((r.response_rate or 0) / 100.0))
+            if replies > 0:
+                total_time_hours += r.avg_response_time_hours * replies
+                replies_with_time += replies
+    sla = SLAMetricsSummary(
+        total_reviews=total_reviews,
+        replied_reviews=total_replied,
+        response_rate=sla_resp_rate,
+        avg_response_time_hours=(total_time_hours / replies_with_time) if replies_with_time > 0 else None,
+    )
+
+    # Top recurring issue categories across all accessible locations.
+    issues_q = db.query(
+        Review.issue_category.label("category"),
+        func.count().label("count"),
+    ).join(Location, Location.id == Review.location_id).filter(
+        Location.organization_id == current_user.organization_id,
+        Review.issue_category.isnot(None),
+        Review.is_deleted == False,  # noqa: E712
+        func.date(Review.review_created_at) >= start_date,
+        func.date(Review.review_created_at) <= end_date,
+    )
+    if allowed_ids is not None:
+        issues_q = issues_q.filter(Review.location_id.in_(allowed_ids))
+    issues_res = issues_q.group_by(Review.issue_category).order_by(func.count().desc()).limit(10).all()
+    top_issues = [IssueCategorySummary(category=row.category, count=row.count) for row in issues_res]
+
+    # Auto-trigger synchronization if stale (cached-first logic). These are the
+    # daily-metrics surfaces, so only refresh daily insights here; keyword data
+    # is refreshed from the Search Intelligence page or the nightly beat.
     try:
-        check_and_trigger_stale_insights_sync(current_user.organization_id, db)
+        check_and_trigger_stale_insights_sync(current_user.organization_id, db, scope="daily")
     except Exception as e:
         # Prevent sync errors from blocking data display
         logger.error(f"Failed to check/trigger insights sync on overview load: {str(e)}")
@@ -257,10 +462,18 @@ def get_insights_overview(
         kpis=kpis,
         trends=trends,
         leaderboard=leaderboard,
-        attention_locations_count=attention_count
+        attention_locations_count=attention_count,
+        sentiment=sentiment,
+        sla=sla,
+        top_issue_categories=top_issues
     )
 
-    if redis_client:
+    # Only cache when we actually have synced data for this range. The insights
+    # sync is triggered asynchronously above, so the first request for a range
+    # can legitimately return empty; caching that empty result for 6h would pin
+    # the range to "no data" even after the sync populates it (this is why a
+    # freshly-loaded default range could stay empty while other ranges worked).
+    if redis_client and trends:
         try:
             redis_client.setex(
                 cache_key,
@@ -327,7 +540,7 @@ def get_location_insights(
     prior_start_date = prior_end_date - datetime.timedelta(days=duration - 1)
 
     # Cache Check
-    cache_key = f"insights:location:{current_user.organization_id}:{id}:{start_date.isoformat()}:{end_date.isoformat()}"
+    cache_key = f"insights:location:v2:{current_user.organization_id}:{id}:{start_date.isoformat()}:{end_date.isoformat()}"
     
     redis_client = None
     try:
@@ -409,16 +622,23 @@ def get_location_insights(
             searches_indirect=item.searches_indirect,
             searches_chain=item.searches_chain,
             reviews_received=item.reviews_received,
-            avg_rating=item.avg_rating
+            avg_rating=item.avg_rating,
+            click_through_rate=item.click_through_rate,
+            call_conversion_rate=item.call_conversion_rate,
+            direction_conversion_rate=item.direction_conversion_rate,
+            avg_sentiment_score=item.avg_sentiment_score,
         )
         for item in insights
     ]
 
-    # 3. Sentiment breakdown (aggregate counts via SQL)
+    # 3. Sentiment breakdown (aggregate counts via SQL). The sentiment score is
+    #    weighted by each day's review volume (true mean over reviews).
     sentiment_agg = db.query(
         func.coalesce(func.sum(LocationDailyInsight.positive_review_count), 0).label("pos_count"),
         func.coalesce(func.sum(LocationDailyInsight.neutral_review_count), 0).label("neu_count"),
         func.coalesce(func.sum(LocationDailyInsight.negative_review_count), 0).label("neg_count"),
+        func.sum(LocationDailyInsight.avg_sentiment_score * LocationDailyInsight.reviews_received).label("score_sum"),
+        func.sum(case((LocationDailyInsight.avg_sentiment_score.isnot(None), LocationDailyInsight.reviews_received), else_=0)).label("score_wt"),
     ).filter(
         LocationDailyInsight.location_id == id,
         LocationDailyInsight.date >= start_date,
@@ -428,6 +648,10 @@ def get_location_insights(
     neu_count = sentiment_agg.neu_count
     neg_count = sentiment_agg.neg_count
     total_rev = pos_count + neu_count + neg_count
+    avg_sent_score = (
+        float(sentiment_agg.score_sum) / float(sentiment_agg.score_wt)
+        if sentiment_agg.score_wt else None
+    )
 
     if total_rev > 0:
         pos_pct = (pos_count / total_rev) * 100.0
@@ -442,7 +666,8 @@ def get_location_insights(
         negative=neg_count,
         positive_percentage=pos_pct,
         neutral_percentage=neu_pct,
-        negative_percentage=neg_pct
+        negative_percentage=neg_pct,
+        avg_sentiment_score=avg_sent_score
     )
 
     # 4. SLA Summary details (aggregate counts via SQL)
@@ -496,9 +721,11 @@ def get_location_insights(
         for row in issues_res
     ]
 
-    # Auto-trigger synchronization if stale (cached-first logic)
+    # Auto-trigger synchronization if stale (cached-first logic). These are the
+    # daily-metrics surfaces, so only refresh daily insights here; keyword data
+    # is refreshed from the Search Intelligence page or the nightly beat.
     try:
-        check_and_trigger_stale_insights_sync(current_user.organization_id, db)
+        check_and_trigger_stale_insights_sync(current_user.organization_id, db, scope="daily")
     except Exception as e:
         # Prevent sync errors from blocking data display
         logger.error(f"Failed to check/trigger insights sync on location load: {str(e)}")
@@ -516,7 +743,8 @@ def get_location_insights(
         top_issue_categories=top_issues
     )
 
-    if redis_client:
+    # Don't cache an empty (not-yet-synced) range for 6h — see overview endpoint.
+    if redis_client and trends:
         try:
             redis_client.setex(
                 cache_key,
@@ -562,11 +790,16 @@ def get_insights_sync_status(
     }
 
 
-def check_and_trigger_stale_insights_sync(organization_id: int, db: Session, force: bool = False) -> dict:
+def check_and_trigger_stale_insights_sync(organization_id: int, db: Session, force: bool = False, scope: str = "all") -> dict:
     """
     Evaluate organization-level insights freshness and trigger background sync if stale or forced.
     Returns a dict with 'triggered' bool and 'reason' string.
+
+    `scope` ("daily" | "keywords" | "all") limits which data is synced so the
+    Performance Insights and Search Intelligence pages refresh independently.
     """
+    if scope not in ("daily", "keywords", "all"):
+        scope = "all"
     import datetime
     from app.models.organization_sync_state import OrganizationSyncState
 
@@ -610,7 +843,7 @@ def check_and_trigger_stale_insights_sync(organization_id: int, db: Session, for
 
         celery.send_task(
             "app.tasks.sync_organization_insights_task",
-            args=[organization_id, start_date.isoformat(), yesterday.isoformat(), run_type, force]
+            args=[organization_id, start_date.isoformat(), yesterday.isoformat(), run_type, force, scope]
         )
         return {"triggered": True, "reason": run_type}
 
@@ -622,13 +855,14 @@ def trigger_insights_sync(
     id: int,
     start_date: Optional[datetime.date] = Query(None),
     end_date: Optional[datetime.date] = Query(None),
+    scope: str = Query("all", regex="^(daily|keywords|all)$"),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
     """
     Manually trigger performance and reputation insights synchronization for a location (now invokes organization-wide sync).
     """
-    result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=True)
+    result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=True, scope=scope)
     return InsightsSyncPostResponse(
         task_id="org-orchestrated",
         status="Queued" if result["triggered"] else "AlreadyRunning"
@@ -638,14 +872,431 @@ def trigger_insights_sync(
 @router.post("/sync-all", response_model=InsightsSyncPostResponse)
 def trigger_global_insights_sync(
     force: bool = Query(True),
+    scope: str = Query("all", regex="^(daily|keywords|all)$"),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
     """
     Manually trigger performance and reputation insights synchronization for ALL locations of the organization.
     """
-    result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=force)
+    result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=force, scope=scope)
     return InsightsSyncPostResponse(
         task_id="org-orchestrated",
         status="Queued" if result["triggered"] else "AlreadyRunning"
     )
+
+@router.get("/keywords/summary", response_model=KeywordSummaryResponse)
+def get_search_keywords_summary(
+    location_id: Optional[int] = Query(None),
+    start_period: Optional[datetime.date] = Query(None),
+    end_period: Optional[datetime.date] = Query(None),
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    """KPIs, monthly branded/non-branded trend, and per-location comparison.
+
+    `start_period`/`end_period` are month dates; the prior window of equal month
+    length immediately before `start_period` is used for MoM growth.
+    """
+    allowed_ids = deps.get_user_location_ids(current_user, db)
+    empty = KeywordSummaryResponse(
+        kpis=KeywordKpis(
+            total_impressions=0, total_impressions_prior=0, impressions_mom=None,
+            keywords_tracked=0, branded_impressions=0, branded_pct=0.0,
+            non_branded_impressions=0, non_branded_pct=0.0,
+        ),
+        trends=[], location_comparison=[],
+    )
+    if allowed_ids is not None and not allowed_ids:
+        return empty
+
+    # Default to the last 3 complete months ending last month.
+    if not end_period:
+        end_period = _add_months(_month_floor(datetime.date.today()), -1)
+    else:
+        end_period = _month_floor(end_period)
+    if not start_period:
+        start_period = _add_months(end_period, -2)
+    else:
+        start_period = _month_floor(start_period)
+    if start_period > end_period:
+        raise HTTPException(status_code=422, detail="start_period must be <= end_period")
+
+    n_months = (end_period.year - start_period.year) * 12 + (end_period.month - start_period.month) + 1
+    prior_end = _add_months(start_period, -1)
+    prior_start = _add_months(start_period, -n_months)
+
+    brand_terms_lower = _brand_terms_lower(db, current_user.organization_id)
+    branded_case = func.sum(
+        case((_branded_condition(brand_terms_lower), KeywordMonthlyMetric.impressions), else_=0)
+    )
+
+    def _scoped(q):
+        q = q.join(Location, Location.id == KeywordMonthlyMetric.location_id).filter(
+            Location.organization_id == current_user.organization_id
+        )
+        if allowed_ids is not None:
+            q = q.filter(KeywordMonthlyMetric.location_id.in_(allowed_ids))
+        if location_id is not None:
+            if allowed_ids is not None and location_id not in allowed_ids:
+                raise HTTPException(status_code=403, detail="Access denied to location.")
+            q = q.filter(KeywordMonthlyMetric.location_id == location_id)
+        return q
+
+    def _window(q, start, end):
+        return q.filter(
+            KeywordMonthlyMetric.period_start >= start,
+            KeywordMonthlyMetric.period_start <= end,
+        )
+
+    # KPI aggregates for current window
+    cur = _window(_scoped(db.query(
+        func.coalesce(func.sum(KeywordMonthlyMetric.impressions), 0),
+        branded_case,
+        func.count(func.distinct(KeywordMonthlyMetric.keyword)),
+    )), start_period, end_period).one()
+    total_impressions = int(cur[0] or 0)
+    branded_impressions = int(cur[1] or 0)
+    keywords_tracked = int(cur[2] or 0)
+    non_branded_impressions = max(total_impressions - branded_impressions, 0)
+
+    prior_total = int(_window(_scoped(db.query(
+        func.coalesce(func.sum(KeywordMonthlyMetric.impressions), 0)
+    )), prior_start, prior_end).scalar() or 0)
+
+    kpis = KeywordKpis(
+        total_impressions=total_impressions,
+        total_impressions_prior=prior_total,
+        impressions_mom=calculate_delta(total_impressions, prior_total),
+        keywords_tracked=keywords_tracked,
+        branded_impressions=branded_impressions,
+        branded_pct=round(branded_impressions / total_impressions * 100, 1) if total_impressions else 0.0,
+        non_branded_impressions=non_branded_impressions,
+        non_branded_pct=round(non_branded_impressions / total_impressions * 100, 1) if total_impressions else 0.0,
+    )
+
+    # Monthly trend (branded vs non-branded)
+    trend_rows = _window(_scoped(db.query(
+        KeywordMonthlyMetric.period_start.label("month"),
+        func.coalesce(func.sum(KeywordMonthlyMetric.impressions), 0).label("total"),
+        branded_case.label("branded"),
+    )), start_period, end_period).group_by(KeywordMonthlyMetric.period_start).all()
+    by_month = {r.month: (int(r.total or 0), int(r.branded or 0)) for r in trend_rows}
+
+    # Gap-fill: emit every month in the selected window, zero where no data, so
+    # the chart axis matches the chosen range instead of collapsing to months
+    # that happen to have data.
+    trends = []
+    m = start_period
+    while m <= end_period:
+        total, branded = by_month.get(m, (0, 0))
+        trends.append(KeywordTrendPoint(month=m, branded=branded, non_branded=max(total - branded, 0), total=total))
+        m = _add_months(m, 1)
+
+    # Per-location comparison (only meaningful when not filtered to one location)
+    location_comparison = []
+    if location_id is None:
+        cur_by_loc = dict(_window(_scoped(db.query(
+            KeywordMonthlyMetric.location_id,
+            func.coalesce(func.sum(KeywordMonthlyMetric.impressions), 0),
+        )), start_period, end_period).group_by(KeywordMonthlyMetric.location_id).all())
+        prior_by_loc = dict(_window(_scoped(db.query(
+            KeywordMonthlyMetric.location_id,
+            func.coalesce(func.sum(KeywordMonthlyMetric.impressions), 0),
+        )), prior_start, prior_end).group_by(KeywordMonthlyMetric.location_id).all())
+        names = dict(db.query(Location.id, Location.location_name).filter(Location.id.in_(list(cur_by_loc.keys()) or [-1])).all())
+        for loc_id, impr in sorted(cur_by_loc.items(), key=lambda kv: kv[1], reverse=True):
+            location_comparison.append(KeywordLocationComparison(
+                location_id=loc_id,
+                location_name=names.get(loc_id, f"Location {loc_id}"),
+                impressions=int(impr or 0),
+                mom_growth=calculate_delta(int(impr or 0), int(prior_by_loc.get(loc_id, 0) or 0)),
+            ))
+
+    return KeywordSummaryResponse(kpis=kpis, trends=trends, location_comparison=location_comparison)
+
+
+@router.get("/keywords", response_model=KeywordMetricsResponse)
+def get_search_keywords(
+    location_id: Optional[int] = Query(None),
+    start_period: Optional[datetime.date] = Query(None),
+    end_period: Optional[datetime.date] = Query(None),
+    period_start: Optional[datetime.date] = Query(None),  # legacy single-month alias
+    search: Optional[str] = Query(None),
+    is_brand: Optional[bool] = Query(None),
+    sort_by: str = Query("impressions", regex="^(impressions|keyword)$"),
+    sort_desc: bool = Query(True),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    """Top keywords aggregated across a month window (impressions summed per
+    keyword). `start_period`/`end_period` are month dates; `period_start` is a
+    legacy single-month alias."""
+    allowed_ids = deps.get_user_location_ids(current_user, db)
+    if allowed_ids is not None and not allowed_ids:
+        return KeywordMetricsResponse(items=[], total=0, page=page, page_size=page_size)
+
+    # Resolve the month window.
+    if period_start and not start_period and not end_period:
+        start_period = end_period = period_start
+    if not end_period:
+        end_period = _add_months(_month_floor(datetime.date.today()), -1)
+    else:
+        end_period = _month_floor(end_period)
+    if not start_period:
+        start_period = end_period
+    else:
+        start_period = _month_floor(start_period)
+    if start_period > end_period:
+        start_period, end_period = end_period, start_period
+
+    impr_sum = func.coalesce(func.sum(KeywordMonthlyMetric.impressions), 0).label("impressions")
+    query = db.query(
+        KeywordMonthlyMetric.keyword.label("keyword"),
+        impr_sum,
+    ).join(
+        Location, Location.id == KeywordMonthlyMetric.location_id
+    ).filter(
+        Location.organization_id == current_user.organization_id,
+        KeywordMonthlyMetric.period_start >= start_period,
+        KeywordMonthlyMetric.period_start <= end_period,
+    )
+
+    if allowed_ids is not None:
+        query = query.filter(KeywordMonthlyMetric.location_id.in_(allowed_ids))
+
+    if location_id is not None:
+        if allowed_ids is not None and location_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="Access denied to location.")
+        query = query.filter(KeywordMonthlyMetric.location_id == location_id)
+
+    if search:
+        query = query.filter(KeywordMonthlyMetric.keyword.ilike(f"%{search}%"))
+
+    brand_terms_lower = _brand_terms_lower(db, current_user.organization_id)
+    if is_brand is not None:
+        query = query.filter(_branded_filter(brand_terms_lower, is_brand))
+
+    query = query.group_by(KeywordMonthlyMetric.keyword)
+
+    # Count distinct keywords (group count) for pagination.
+    total = query.order_by(None).count()
+
+    if sort_by == "keyword":
+        order = KeywordMonthlyMetric.keyword
+    else:
+        order = func.sum(KeywordMonthlyMetric.impressions)
+    order = order.desc() if sort_desc else order.asc()
+    query = query.order_by(order)
+
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    # Per-keyword MoM: sum impressions for the same keywords over the prior
+    # window of equal month length immediately before start_period. Only the
+    # current page's keywords are looked up, so this stays a single bounded query.
+    page_keywords = [r.keyword for r in rows]
+    prior_by_keyword: dict = {}
+    if page_keywords:
+        n_months = (end_period.year - start_period.year) * 12 + (end_period.month - start_period.month) + 1
+        prior_end = _add_months(start_period, -1)
+        prior_start = _add_months(start_period, -n_months)
+        prior_q = db.query(
+            KeywordMonthlyMetric.keyword.label("keyword"),
+            func.coalesce(func.sum(KeywordMonthlyMetric.impressions), 0).label("impressions"),
+        ).join(
+            Location, Location.id == KeywordMonthlyMetric.location_id
+        ).filter(
+            Location.organization_id == current_user.organization_id,
+            KeywordMonthlyMetric.period_start >= prior_start,
+            KeywordMonthlyMetric.period_start <= prior_end,
+            KeywordMonthlyMetric.keyword.in_(page_keywords),
+        )
+        if allowed_ids is not None:
+            prior_q = prior_q.filter(KeywordMonthlyMetric.location_id.in_(allowed_ids))
+        if location_id is not None:
+            prior_q = prior_q.filter(KeywordMonthlyMetric.location_id == location_id)
+        prior_by_keyword = {
+            r.keyword: int(r.impressions or 0)
+            for r in prior_q.group_by(KeywordMonthlyMetric.keyword).all()
+        }
+
+    result_items = [
+        SearchKeywordMetric(
+            keyword=r.keyword,
+            impressions=int(r.impressions or 0),
+            impressions_prior=prior_by_keyword.get(r.keyword, 0),
+            mom_growth=calculate_delta(int(r.impressions or 0), prior_by_keyword.get(r.keyword, 0)),
+            is_brand_term=_is_branded(r.keyword, brand_terms_lower)
+        )
+        for r in rows
+    ]
+
+    return KeywordMetricsResponse(
+        items=result_items,
+        total=total,
+        page=page,
+        page_size=page_size
+    )
+
+@router.get("/keywords/export")
+def export_search_keywords(
+    location_id: Optional[int] = Query(None),
+    start_period: Optional[datetime.date] = Query(None),
+    end_period: Optional[datetime.date] = Query(None),
+    period_start: Optional[datetime.date] = Query(None),  # legacy single-month alias
+    search: Optional[str] = Query(None),
+    is_brand: Optional[bool] = Query(None),
+    sort_by: str = Query("impressions"),
+    sort_desc: bool = Query(True),
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    """
+    Export search keywords (per-month rows) to CSV.
+    """
+    allowed_ids = deps.get_user_location_ids(current_user, db)
+    if allowed_ids is not None and not allowed_ids:
+        # No accessible locations -> empty export rather than leaking other orgs.
+        return StreamingResponse(iter(["Keyword,Impressions,Period Start,Is Brand Term\n"]),
+                                 media_type="text/csv",
+                                 headers={"Content-Disposition": "attachment; filename=search_keywords.csv"})
+
+    if period_start and not start_period and not end_period:
+        start_period = end_period = period_start
+    if not end_period:
+        end_period = _add_months(_month_floor(datetime.date.today()), -1)
+    else:
+        end_period = _month_floor(end_period)
+    if not start_period:
+        start_period = end_period
+    else:
+        start_period = _month_floor(start_period)
+    if start_period > end_period:
+        start_period, end_period = end_period, start_period
+
+    query = db.query(KeywordMonthlyMetric).join(
+        Location, Location.id == KeywordMonthlyMetric.location_id
+    ).filter(
+        Location.organization_id == current_user.organization_id,
+        KeywordMonthlyMetric.period_start >= start_period,
+        KeywordMonthlyMetric.period_start <= end_period,
+    )
+
+    if allowed_ids is not None:
+        query = query.filter(KeywordMonthlyMetric.location_id.in_(allowed_ids))
+
+    if location_id is not None:
+        if allowed_ids is not None and location_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="Access denied to location.")
+        query = query.filter(KeywordMonthlyMetric.location_id == location_id)
+
+    if search:
+        query = query.filter(KeywordMonthlyMetric.keyword.ilike(f"%{search}%"))
+
+    brand_terms_lower = _brand_terms_lower(db, current_user.organization_id)
+
+    if is_brand is not None:
+        query = query.filter(_branded_filter(brand_terms_lower, is_brand))
+
+    if sort_by not in KEYWORD_SORT_COLUMNS:
+        sort_by = "impressions"
+    sort_col = getattr(KeywordMonthlyMetric, sort_by)
+    if sort_desc:
+        sort_col = sort_col.desc()
+    query = query.order_by(sort_col)
+
+    # Cap export size and stream row-by-row so a large org can't OOM the worker.
+    MAX_EXPORT_ROWS = 50000
+
+    def _row_iter():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Keyword", "Impressions", "Period Start", "Is Brand Term"])
+        yield buf.getvalue()
+        buf.seek(0); buf.truncate(0)
+        for item in query.yield_per(1000).limit(MAX_EXPORT_ROWS):
+            writer.writerow([
+                _csv_safe(item.keyword),
+                item.impressions,
+                item.period_start.isoformat() if item.period_start else "",
+                _is_branded(item.keyword, brand_terms_lower),
+            ])
+            yield buf.getvalue()
+            buf.seek(0); buf.truncate(0)
+
+    return StreamingResponse(
+        _row_iter(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=search_keywords.csv"}
+    )
+
+@router.get("/brand-terms", response_model=List[BrandTermResponse])
+def list_brand_terms(
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    """
+    List brand terms for the organization.
+    """
+    terms = db.query(OrganizationBrandTerm).filter(
+        OrganizationBrandTerm.organization_id == current_user.organization_id
+    ).order_by(OrganizationBrandTerm.created_at.asc()).all()
+    return terms
+
+@router.post("/brand-terms", response_model=BrandTermResponse)
+def create_brand_term(
+    term_in: BrandTermCreate,
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    """
+    Add a new brand term for the organization.
+    """
+    term_val = term_in.term.strip()
+    if not term_val:
+        raise HTTPException(status_code=400, detail="Brand term cannot be empty")
+        
+    existing = db.query(OrganizationBrandTerm).filter(
+        OrganizationBrandTerm.organization_id == current_user.organization_id,
+        func.lower(OrganizationBrandTerm.term) == term_val.lower()
+    ).first()
+    
+    if existing:
+        raise HTTPException(status_code=400, detail="Brand term already exists")
+        
+    term = OrganizationBrandTerm(
+        organization_id=current_user.organization_id,
+        term=term_val
+    )
+    db.add(term)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrent insert of the same term hit the unique index.
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Brand term already exists")
+    db.refresh(term)
+    return term
+
+@router.delete("/brand-terms/{id}")
+def delete_brand_term(
+    id: int,
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    """
+    Delete a brand term.
+    """
+    term = db.query(OrganizationBrandTerm).filter(
+        OrganizationBrandTerm.id == id,
+        OrganizationBrandTerm.organization_id == current_user.organization_id
+    ).first()
+    
+    if not term:
+        raise HTTPException(status_code=404, detail="Brand term not found")
+        
+    db.delete(term)
+    db.commit()
+    return {"status": "success"}

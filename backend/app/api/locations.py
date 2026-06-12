@@ -10,9 +10,11 @@ from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
 from app.models.sync_log import SyncLog
 from app.schemas.schemas import LocationOut, SyncLogOut, SyncLogPaginated
-from app.schemas.location import LocationSyncStatus
+from app.schemas.location import LocationSyncStatus, LocationHealthScoreOut, OrganizationHealthSummaryOut
 from app.schemas.sla import LocationSLAMetrics, LocationSLASummary
 from app.services.sla_service import get_location_sla_metrics, get_organization_sla_summary
+from app.services.health_score_service import HealthScoreService
+from app.models.location_health_score import LocationHealthScore
 from app.worker import celery
 from app.api.posts import get_redis
 import logging
@@ -42,8 +44,11 @@ def get_locations(
             Location,
             SyncLog.status.label("latest_sync_status"),
             SyncLog.error_message.label("latest_sync_error"),
+            LocationHealthScore.score.label("health_score"),
+            LocationHealthScore.label.label("health_score_label"),
         )
         .outerjoin(SyncLog, SyncLog.id == latest_log_id_sq)
+        .outerjoin(LocationHealthScore, LocationHealthScore.location_id == Location.id)
         .filter(Location.organization_id == current_user.organization_id)
     )
 
@@ -54,10 +59,12 @@ def get_locations(
     results = query.all()
 
     out = []
-    for location, latest_sync_status, latest_sync_error in results:
+    for location, latest_sync_status, latest_sync_error, health_score, health_score_label in results:
         loc_out = LocationOut.model_validate(location)
         loc_out.latest_sync_status = latest_sync_status
         loc_out.latest_sync_error = latest_sync_error
+        loc_out.health_score = health_score
+        loc_out.health_score_label = health_score_label
         out.append(loc_out)
     return out
 
@@ -141,6 +148,55 @@ def enable_location_sla(
     db.commit()
     db.refresh(location)
     return {"status": "enabled", "sla_tracking_started_at": location.sla_tracking_started_at}
+
+# NOTE: This static-path route MUST be declared before the dynamic
+# "/{location_id}" route below, otherwise FastAPI matches "/{location_id}"
+# first (location_id="health-score-summary") and returns a 422.
+@router.get("/health-score-summary", response_model=OrganizationHealthSummaryOut)
+def get_organization_health_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Fetch health score summary for the organization.
+
+    total_locations counts every location the user can see, so locations that
+    don't yet have a calculated score are reported via not_calculated_count
+    rather than silently skewing the average."""
+    allowed_location_ids = get_user_location_ids(current_user, db)
+
+    loc_filter = [Location.organization_id == current_user.organization_id]
+    if allowed_location_ids is not None:
+        loc_filter.append(Location.id.in_(allowed_location_ids))
+
+    total_locations = db.query(func.count(Location.id)).filter(*loc_filter).scalar() or 0
+
+    scores = (
+        db.query(LocationHealthScore)
+        .join(Location, Location.id == LocationHealthScore.location_id)
+        .filter(*loc_filter)
+        .all()
+    )
+
+    scored = len(scores)
+    not_calculated = total_locations - scored
+
+    avg_score = (sum(s.score for s in scores) // scored) if scored else 0
+    excellent = sum(1 for s in scores if s.label == "Excellent")
+    good = sum(1 for s in scores if s.label == "Good")
+    average = sum(1 for s in scores if s.label == "Average")
+    poor = sum(1 for s in scores if s.label == "Poor")
+    critical = sum(1 for s in scores if s.label == "Critical")
+
+    return OrganizationHealthSummaryOut(
+        average_score=avg_score,
+        total_locations=total_locations,
+        excellent_count=excellent,
+        good_count=good,
+        average_count=average,
+        poor_count=poor,
+        critical_count=critical,
+        not_calculated_count=not_calculated,
+    )
 
 @router.get("/{location_id}", response_model=LocationOut)
 def get_location(
@@ -320,3 +376,27 @@ def get_location_sync_status(
         error_message=latest_log.error_message,
         run_type=latest_log.run_type
     )
+
+@router.get("/{location_id}/health-score", response_model=LocationHealthScoreOut)
+def get_location_health_score(
+    location_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Fetch the health score for a specific location. If it doesn't exist, calculate it."""
+    # Access check (verify_location_access is a dependency factory and cannot be
+    # called directly here, so we replicate the manual check used by get_location).
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    if allowed_location_ids is not None and location_id not in allowed_location_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to this location")
+
+    score = db.query(LocationHealthScore).filter(LocationHealthScore.location_id == location_id).first()
+    
+    if not score:
+        # Calculate on the fly if missing
+        score = HealthScoreService.recalculate_health_score(db, location_id, "manual")
+        if not score:
+            raise HTTPException(status_code=404, detail="Location not found for scoring")
+        db.commit()
+
+    return score

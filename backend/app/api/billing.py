@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.api.deps import get_current_user, admin_required
 from app.models.user import User
 from app.models.organization import Organization
+from app.models.location import Location
 from app.services.billing.pricing_service import PricingService
 from app.services.billing.subscription_service import SubscriptionService
 from app.services.billing.webhook_service import WebhookService
@@ -144,7 +145,16 @@ def confirm_payment(
             raise HTTPException(status_code=400, detail="Subscription does not belong to this organization")
         activated = SubscriptionService.reconcile_subscription(db, org.id)
     else:
-        activated = SubscriptionService.reconcile_topup_payment(db, org.id, request.razorpay_payment_id)
+        # Order payments are either a credit top-up or a location add-on. Try the
+        # add-on path first (it no-ops unless the order's notes say location_addon),
+        # then fall back to top-up. Both verify the notes belong to this org.
+        activated = SubscriptionService.reconcile_location_addon_payment(
+            db, org.id, request.razorpay_payment_id
+        )
+        if not activated:
+            activated = SubscriptionService.reconcile_topup_payment(
+                db, org.id, request.razorpay_payment_id
+            )
 
     return {"confirmed": True, "activated": activated}
 
@@ -162,19 +172,151 @@ def get_billing_status(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    active_count = db.query(Location).filter(
+        Location.organization_id == org.id, Location.billing_status == "active"
+    ).count()
+    pending_count = db.query(Location).filter(
+        Location.organization_id == org.id, Location.billing_status == "pending_payment"
+    ).count()
+
     return {
         "plan": org.plan,
         "subscription_status": org.subscription_status,
         "monthly_ai_credits_balance": org.monthly_ai_credits_balance,
         "topup_ai_credits_balance": org.topup_ai_credits_balance,
         "location_quota": org.location_quota,
+        "active_location_count": active_count,
+        "pending_location_count": pending_count,
         "is_org_locked": EntitlementService.is_org_locked(org),
         "ai_credits_reset_date": org.ai_credits_reset_date,
         "current_period_end": org.ai_credits_reset_date,
         "trial_ends_at": org.trial_ends_at,
         "grace_period_ends_at": org.grace_period_ends_at,
         "subscription_ends_at": org.subscription_ends_at,
+        # UPI re-mandate: the banner uses these to prompt the user to approve the new
+        # (higher) mandate before the surplus locations are re-locked at the deadline.
+        "needs_remandate": bool(org.subscription_needs_remandate),
+        "remandate_due_at": org.remandate_due_at,
+        "paid_location_quota": org.paid_location_quota,
     }
+
+
+@router.get("/pending-locations")
+def get_pending_locations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List locations locked pending payment, plus the prorated quote to unlock them all."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    pending = db.query(Location).filter(
+        Location.organization_id == current_user.organization_id,
+        Location.billing_status == "pending_payment",
+    ).all()
+
+    quote = None
+    if pending:
+        quote = SubscriptionService.quote_location_unlock(
+            db, current_user.organization_id, [loc.id for loc in pending]
+        )
+
+    return {
+        "pending_locations": [
+            {"id": loc.id, "location_name": loc.location_name, "address": loc.address}
+            for loc in pending
+        ],
+        "quote": quote,
+    }
+
+
+class UnlockLocationsRequest(BaseModel):
+    location_ids: list[int]
+
+
+@router.post("/locations/unlock")
+def unlock_locations(
+    request: UnlockLocationsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """Create a Razorpay order for the prorated cost of unlocking the given pending
+    locations. The actual unlock is applied on payment.captured (and reconciled on
+    /confirm). Price is computed server-side; the client cannot specify an amount."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    result = SubscriptionService.create_location_addon_order(
+        db=db,
+        org_id=org.id,
+        org_name=org.name,
+        user_email=current_user.email,
+        location_ids=request.location_ids,
+    )
+    return result
+
+
+class RemandateConfirmRequest(BaseModel):
+    razorpay_payment_id: str
+    razorpay_subscription_id: str
+    razorpay_signature: str
+
+
+@router.post("/remandate")
+def start_remandate(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """Begin a UPI re-mandate: create a NEW subscription at the higher (current-quota)
+    plan for the user to approve. The old mandate keeps billing until the new one's
+    first charge triggers the cutover, so locations never lose coverage."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    subscription = SubscriptionService.create_remandate_subscription(
+        db=db, org_id=org.id, org_name=org.name, user_email=current_user.email,
+    )
+    return {"subscription": subscription}
+
+
+@router.post("/remandate/confirm")
+def confirm_remandate(
+    request: RemandateConfirmRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """Verify the approved re-mandate subscription and apply the cutover immediately
+    (fast path). The subscription.charged webhook is the backstop; both idempotent."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    client = SubscriptionService.get_razorpay_client()
+    try:
+        client.utility.verify_subscription_payment_signature({
+            "razorpay_subscription_id": request.razorpay_subscription_id,
+            "razorpay_payment_id": request.razorpay_payment_id,
+            "razorpay_signature": request.razorpay_signature,
+        })
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
+
+    activated = SubscriptionService.reconcile_remandate(
+        db, org.id, request.razorpay_subscription_id
+    )
+    return {"confirmed": True, "activated": activated}
 
 
 @webhook_router.post("/razorpay")
@@ -204,8 +346,14 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     event_id = request.headers.get("X-Razorpay-Event-Id")
     if not event_id:
         contains = payload.get("contains", []) or []
+        # Prefer the PAYMENT entity id: it is unique per charge. The subscription id
+        # is the SAME every billing cycle, so keying off it would make month-2's
+        # subscription.charged collide with month-1's and be skipped as a duplicate —
+        # the customer would be charged but never get the credit reset / quota.
+        ordered_keys = (["payment"] if "payment" in contains else []) + \
+            [k for k in contains if k != "payment"]
         entity_id = None
-        for key in contains:
+        for key in ordered_keys:
             entity_id = payload.get("payload", {}).get(key, {}).get("entity", {}).get("id")
             if entity_id:
                 break

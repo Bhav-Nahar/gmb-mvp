@@ -16,7 +16,8 @@ import {
   Upload,
   Send,
   Loader2,
-  X
+  X,
+  Lock
 } from 'lucide-react'
 
 interface Location {
@@ -25,6 +26,7 @@ interface Location {
   primary_category?: string
   address?: string
   phone?: string
+  billing_status?: string  // 'active' | 'pending_payment' (locked, can't publish)
 }
 
 interface CampaignJob {
@@ -292,10 +294,13 @@ export default function PostsPage(props: any) {
   }
 
   const handleToggleSelectAll = () => {
-    if (selectedLocationIds.length === filteredLocations.length && filteredLocations.length > 0) {
+    // Only selectable (active) locations participate in select-all; locked ones
+    // can't be published to and are excluded.
+    const selectable = filteredLocations.filter(l => l.billing_status !== 'pending_payment')
+    if (selectedLocationIds.length === selectable.length && selectable.length > 0) {
       setSelectedLocationIds([])
     } else {
-      setSelectedLocationIds(filteredLocations.map(l => l.id))
+      setSelectedLocationIds(selectable.map(l => l.id))
     }
   }
 
@@ -753,15 +758,32 @@ export default function PostsPage(props: any) {
                       <input type="text" placeholder="Search locations..." value={locationSearch} onChange={e => setLocationSearch(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl pl-10 p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors" />
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1">
-                      {filteredLocations.map(loc => (
-                        <button key={loc.id} onClick={() => setSelectedLocationIds(p => p.includes(loc.id) ? p.filter(id => id !== loc.id) : [...p, loc.id])} className={`flex items-start text-left p-3 rounded-xl border transition-colors cursor-pointer ${selectedLocationIds.includes(loc.id) ? 'bg-primary/5 border-primary/50' : 'bg-background border-border hover:bg-muted/50'}`}>
-                          <input type="checkbox" checked={selectedLocationIds.includes(loc.id)} readOnly className="mt-1 mr-3 rounded text-primary bg-background border-input cursor-pointer" />
+                      {filteredLocations.map(loc => {
+                        const isLocked = loc.billing_status === 'pending_payment'
+                        return (
+                        <button
+                          key={loc.id}
+                          disabled={isLocked}
+                          title={isLocked ? 'This location is locked pending payment. Unlock it to publish.' : undefined}
+                          onClick={() => {
+                            if (isLocked) return
+                            setSelectedLocationIds(p => p.includes(loc.id) ? p.filter(id => id !== loc.id) : [...p, loc.id])
+                          }}
+                          className={`flex items-start text-left p-3 rounded-xl border transition-colors ${isLocked ? 'opacity-50 cursor-not-allowed bg-muted/30 border-border' : `cursor-pointer ${selectedLocationIds.includes(loc.id) ? 'bg-primary/5 border-primary/50' : 'bg-background border-border hover:bg-muted/50'}`}`}
+                        >
+                          <input type="checkbox" checked={selectedLocationIds.includes(loc.id)} disabled={isLocked} readOnly className="mt-1 mr-3 rounded text-primary bg-background border-input cursor-pointer disabled:cursor-not-allowed" />
                           <div>
-                            <div className="text-sm font-bold text-foreground">{loc.location_name}</div>
-                            <div className="text-xs text-muted-foreground truncate max-w-[200px]">{loc.address}</div>
+                            <div className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                              {loc.location_name}
+                              {isLocked && <Lock className="h-3 w-3 text-amber-500" />}
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate max-w-[200px]">
+                              {isLocked ? 'Locked — upgrade to publish' : loc.address}
+                            </div>
                           </div>
                         </button>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
                 ) : (
