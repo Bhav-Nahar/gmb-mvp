@@ -1076,13 +1076,22 @@ export default function HomeClient() {
                   for {pricingLocations} {pricingLocations === 1 ? 'location' : 'locations'}
                 </p>
               </div>
-              <button
-                onClick={handleContinueWithGoogle}
-                disabled={loading}
-                className="flex justify-center items-center gap-2 rounded-lg py-3 px-5 text-xs font-bold uppercase tracking-widest bg-primary text-primary-foreground hover:bg-primary/90 shadow cursor-pointer disabled:opacity-50 transition-colors"
-              >
-                Start Free Trial
-              </button>
+              <div className="flex flex-col items-end gap-1.5">
+                <button
+                  onClick={handleContinueWithGoogle}
+                  disabled={loading}
+                  className="flex justify-center items-center gap-2 rounded-lg py-3 px-5 text-xs font-bold uppercase tracking-widest bg-primary text-primary-foreground hover:bg-primary/90 shadow cursor-pointer disabled:opacity-50 transition-colors"
+                >
+                  Start Free Trial
+                </button>
+                <p className="text-[10px] text-muted-foreground text-right max-w-[200px] leading-snug">
+                  Estimate only. Free for 7 days, then{' '}
+                  {pricingQuote
+                    ? `₹${Math.round(pricingQuote.price_paise / 100).toLocaleString('en-IN')}/${pricingInterval === 'monthly' ? 'mo' : 'yr'}`
+                    : 'your plan price'}{' '}
+                  for the locations you connect. No card to start.
+                </p>
+              </div>
             </div>
 
             {/* What's included */}
@@ -1114,7 +1123,7 @@ export default function HomeClient() {
             </ul>
 
             <p className="text-[11px] text-muted-foreground">
-              7-day free trial &middot; 5 locations &middot; 200 AI credits included. No credit card required.
+              7-day free trial &middot; 3 locations &middot; 10 AI credits included. No credit card required.
             </p>
           </div>
 
@@ -1201,7 +1210,7 @@ export default function HomeClient() {
               },
               {
                 q: "What does the free trial include?",
-                a: "The 7-day free trial includes up to 5 locations and 200 AI credits, with no credit card required. You get full access to reviews, AI replies, Google Posts, analytics, and audits so you can evaluate the product end-to-end."
+                a: "The 7-day free trial includes up to 3 locations and 10 AI credits, with no credit card required. You get full access to reviews, AI replies, Google Posts, analytics, and audits so you can evaluate the product end-to-end."
               }
             ].map((faq, idx) => (
               <div 

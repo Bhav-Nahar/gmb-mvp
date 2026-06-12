@@ -26,9 +26,11 @@ CREDITS_PER_LOCATION = 30
 MIN_LOCATIONS = 1
 MAX_LOCATIONS = 500
 
-# Trial defaults (used before any subscription is active).
-TRIAL_LOCATION_QUOTA = 5
-TRIAL_AI_CREDITS = 200
+# Trial defaults (used before any subscription is active). Kept in sync with the
+# organizations.location_quota / monthly_ai_credits_balance column defaults, which
+# are what actually grant the trial entitlement at signup.
+TRIAL_LOCATION_QUOTA = 3
+TRIAL_AI_CREDITS = 10
 
 # AI credit top-up packs (one-time). Key is what the client sends; price/credits
 # are owned by the server so the client cannot manipulate them.

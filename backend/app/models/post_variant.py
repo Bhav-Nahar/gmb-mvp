@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from app.db.session import Base
@@ -23,4 +23,7 @@ class PostVariant(Base):
 
     __table_args__ = (
         UniqueConstraint("post_id", "location_id", name="uq_post_variant_location"),
+        # Speeds up the health-score photo count, which filters variants by
+        # location_id and joins back to posts/media.
+        Index("ix_post_variants_location_id", "location_id"),
     )

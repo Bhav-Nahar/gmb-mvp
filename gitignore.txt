@@ -55,4 +55,3 @@ celerybeat.pid
 # Uploads
 backend/app/static/uploads/
 
-env

@@ -93,4 +93,10 @@ class EntitlementService:
             db.rollback()
             raise
         finally:
-            lock.release()
+            # If the lease expired mid-run another worker may now own the lock; releasing
+            # it then raises LockNotOwnedError. Swallow it (matches the Celery task pattern)
+            # so it can't mask the real outcome after a successful commit.
+            try:
+                lock.release()
+            except Exception:
+                pass

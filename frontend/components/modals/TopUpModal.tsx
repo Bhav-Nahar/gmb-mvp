@@ -32,18 +32,25 @@ export function TopUpModal({ open, onOpenChange }: TopUpModalProps) {
         description: `Buy ${credits} AI Credits`,
         handler: async function (res: any) {
           try {
-            await confirmPayment({
+            const result = await confirmPayment({
               razorpay_payment_id: res.razorpay_payment_id,
               razorpay_signature: res.razorpay_signature,
               razorpay_order_id: res.razorpay_order_id,
             });
-            toast.success('Credits added to your balance!');
+            if (result?.activated) {
+              toast.success('Credits added to your balance!');
+            } else {
+              toast.info('Payment received! Credits will appear shortly...');
+            }
           } catch {
-            toast.success('Payment received! Credits will appear shortly...');
+            toast.info('Payment received! Credits will appear shortly...');
           } finally {
             queryClient.invalidateQueries({ queryKey: ['billing_status'] });
             onOpenChange(false);
           }
+        },
+        onFailure: (err: any) => {
+          toast.error(err?.description || 'Payment failed. No credits were added.');
         },
         modal: {
           ondismiss: function () {

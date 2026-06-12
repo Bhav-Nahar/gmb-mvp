@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, ClassVar, Dict, Any
 import datetime
 from datetime import date
-from .models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric
+from .models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric, KeywordInsightMetric
 
 class BaseProvider(ABC):
     provider_name: ClassVar[str]
@@ -47,5 +47,10 @@ class BaseProvider(ABC):
     @abstractmethod
     async def get_insights(self, location_id: str, start_date: date, end_date: date) -> List[DailyInsightMetric]:
         """Fetch performance insights for a location for a date range."""
+        ...
+
+    @abstractmethod
+    async def get_search_keyword_insights(self, location_id: str, start_date: date, end_date: date) -> List["KeywordInsightMetric"]:
+        """Fetch monthly search keyword impressions for a location for a date range."""
         ...
 

@@ -120,7 +120,18 @@ async def upload_media(
     db.add(media)
     db.commit()
     db.refresh(media)
-    
+
+    # Recalculate health score for affected locations if this media is linked to a post.
+    if media.post_id:
+        from app.models.post_variant import PostVariant
+        from app.services.health_score_service import HealthScoreService
+        variants = db.query(PostVariant).filter(PostVariant.post_id == media.post_id).all()
+        for variant in variants:
+            HealthScoreService.recalculate_health_score(db, variant.location_id, reason="media_upload")
+        if variants:
+            db.commit()
+
+
     # Structured Logging (No print statement!)
     logger.info(
         "Media uploaded and registered successfully",
@@ -195,6 +206,16 @@ def delete_media(
     media.upload_status = "Deleted"
     db.commit()
     
+    # Recalculate health score for affected locations
+    if media.post_id:
+        from app.models.post_variant import PostVariant
+        from app.services.health_score_service import HealthScoreService
+        variants = db.query(PostVariant).filter(PostVariant.post_id == media.post_id).all()
+        for variant in variants:
+            HealthScoreService.recalculate_health_score(db, variant.location_id, reason="media_delete")
+        db.commit()
+
+
     logger.info(
         "Media soft-deleted successfully",
         extra={

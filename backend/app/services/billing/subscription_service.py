@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from app.core.config import settings
 from app.core import plan_config
@@ -18,9 +19,6 @@ logger = logging.getLogger(__name__)
 _DAYS_IN_CYCLE = {"monthly": 30, "annual": 365}
 # Razorpay rejects orders below ₹1. Floor tiny prorated amounts to this.
 _MIN_ORDER_PAISE = 100
-
-
-_plan_id_cache: dict = {}
 
 
 class SubscriptionService:
@@ -48,9 +46,13 @@ class SubscriptionService:
 
         client = SubscriptionService.get_razorpay_client()
         try:
+            # fail_existing=0 tells Razorpay to return the existing customer for this
+            # email instead of throwing "already exists". This makes the call idempotent
+            # and avoids extra list API calls (which were causing rate-limit 429s).
             customer = client.customer.create(data={
                 "name": org_name,
                 "email": user_email,
+                "fail_existing": "0",
                 "notes": {"organization_id": str(org_id)},
             })
             org.razorpay_customer_id = customer["id"]
@@ -58,21 +60,30 @@ class SubscriptionService:
             return org.razorpay_customer_id
         except Exception as e:
             db.rollback()
+            logger.error(f"Failed to create Razorpay customer for org {org_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to create Razorpay customer: {str(e)}")
 
     @staticmethod
-    def _get_or_create_plan(location_count: int, interval: str) -> str:
-        """Get-or-create a Razorpay plan for this (location_count, interval) pair.
+    def _get_or_create_plan(db: Session, location_count: int, interval: str) -> str:
+        """Get-or-create a Razorpay plan for this (location_count, interval, amount).
 
-        Plans are cached in-process so repeated checkout attempts (e.g. the user
-        toggling monthly/annual or retrying) reuse the same plan instead of
-        creating orphan plans on every call."""
-        cache_key = (location_count, interval)
-        if cache_key in _plan_id_cache:
-            return _plan_id_cache[cache_key]
+        Plan ids are cached durably in the razorpay_plans table so repeated/cold
+        checkouts reuse the same plan instead of creating an orphan plan on every
+        call (which caused plan sprawl and Razorpay rate-limiting). The amount is
+        part of the key so a pricing change yields a new plan, never a stale one."""
+        from app.models.razorpay_plan import RazorpayPlan
+
+        amount = PricingService.compute_price_paise(location_count, interval)
+
+        existing = db.query(RazorpayPlan).filter(
+            RazorpayPlan.location_count == location_count,
+            RazorpayPlan.interval == interval,
+            RazorpayPlan.amount_paise == amount,
+        ).first()
+        if existing:
+            return existing.razorpay_plan_id
 
         client = SubscriptionService.get_razorpay_client()
-        amount = PricingService.compute_price_paise(location_count, interval)
         period = "yearly" if interval == "annual" else "monthly"
         try:
             plan = client.plan.create(data={
@@ -87,8 +98,28 @@ class SubscriptionService:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to create plan: {str(e)}")
 
-        _plan_id_cache[cache_key] = plan["id"]
-        return plan["id"]
+        plan_id = plan["id"]
+        db.add(RazorpayPlan(
+            location_count=location_count,
+            interval=interval,
+            amount_paise=amount,
+            razorpay_plan_id=plan_id,
+        ))
+        try:
+            db.commit()
+        except IntegrityError:
+            # A concurrent checkout created the same plan row first. Roll back and
+            # use the now-committed row (we created a duplicate Razorpay plan, which
+            # is harmless — it just goes unused).
+            db.rollback()
+            existing = db.query(RazorpayPlan).filter(
+                RazorpayPlan.location_count == location_count,
+                RazorpayPlan.interval == interval,
+                RazorpayPlan.amount_paise == amount,
+            ).first()
+            if existing:
+                return existing.razorpay_plan_id
+        return plan_id
 
     @staticmethod
     def create_subscription_checkout(
@@ -104,7 +135,7 @@ class SubscriptionService:
             raise HTTPException(status_code=400, detail="interval must be 'monthly' or 'annual'")
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
-        plan_id = SubscriptionService._get_or_create_plan(location_count, interval)
+        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval)
         client = SubscriptionService.get_razorpay_client()
         credits = PricingService.get_credits_for_locations(location_count)
 
@@ -135,6 +166,81 @@ class SubscriptionService:
             db.commit()
 
         return subscription
+
+    @staticmethod
+    def create_remandate_subscription(
+        db: Session, org_id: int, org_name: str, user_email: str
+    ) -> Dict[str, Any]:
+        """Create a NEW subscription at the plan matching the org's current
+        location_quota, for a UPI org that needs a higher mandate. Unlike
+        create_subscription_checkout this does NOT overwrite org.razorpay_subscription_id
+        — the old mandate keeps billing until the new one's first charge triggers the
+        cutover (apply_subscription_charged), so there is never a coverage gap."""
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        if not org.subscription_needs_remandate:
+            raise HTTPException(status_code=409, detail="No re-mandate is pending for this organization.")
+
+        location_count = org.location_quota or 0
+        interval = org.billing_cycle or "monthly"
+        PricingService.validate_location_count(location_count)
+
+        customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
+        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval)
+        client = SubscriptionService.get_razorpay_client()
+        credits = PricingService.get_credits_for_locations(location_count)
+
+        try:
+            subscription = client.subscription.create(data={
+                "plan_id": plan_id,
+                "customer_id": customer_id,
+                "quantity": 1,
+                "total_count": plan_config_total_count(interval),
+                "notes": {
+                    "organization_id": str(org_id),
+                    "type": "subscription",
+                    "location_count": str(location_count),
+                    "interval": interval,
+                    "credits": str(credits),
+                    "remandate": "1",
+                },
+            })
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create re-mandate subscription: {str(e)}")
+
+        return subscription
+
+    @staticmethod
+    def reconcile_remandate(db: Session, org_id: int, new_subscription_id: str) -> bool:
+        """Fast path for re-mandate: pull the freshly-approved subscription from Razorpay
+        and, if it's active/authenticated, apply the cutover (cancel old, switch over,
+        grant full quota). The webhook is the backstop; both are idempotent."""
+        stmt = select(Organization).where(Organization.id == org_id).with_for_update()
+        org = db.scalars(stmt).first()
+        if not org:
+            return False
+        # Already switched over (webhook beat us to it).
+        if org.razorpay_subscription_id == new_subscription_id and not org.subscription_needs_remandate:
+            return True
+
+        client = SubscriptionService.get_razorpay_client()
+        try:
+            subscription = client.subscription.fetch(new_subscription_id)
+        except Exception:
+            return False
+        if str(subscription.get("notes", {}).get("organization_id")) != str(org_id):
+            return False
+        # Require the new mandate to have actually CHARGED before cutting over — an
+        # 'authenticated' mandate is approved but unpaid; cancelling the old one then
+        # would leave a coverage gap. The subscription.charged webhook handles that case.
+        if subscription.get("status") != "active":
+            return False
+
+        from app.services.billing.webhook_service import WebhookService
+        WebhookService.apply_subscription_charged(db, org, subscription, payment=None)
+        db.commit()
+        return True
 
     @staticmethod
     def create_topup_order(db: Session, org_id: int, org_name: str, user_email: str, pack_key: str) -> Dict[str, Any]:
@@ -243,28 +349,51 @@ class SubscriptionService:
         return {"order": order, "quote": quote}
 
     @staticmethod
-    def update_subscription_plan_for_quota(db: Session, org_id: int) -> None:
-        """Best-effort: raise the recurring subscription amount to match the org's
-        (post-unlock) location_quota, effective at the next cycle. Entitlements are the
-        ORG's responsibility (see apply_subscription_charged), so a failure here only
-        means the NEXT renewal may bill the prior amount — logged for reconciliation,
-        never blocks the unlock."""
+    def update_subscription_plan_for_quota(db: Session, org_id: int) -> str:
+        """Raise the recurring subscription amount to match the org's (post-unlock)
+        location_quota, effective at the next cycle.
+
+        Returns one of:
+          - "upgraded": the plan change was scheduled (card mandates).
+          - "needs_remandate": Razorpay refuses because the mandate is UPI; the amount
+            can only rise via a brand-new mandate the user must approve. Caller should
+            flag the org and start the re-mandate flow.
+          - "noop": no subscription, or nothing to do.
+          - "error": a transient failure; safe to retry. Never blocks the unlock.
+
+        Entitlements remain the ORG's responsibility (see apply_subscription_charged)."""
         org = db.query(Organization).filter(Organization.id == org_id).first()
         if not org or not org.razorpay_subscription_id:
-            return
+            return "noop"
         interval = org.billing_cycle or "monthly"
         try:
-            new_plan_id = SubscriptionService._get_or_create_plan(org.location_quota, interval)
+            new_plan_id = SubscriptionService._get_or_create_plan(db, org.location_quota, interval)
             client = SubscriptionService.get_razorpay_client()
-            client.subscription.update(org.razorpay_subscription_id, {
+            # The razorpay SDK exposes the PATCH /subscriptions/{id} call as `edit`
+            # (there is no `update` method) — using the wrong name silently raised
+            # AttributeError, so the plan change was never scheduled and renewals kept
+            # billing the old amount. See cancel_scheduled_changes to undo if needed.
+            client.subscription.edit(org.razorpay_subscription_id, {
                 "plan_id": new_plan_id,
                 "schedule_change_at": "cycle_end",
             })
+            org.subscription_payment_mode = "card"
+            return "upgraded"
         except Exception as e:
+            # Razorpay rejects amount changes on UPI Autopay mandates outright. That is
+            # not a transient error — it needs a new mandate, so signal the caller
+            # instead of just logging and moving on.
+            if "payment mode is upi" in str(e).lower():
+                org.subscription_payment_mode = "upi"
+                logger.warning(
+                    "Org %s subscription is UPI; plan upgrade needs a new mandate.", org_id
+                )
+                return "needs_remandate"
             logger.error(
                 "Failed to update subscription plan for org %s after unlock (next renewal "
                 "may bill the old amount): %s", org_id, e, exc_info=True
             )
+            return "error"
 
     @staticmethod
     def reconcile_location_addon_payment(db: Session, org_id: int, payment_id: str) -> bool:
@@ -324,9 +453,12 @@ class SubscriptionService:
         except Exception:
             return False
 
-        # Razorpay marks a paid subscription "active"; "authenticated" means the
-        # mandate is set up but the first charge hasn't landed yet.
-        if subscription.get("status") not in ("active", "authenticated"):
+        # Require a real charge before granting entitlements. Razorpay marks a paid
+        # subscription "active"; "authenticated" means the mandate is set up but the
+        # first charge hasn't landed — granting then would hand out a free cycle if that
+        # first charge later fails. The subscription.charged webhook activates the org
+        # the moment the debit actually succeeds.
+        if subscription.get("status") != "active":
             return False
 
         WebhookService.apply_subscription_charged(db, org, subscription, payment=None)

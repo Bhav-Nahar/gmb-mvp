@@ -79,3 +79,8 @@ class DailyInsightMetric(BaseModel):
     search_queries_indirect: int = 0
     search_queries_chain: int = 0
 
+class KeywordInsightMetric(BaseModel):
+    keyword: str
+    impressions: int
+    period_start: date
+

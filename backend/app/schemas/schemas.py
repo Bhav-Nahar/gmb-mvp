@@ -86,6 +86,10 @@ class LocationOut(BaseModel):
     is_suspended: Optional[bool] = None
     is_duplicate: Optional[bool] = None
 
+    # Embedded Health Score
+    health_score: Optional[int] = None
+    health_score_label: Optional[str] = None
+
     class Config:
         from_attributes = True
 

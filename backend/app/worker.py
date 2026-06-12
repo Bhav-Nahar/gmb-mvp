@@ -62,6 +62,10 @@ celery.conf.beat_schedule = {
     "reconcile-pending-subscriptions": {
         "task": "app.tasks.reconcile_pending_subscriptions_task",
         "schedule": 600.0, # Every 10 minutes — catch missed payment webhooks
+    },
+    "enforce-upi-remandate-grace-daily": {
+        "task": "app.tasks.enforce_upi_remandate_grace_task",
+        "schedule": crontab(hour=4, minute=0), # Daily at 4AM UTC — re-lock past-grace UPI orgs
     }
 }
 
