@@ -12,6 +12,7 @@ from app.services.billing.entitlement_service import EntitlementService
 from app.core import plan_config
 import redis
 from app.core.config import settings
+from app.core.roles import Role, ADMIN_ROLES, STAFF_ROLES, TEAM_VIEWER_ROLES
 from sqlalchemy import select
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
@@ -72,13 +73,15 @@ class RoleChecker:
         return current_user
 
 # Predefined role dependencies
-admin_required = RoleChecker(["Owner", "Admin"])
-staff_required = RoleChecker(["Owner", "Admin", "Regional Manager", "Store Manager"])
+admin_required = RoleChecker(list(ADMIN_ROLES))
+staff_required = RoleChecker(list(STAFF_ROLES))
+team_viewer_required = RoleChecker(list(TEAM_VIEWER_ROLES))
+regional_manager_plus = RoleChecker(list(TEAM_VIEWER_ROLES))
 
 def get_user_location_ids(user: User, db: Session) -> Optional[List[int]]:
-    if user.role in ["Owner", "Admin"]:
+    if user.role in ADMIN_ROLES:
         return None
-    if user.role == "Viewer" and user.viewer_scope == "organization":
+    if user.role == Role.VIEWER and user.viewer_scope == "organization":
         return None
     
     # Fetch assigned locations

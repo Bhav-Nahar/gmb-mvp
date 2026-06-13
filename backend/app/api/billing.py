@@ -251,6 +251,11 @@ def unlock_locations(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    # Anti-IDOR: ensure every location belongs to the caller's org (and is within
+    # their location scope) before creating a paid order against it.
+    from app.core.authorization import validate_location_access
+    validate_location_access(db, current_user, request.location_ids)
+
     result = SubscriptionService.create_location_addon_order(
         db=db,
         org_id=org.id,

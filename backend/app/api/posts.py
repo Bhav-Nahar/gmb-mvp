@@ -99,8 +99,12 @@ def list_campaigns(
 ):
     """Fetch paginated list of campaigns for the organization."""
     query = db.query(Campaign).filter(Campaign.organization_id == current_user.organization_id)
-    
+
     if location_id:
+        # Anti-IDOR: don't let a location-restricted user filter/enumerate campaigns
+        # by a location they cannot access.
+        from app.core.authorization import assert_location_access
+        assert_location_access(db, current_user, location_id)
         from app.models.publish_job import PublishJob
         query = query.join(PublishJob).filter(PublishJob.location_id == location_id)
         query = query.distinct()

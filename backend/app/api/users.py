@@ -3,7 +3,14 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.api.deps import get_current_user, admin_required, RoleChecker, get_user_location_ids
+from app.api.deps import (
+    get_current_user,
+    admin_required,
+    RoleChecker,
+    get_user_location_ids,
+    team_viewer_required,
+    regional_manager_plus,
+)
 from app.models.user import User
 from app.models.oauth_account import OAuthAccount
 from app.models.sync_log import SyncLog
@@ -16,11 +23,9 @@ from app.models.invite import Invite
 from app.services.invite_service import invite_service
 from app.core.config import settings
 from app.core.authorization import validate_location_access, validate_user_access, validate_org_resource
+from app.core.roles import Role
 
 router = APIRouter()
-
-team_viewer_required = RoleChecker(["Owner", "Admin", "Regional Manager"])
-regional_manager_plus = RoleChecker(["Owner", "Admin", "Regional Manager"])
 
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):
@@ -336,7 +341,7 @@ def update_user_locations(
 def transfer_ownership(
     req: TransferOwnershipRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["Owner"]))
+    current_user: User = Depends(RoleChecker([Role.OWNER]))
 ):
     new_owner = db.query(User).filter(User.id == req.new_owner_id, User.organization_id == current_user.organization_id).first()
     if not new_owner:

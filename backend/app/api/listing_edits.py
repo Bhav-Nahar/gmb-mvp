@@ -3,7 +3,9 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
-from app.api.deps import get_db, get_current_user, admin_required, staff_required, verify_location_access
+from app.api.deps import get_db, get_current_user, admin_required, staff_required, verify_location_access, get_user_location_ids
+from app.core.roles import Role
+from app.core.authorization import assert_location_access
 from app.models.user import User
 from app.models.location_edit import LocationEdit
 from app.models.activity_log import ActivityLog
@@ -108,18 +110,15 @@ def list_edits(
         LocationEdit.location_id == location_id,
         LocationEdit.organization_id == current_user.organization_id,
     )
-    if current_user.role == "Staff":
+    # Enforce per-user location scope for every location-restricted role (Regional
+    # Manager, Store Manager, restricted Viewer). Org-wide roles (Owner/Admin and
+    # org-scoped Viewer) get None and pass through.
+    if get_user_location_ids(current_user, db) is not None:
+        assert_location_access(db, current_user, location_id)
+
+    # Store Managers additionally only see edits they personally submitted.
+    if current_user.role == Role.STORE_MANAGER:
         query = query.filter(LocationEdit.submitted_by_user_id == current_user.id)
-        from app.models.user_location_access import UserLocationAccess
-        has_access = db.query(UserLocationAccess).filter(
-            UserLocationAccess.user_id == current_user.id,
-            UserLocationAccess.location_id == location_id,
-        ).first()
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have access to this location."
-            )
     if status_filter:
         query = query.filter(LocationEdit.status == status_filter)
     return query.order_by(LocationEdit.created_at.desc()).all()
