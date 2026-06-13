@@ -260,6 +260,10 @@ def get_activity_log(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Enforce per-user location scope for location-restricted roles.
+    if get_user_location_ids(current_user, db) is not None:
+        assert_location_access(db, current_user, location_id)
+
     query = db.query(ActivityLog).filter(
         ActivityLog.location_id == location_id,
         ActivityLog.organization_id == current_user.organization_id,
