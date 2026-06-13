@@ -8,6 +8,7 @@ from app.api.deps import get_current_user, staff_required, admin_required, get_u
 from app.models.user import User
 from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
+from app.core.roles import ADMIN_ROLES
 from app.models.sync_log import SyncLog
 from app.schemas.schemas import LocationOut, SyncLogOut, SyncLogPaginated
 from app.schemas.location import LocationSyncStatus, LocationHealthScoreOut, OrganizationHealthSummaryOut
@@ -297,7 +298,7 @@ def trigger_sync(
         .join(OAuthAccount, OAuthAccount.user_id == User.id)
         .filter(
             User.organization_id == current_user.organization_id,
-            User.role.in_(["Owner", "Admin"]),
+            User.role.in_(ADMIN_ROLES),
             User.is_active == True
         )
         .order_by(OAuthAccount.expires_at.desc(), User.id.asc())

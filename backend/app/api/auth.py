@@ -15,6 +15,7 @@ from app.core.security import (
     encrypt_token
 )
 from app.models.user import User
+from app.core.roles import Role
 from app.models.organization import Organization
 from app.models.oauth_account import OAuthAccount
 from app.models.sync_log import SyncLog
@@ -136,7 +137,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                     raise ValueError("You have a pending invitation. Please use the invite link sent to your email to join the workspace.")
 
             if invite:
-                if invite.role == "Store Manager":
+                if invite.role == Role.STORE_MANAGER:
                     if not invite.location_ids or len(invite.location_ids) != 1:
                         raise ValueError(f"Corrupt invite: Store Manager must have exactly 1 location, got {invite.location_ids}")
 
@@ -204,7 +205,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                     name=name,
                     avatar=avatar,
                     google_id=google_id,
-                    role="Owner",  # First owner is Owner
+                    role=Role.OWNER,  # First owner is Owner
                     viewer_scope="assigned",
                     organization_id=org.id
                 )

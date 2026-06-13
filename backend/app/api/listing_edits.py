@@ -4,7 +4,7 @@ from typing import Optional
 from datetime import datetime, timezone, timedelta
 
 from app.api.deps import get_db, get_current_user, admin_required, staff_required, verify_location_access, get_user_location_ids
-from app.core.roles import Role
+from app.core.roles import Role, ADMIN_ROLES
 from app.core.authorization import assert_location_access
 from app.models.user import User
 from app.models.location_edit import LocationEdit
@@ -40,7 +40,7 @@ def get_field_config(current_user: User = Depends(get_current_user)):
             "warning_body": f.warning_body,
         }
         for f in LISTING_FIELDS
-        if not f.is_read_only or current_user.role == "Admin"
+        if not f.is_read_only or current_user.role == Role.ADMIN
     ]
 
 @router.post("/locations/{location_id}/edits", response_model=LocationEditResponse, status_code=201)
@@ -144,7 +144,7 @@ def submit_draft(
         # We invoke the helper manually since we don't have location_id in the URL
         # For a more robust fix, we'd refactor the dependency, but this is immediate.
         from app.models.user_location_access import UserLocationAccess
-        if current_user.role not in ["Owner", "Admin"]:
+        if current_user.role not in ADMIN_ROLES:
             has_access = db.query(UserLocationAccess).filter(
                 UserLocationAccess.user_id == current_user.id,
                 UserLocationAccess.location_id == edit_lookup.location_id

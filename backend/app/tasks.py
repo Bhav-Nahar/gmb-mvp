@@ -4,6 +4,7 @@ from celery import shared_task
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.core.roles import ADMIN_ROLES
 from app.models.organization import Organization
 from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
@@ -401,7 +402,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             # Find and delete oauth account securely
             oauth_account = db.query(OAuthAccount).join(User).filter(
                 User.organization_id == organization_id,
-                User.role.in_(["Owner", "Admin"]),
+                User.role.in_(ADMIN_ROLES),
                 OAuthAccount.provider.in_(["gbp", "google"])
             ).first()
             if oauth_account:
@@ -456,7 +457,7 @@ def sync_all_organizations_task() -> str:
             db.query(User.id, User.organization_id)
             .join(OAuthAccount, OAuthAccount.user_id == User.id)
             .filter(
-                User.role.in_(["Owner", "Admin"]),
+                User.role.in_(ADMIN_ROLES),
                 User.is_active == True
             )
             .order_by(OAuthAccount.expires_at.desc())
@@ -2527,7 +2528,7 @@ def publish_location_attributes_task(location_id: int) -> dict:
         # Publish to Google API
         oauth_account = db.query(OAuthAccount).join(User).filter(
             User.organization_id == location.organization_id,
-            User.role.in_(["Owner", "Admin"]),
+            User.role.in_(ADMIN_ROLES),
             OAuthAccount.provider.in_(["gbp", "google"])
         ).first()
 

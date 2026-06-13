@@ -1,7 +1,7 @@
 import logging
 import os
 import stat
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -41,6 +41,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Attach baseline security headers to every response.
+
+    This is a JSON API consumed by a separate SPA, so the CSP is intentionally
+    restrictive (no scripts/embedding from this origin). HSTS is only emitted in
+    non-development environments to avoid pinning localhost to HTTPS.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'none'; frame-ancestors 'none'",
+    )
+    if getattr(settings, "APP_ENV", "production") != "development":
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+    return response
 
 # Mount local uploads directory for static file serving in development
 static_uploads_path = os.path.normpath(

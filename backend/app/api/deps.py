@@ -94,11 +94,11 @@ def verify_location_access(location_id: int):
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user)
     ):
-        if current_user.role in ["Owner", "Admin"]:
+        if current_user.role in ADMIN_ROLES:
             # Optionally check if location belongs to org here, but usually done at query level
             return location_id
-            
-        if current_user.role == "Viewer":
+
+        if current_user.role == Role.VIEWER:
             if request.method not in ["GET", "OPTIONS", "HEAD"]:
                 raise HTTPException(status_code=403, detail="Viewers cannot perform mutations")
             if current_user.viewer_scope == "organization":
