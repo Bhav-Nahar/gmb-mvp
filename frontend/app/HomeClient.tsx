@@ -106,12 +106,11 @@ export default function HomeClient() {
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           {/* Brand Logo */}
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary shadow-sm">
-              <RefreshCw className="h-5 w-5 text-primary-foreground animate-pulse" />
-            </div>
-            <span className="text-lg font-bold tracking-tight text-foreground">
-              Pinzo
-            </span>
+            <img
+              src="/logo-horizontal-3.png"
+              alt="Pinzo"
+              className="h-8 object-contain shrink-0"
+            />
           </div>
 
           {/* Desktop Navigation */}
@@ -1274,10 +1273,11 @@ export default function HomeClient() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 grid grid-cols-2 md:grid-cols-4 gap-8">
           <div className="col-span-2 md:col-span-1 space-y-4">
             <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-                <RefreshCw className="h-4.5 w-4.5 text-primary-foreground" />
-              </div>
-              <span className="text-md font-bold text-foreground">Pinzo</span>
+              <img
+                src="/logo-horizontal-3.png"
+                alt="Pinzo"
+                className="h-8 object-contain shrink-0"
+              />
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed max-w-xs">
               Synchronize, automate, and schedule locations under Google Business Profile. Dominating local maps pack made simple.

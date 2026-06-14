@@ -77,17 +77,11 @@ export default function Sidebar({
       {/* Brand Header */}
       <div className="h-16 px-6 border-b border-border flex items-center justify-between gap-2.5">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shrink-0">
-            <RefreshCw className="h-5 w-5 text-white animate-pulse" />
-          </div>
-          <div className="flex flex-col min-w-0">
-            <span className="text-sm font-bold text-foreground tracking-tight leading-none truncate">
-              Pinzo
-            </span>
-            <span className="text-[10px] text-muted-foreground font-semibold mt-0.5">
-              Operational Hub
-            </span>
-          </div>
+          <img
+            src="/logo-horizontal-3.png"
+            alt="Pinzo"
+            className="h-8 object-contain shrink-0"
+          />
         </div>
         {/* Close affordance — drawer only (hidden once the sidebar is static) */}
         <button
