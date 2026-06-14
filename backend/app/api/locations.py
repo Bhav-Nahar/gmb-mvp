@@ -296,8 +296,15 @@ def trigger_sync(
             detail="No connected Google Account found for this organization. Please reconnect via Google."
         )
 
-    task = celery.send_task("app.tasks.sync_locations_task", args=[current_user.organization_id, admin_user.id, "Manual"])
-    
+    try:
+        task = celery.send_task("app.tasks.sync_locations_task", args=[current_user.organization_id, admin_user.id, "Manual"])
+    except Exception as e:
+        logger.error(f"Failed to queue sync task (Celery/Redis unavailable?): {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sync service is temporarily unavailable. Please try again in a moment."
+        )
+
     # Invalidate cache for all locations belonging to the organization
     try:
         r = get_redis()
