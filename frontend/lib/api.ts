@@ -71,7 +71,7 @@ function getCookie(name: string): string | null {
 }
 
 function isPublicPath(path: string): boolean {
-  return path === '/login' || path.startsWith('/invite/') || path === '/login/success' || path === '/'
+  return path === '/login' || path.startsWith('/invite/') || path === '/login/success' || path === '/' || path === '/privacy' || path === '/terms'
 }
 
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {

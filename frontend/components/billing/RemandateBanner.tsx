@@ -42,7 +42,7 @@ export function RemandateBanner() {
       await openRazorpay({
         key: razorpayKey,
         subscription_id: subscription.id,
-        name: 'GMB MVP',
+        name: 'Pinzo',
         description: `Updated AutoPay for ${quota} location${quota === 1 ? '' : 's'}`,
         handler: async function (res: any) {
           try {

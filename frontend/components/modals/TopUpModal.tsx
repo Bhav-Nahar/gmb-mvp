@@ -35,7 +35,7 @@ export function TopUpModal({ open, onOpenChange }: TopUpModalProps) {
       const options = {
         key: razorpayKey,
         order_id: response.order.id,
-        name: 'GMB MVP',
+        name: 'Pinzo',
         description: `Buy ${credits} AI Credits`,
         handler: async function (res: any) {
           try {

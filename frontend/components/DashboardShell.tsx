@@ -34,7 +34,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shrink-0">
               <RefreshCw className="h-4 w-4 text-white" />
             </div>
-            <span className="text-sm font-bold tracking-tight truncate">GMB Sync Engine</span>
+            <span className="text-sm font-bold tracking-tight truncate">Pinzo</span>
           </div>
         </header>
 

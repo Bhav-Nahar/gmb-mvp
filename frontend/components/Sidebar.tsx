@@ -82,7 +82,7 @@ export default function Sidebar({
           </div>
           <div className="flex flex-col min-w-0">
             <span className="text-sm font-bold text-foreground tracking-tight leading-none truncate">
-              GMB Sync Engine
+              Pinzo
             </span>
             <span className="text-[10px] text-muted-foreground font-semibold mt-0.5">
               Operational Hub

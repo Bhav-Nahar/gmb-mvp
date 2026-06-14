@@ -266,7 +266,7 @@ export default function SearchIntelligencePage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3 overflow-x-auto sm:flex-wrap sm:items-center sm:overflow-visible">
+      <div className="flex gap-3 overflow-x-auto sm:flex-wrap sm:items-center sm:overflow-visible pb-1 sm:pb-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 min-h-[44px] sm:min-h-0 bg-muted/20 shrink-0">
           <MapPin className="h-4 w-4 text-muted-foreground" />
           <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)}
@@ -315,12 +315,12 @@ export default function SearchIntelligencePage() {
 
       {/* Trend chart */}
       <div className="bg-card border border-border/60 rounded-xl p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div>
             <h3 className="text-base font-bold text-foreground">Visibility Trend</h3>
             <p className="text-xs text-muted-foreground">Monthly impressions — branded vs discovery</p>
           </div>
-          <div className="flex items-center gap-4 text-xs font-semibold">
+          <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">
             <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-indigo-500" />Branded</span>
             <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />Discovery</span>
           </div>
@@ -386,19 +386,19 @@ export default function SearchIntelligencePage() {
         <div className="bg-card border border-border/60 rounded-xl p-6 shadow-sm">
           <h3 className="text-base font-bold text-foreground mb-4">Location Comparison</h3>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs text-muted-foreground uppercase border-b border-border/60">
-                <tr>
-                  <th className="py-3"><button onClick={() => toggleCmpSort('location_name')} className="inline-flex items-center gap-1 hover:text-foreground">Location <CmpSortIcon k="location_name" /></button></th>
-                  <th className="py-3 text-right"><button onClick={() => toggleCmpSort('impressions')} className="inline-flex items-center gap-1 hover:text-foreground ml-auto">Impressions <CmpSortIcon k="impressions" /></button></th>
-                  <th className="py-3 text-right"><button onClick={() => toggleCmpSort('mom_growth')} className="inline-flex items-center gap-1 hover:text-foreground ml-auto">vs Prior <CmpSortIcon k="mom_growth" /></button></th>
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-border/60 text-muted-foreground font-semibold">
+                  <th className="pb-3"><button onClick={() => toggleCmpSort('location_name')} className="inline-flex items-center gap-1 hover:text-foreground">Location <CmpSortIcon k="location_name" /></button></th>
+                  <th className="pb-3 text-right"><button onClick={() => toggleCmpSort('impressions')} className="inline-flex items-center gap-1 hover:text-foreground ml-auto">Impressions <CmpSortIcon k="impressions" /></button></th>
+                  <th className="pb-3 text-right"><button onClick={() => toggleCmpSort('mom_growth')} className="inline-flex items-center gap-1 hover:text-foreground ml-auto">vs Prior <CmpSortIcon k="mom_growth" /></button></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border/40">
+              <tbody className="divide-y divide-border/40 font-medium">
                 {comparison.map((c) => (
-                  <tr key={c.location_id} className="hover:bg-muted/10">
-                    <td className="py-3">
-                      <Link href={`/dashboard/locations/${c.location_id}`} className="font-medium hover:text-indigo-600 hover:underline">
+                  <tr key={c.location_id} className="hover:bg-muted/10 transition-colors">
+                    <td className="py-3 pr-2">
+                      <Link href={`/dashboard/locations/${c.location_id}`} className="text-foreground hover:underline hover:text-indigo-600 transition-colors">
                         {c.location_name}
                       </Link>
                     </td>
@@ -419,15 +419,15 @@ export default function SearchIntelligencePage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search keywords…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
-          <div className="flex items-center gap-2">
-            <select className="h-11 sm:h-10 flex-1 sm:flex-none px-3 rounded-md border border-input bg-background text-sm"
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+            <select className="h-11 sm:h-10 flex-1 min-w-[140px] sm:flex-none px-3 rounded-md border border-input bg-background text-sm"
               value={isBrandFilter === null ? 'all' : isBrandFilter ? 'brand' : 'non-brand'}
               onChange={(e) => { const v = e.target.value; setIsBrandFilter(v === 'all' ? null : v === 'brand') }}>
               <option value="all">All Keywords</option>
               <option value="brand">Branded Only</option>
               <option value="non-brand">Discovery Only</option>
             </select>
-            <select className="h-11 sm:h-10 flex-1 sm:flex-none px-3 rounded-md border border-input bg-background text-sm"
+            <select className="h-11 sm:h-10 flex-1 min-w-[140px] sm:flex-none px-3 rounded-md border border-input bg-background text-sm"
               value={sort} onChange={(e) => setSort(e.target.value)}>
               <option value="impressions_desc">Impressions ↓</option>
               <option value="impressions_asc">Impressions ↑</option>
@@ -437,53 +437,54 @@ export default function SearchIntelligencePage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs text-muted-foreground uppercase bg-muted/30 border-b border-border/60">
-              <tr>
-                <th className="px-6 py-4 font-semibold">
-                  <button onClick={() => handleHeaderSort('keyword')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
-                    Keyword <SortIcon col="keyword" />
-                  </button>
-                </th>
-                <th className="px-6 py-4 font-semibold text-right">
-                  <button onClick={() => handleHeaderSort('impressions')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors ml-auto">
-                    Impressions <SortIcon col="impressions" />
-                  </button>
-                </th>
-                <th className="px-6 py-4 font-semibold text-right">vs Prior</th>
-                <th className="px-6 py-4 font-semibold text-right">Category</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                    <p>Loading intelligence data…</p>
-                  </div>
-                </td></tr>
-              ) : error ? (
-                <tr><td colSpan={4} className="px-6 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <AlertCircle className="h-6 w-6 text-amber-500" />
-                    <p className="font-medium text-foreground">Couldn&apos;t load search keywords</p>
+        <div className="p-6">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-border/60 text-muted-foreground font-semibold">
+                  <th className="pb-3">
+                    <button onClick={() => handleHeaderSort('keyword')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
+                      Keyword <SortIcon col="keyword" />
+                    </button>
+                  </th>
+                  <th className="pb-3 text-right">
+                    <button onClick={() => handleHeaderSort('impressions')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors ml-auto">
+                      Impressions <SortIcon col="impressions" />
+                    </button>
+                  </th>
+                  <th className="pb-3 text-right">vs Prior</th>
+                  <th className="pb-3 text-right">Category</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40 font-medium">
+                {loading ? (
+                  <tr><td colSpan={4} className="py-12 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                      <p>Loading intelligence data…</p>
+                    </div>
+                  </td></tr>
+                ) : error ? (
+                  <tr><td colSpan={4} className="py-12 text-center">
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <AlertCircle className="h-6 w-6 text-amber-500" />
+                      <p className="text-foreground">Couldn&apos;t load search keywords</p>
                     <button onClick={fetchKeywords} className="text-sm font-medium text-indigo-600 hover:underline">Retry</button>
                   </div>
                 </td></tr>
               ) : keywords.length === 0 ? (
-                <tr><td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
+                <tr><td colSpan={4} className="py-12 text-center text-muted-foreground">
                   No keywords found. Try a wider date range or click <span className="font-semibold">Sync Now</span>.
                 </td></tr>
               ) : (
                 keywords.map((kw: any, idx) => (
-                  <tr key={idx} className="border-b border-border/40 hover:bg-muted/20">
-                    <td className="px-6 py-4 font-medium text-foreground">{kw.keyword}</td>
-                    <td className="px-6 py-4 text-right font-semibold text-indigo-600">{(kw.impressions ?? 0).toLocaleString()}</td>
-                    <td className="px-6 py-4 text-right">
+                  <tr key={idx} className="hover:bg-muted/10 transition-colors">
+                    <td className="py-3 text-foreground break-words max-w-[200px]">{kw.keyword}</td>
+                    <td className="py-3 text-right text-muted-foreground">{(kw.impressions ?? 0).toLocaleString()}</td>
+                    <td className="py-3 text-right">
                       <span title={`Prior period: ${(kw.impressions_prior ?? 0).toLocaleString()} impressions`}>
                         {kw.mom_growth === null && (kw.impressions_prior ?? 0) === 0 && (kw.impressions ?? 0) > 0 ? (
-                          <span className="inline-flex items-center text-xs font-bold text-emerald-600">
+                          <span className="inline-flex items-center text-xs font-bold text-emerald-600 dark:text-emerald-400">
                             <TrendingUp className="h-3 w-3 mr-0.5" /> New
                           </span>
                         ) : (
@@ -491,7 +492,7 @@ export default function SearchIntelligencePage() {
                         )}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="py-3 text-right">
                       {kw.is_brand_term
                         ? <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 shadow-none">Brand</Badge>
                         : <Badge variant="outline" className="text-muted-foreground shadow-none">Discovery</Badge>}
@@ -501,6 +502,7 @@ export default function SearchIntelligencePage() {
               )}
             </tbody>
           </table>
+        </div>
         </div>
 
         <div className="p-4 border-t border-border/60 flex items-center justify-between bg-muted/20">
