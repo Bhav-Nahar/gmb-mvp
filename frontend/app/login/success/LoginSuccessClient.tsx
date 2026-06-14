@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { RefreshCw, CheckCircle2 } from 'lucide-react'
-import { api } from '@/lib/api'
+import { api, storeCsrfToken } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 
 function LoginSuccessContent() {
@@ -19,8 +19,19 @@ function LoginSuccessContent() {
     const fetchAndRedirect = async () => {
       try {
         setStatusMessage('Establishing workspace...')
-        // The backend has already set the gmb_auth_token and gmb_csrf_token cookies.
-        // refresh() will call /users/me which verifies these cookies.
+        // Call /auth/refresh to rotate tokens and get the CSRF token in the response body.
+        // We store it in localStorage because document.cookie cannot read cross-domain cookies
+        // (frontend on vercel.app, backend on railway.app).
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+        const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        })
+        if (refreshRes.ok) {
+          const data = await refreshRes.json()
+          if (data?.csrf_token) storeCsrfToken(data.csrf_token)
+        }
         await refresh()
 
         setStatusMessage('Onboarding workspace...')
