@@ -115,6 +115,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_razorpay(self) -> "Settings":
+        import os
+        # Skip validation in Celery worker processes — they don't handle billing routes
+        if os.environ.get("CELERY_WORKER") == "1":
+            return self
         if self.APP_ENV != "development":
             if not self.RAZORPAY_KEY_ID or not self.RAZORPAY_KEY_SECRET or not self.RAZORPAY_WEBHOOK_SECRET:
                 raise ValueError("FATAL: Razorpay credentials must be set in production")
