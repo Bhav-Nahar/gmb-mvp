@@ -23,10 +23,10 @@ export default function PrivacyPage() {
           <ArrowLeft className="h-4 w-4" /> Back to home
         </Link>
 
-        <h1 className="mt-8 text-3xl font-extrabold tracking-tight sm:text-4xl">Privacy Policy</h1>
+        <h1 className="mt-8 text-2xl font-extrabold tracking-tight sm:text-4xl">Privacy Policy</h1>
         <p className="mt-2 text-sm text-muted-foreground">Last updated: {updated}</p>
 
-        <div className="mt-10 space-y-8 text-sm leading-relaxed text-muted-foreground">
+        <div className="mt-10 space-y-8 text-[15px] leading-relaxed sm:text-sm text-muted-foreground">
           <section className="space-y-3">
             <p>
               This Privacy Policy explains how GBP Manager Pro (&ldquo;we&rdquo;, &ldquo;us&rdquo;) collects, uses, and
@@ -55,7 +55,7 @@ export default function PrivacyPage() {
                 href="https://developers.google.com/terms/api-services-user-data-policy"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-primary hover:underline"
+                className="text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
               >
                 Google API Services User Data Policy
               </a>
@@ -67,7 +67,7 @@ export default function PrivacyPage() {
                 href="https://myaccount.google.com/permissions"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-primary hover:underline"
+                className="text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
               >
                 Google Account permissions
               </a>{' '}
@@ -116,7 +116,7 @@ export default function PrivacyPage() {
                 href="https://wa.me/917021052482"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-primary hover:underline"
+                className="text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
               >
                 WhatsApp
               </a>

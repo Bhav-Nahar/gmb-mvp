@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { Inter } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,11 @@ export const metadata: Metadata = {
     title: 'GBP Manager Pro',
     description: 'Manage every Google Business Profile from one dashboard. Secure Google OAuth. 7-day free trial.',
   },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
 }
 
 export default function RootLayout({

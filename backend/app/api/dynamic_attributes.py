@@ -11,7 +11,7 @@ import json
 
 from app.api.posts import get_redis
 
-from app.api.deps import get_db, get_current_user, staff_required, get_user_location_ids
+from app.api.deps import get_db, get_current_user, staff_required, require_location_access
 from app.models.user import User
 from app.models.location import Location
 from app.models.gbp_attribute_definition import GbpAttributeDefinition
@@ -30,13 +30,6 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-def assert_location_access(current_user: User, location_id: int, db: Session) -> None:
-    """Per-user location-scope guard. Delegates to the centralized helper in
-    app.core.authorization so org-boundary + location-scope stay in one place."""
-    from app.core.authorization import assert_location_access as _assert
-    _assert(db, current_user, location_id)
-
 
 def get_category_id(category_name: str) -> str:
     if not category_name:
@@ -64,7 +57,7 @@ def get_category_id(category_name: str) -> str:
 
 @router.get("/{location_id}/form-schema")
 async def get_form_schema(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -75,8 +68,6 @@ async def get_form_schema(
     
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-
-    assert_location_access(current_user, location_id, db)
 
     cache_key = f"location:attributes_schema:{location_id}"
     redis_client = None
@@ -229,8 +220,8 @@ async def get_form_schema(
 
 @router.post("/{location_id}/draft-attributes")
 def save_draft_attributes(
-    location_id: int,
     payload: Dict[str, Any],
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -241,8 +232,6 @@ def save_draft_attributes(
 
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-
-    assert_location_access(current_user, location_id, db)
 
     if not location.primary_category:
         raise HTTPException(status_code=400, detail="Location has no primary category")
@@ -350,7 +339,7 @@ def save_draft_attributes(
 
 @router.post("/{location_id}/publish-attributes")
 async def publish_attributes(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -361,8 +350,6 @@ async def publish_attributes(
     
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-
-    assert_location_access(current_user, location_id, db)
 
     if not location.google_location_id:
         raise HTTPException(status_code=400, detail="Location is not linked to Google")
@@ -398,7 +385,7 @@ async def publish_attributes(
 
 @router.get("/{location_id}/publish-status")
 def get_publish_status(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -408,8 +395,6 @@ def get_publish_status(
     ).first()
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-
-    assert_location_access(current_user, location_id, db)
 
     return {
         "status": location.sync_status,
@@ -422,8 +407,8 @@ class SuppressRejectionRequest(BaseModel):
 
 @router.post("/{location_id}/suppress-rejection")
 def suppress_rejection(
-    location_id: int,
     payload: SuppressRejectionRequest,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -434,8 +419,6 @@ def suppress_rejection(
     
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-
-    assert_location_access(current_user, location_id, db)
 
     rejection = db.query(GbpLocationAttributeRejection).filter(
         GbpLocationAttributeRejection.location_id == location_id,

@@ -6,6 +6,7 @@ export interface BillingStatus {
   plan: string;
   subscription_status: string;
   monthly_ai_credits_balance: number;
+  monthly_ai_credits_allowance?: number;
   topup_ai_credits_balance: number;
   location_quota: number;
   active_location_count?: number;
@@ -36,6 +37,40 @@ export function useBillingStatus(enabled = true) {
     queryFn: () => api.get<BillingStatus>('/billing/status'),
     enabled: !!user && enabled,
     retry: false,
+  });
+}
+
+export interface BillingTransactionRow {
+  id: number;
+  type: string;
+  credits?: number | null;
+  amount_paise?: number | null;
+  currency: string;
+  status?: string | null;
+  invoice_url?: string | null;
+  created_at: string;
+}
+
+export interface BillingTransactionsPage {
+  total: number;
+  limit: number;
+  offset: number;
+  transactions: BillingTransactionRow[];
+}
+
+export function useBillingTransactions(page = 0, pageSize = 10, enabled = true) {
+  const { user } = useAuth();
+  const offset = page * pageSize;
+
+  return useQuery({
+    queryKey: ['billing_transactions', pageSize, offset],
+    queryFn: () =>
+      api.get<BillingTransactionsPage>(
+        `/billing/transactions?limit=${pageSize}&offset=${offset}`
+      ),
+    enabled: !!user && enabled,
+    retry: false,
+    placeholderData: (prev) => prev,
   });
 }
 

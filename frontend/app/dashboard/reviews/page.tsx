@@ -321,19 +321,19 @@ export default function ReviewsPage(props: any) {
           
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             {!locationId && (<div>
-              <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
-                <MessageSquare className="h-8 w-8 text-primary" />
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
+                <MessageSquare className="h-7 w-7 sm:h-8 sm:w-8 text-primary shrink-0" />
                 Customer Reviews
               </h1>
               <p className="text-muted-foreground mt-2">Manage and respond to Google Business Profile reviews.</p>
             </div>)}
             
             {userRole !== 'Viewer' && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={handleTriggerSync}
                   disabled={syncing}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                  className="flex flex-1 sm:flex-none items-center justify-center gap-2 px-4 py-2 min-h-[44px] sm:min-h-0 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                 >
                   <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
                   <span>{syncing ? 'Syncing...' : 'Sync Reviews'}</span>
@@ -342,7 +342,7 @@ export default function ReviewsPage(props: any) {
                   <button
                     onClick={handleRetag}
                     disabled={retagging || retagDisabled}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-teal-300 border border-teal-500/40 hover:bg-teal-500/10 disabled:opacity-50 transition-colors"
+                    className="flex flex-1 sm:flex-none items-center justify-center gap-2 px-4 py-2 min-h-[44px] sm:min-h-0 rounded-lg text-sm font-semibold text-teal-300 border border-teal-500/40 hover:bg-teal-500/10 disabled:opacity-50 transition-colors"
                   >
                     <RefreshCw className={`h-4 w-4 ${retagging ? 'animate-spin' : ''}`} />
                     <span>{retagging ? 'Retagging...' : 'Retag Sentiment'}</span>
@@ -367,11 +367,11 @@ export default function ReviewsPage(props: any) {
           )}
 
           {/* Filters */}
-          <div className="bg-card border border-border p-4 rounded-xl shadow-sm flex flex-wrap items-center gap-4">
-            <div className="flex flex-col gap-1.5">
+          <div className="bg-card border border-border p-4 rounded-xl shadow-sm flex gap-3 overflow-x-auto sm:flex-wrap sm:items-center sm:gap-4 sm:overflow-visible">
+            <div className="flex flex-col gap-1.5 shrink-0">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Rating</label>
-              <select 
-                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
+              <select
+                className="bg-background border border-input rounded-lg text-sm px-3 min-h-[44px] py-1.5 sm:min-h-0 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterRating}
                 onChange={e => setFilterRating(e.target.value ? Number(e.target.value) : '')}
               >
@@ -383,11 +383,11 @@ export default function ReviewsPage(props: any) {
                 <option value="1">1 Star</option>
               </select>
             </div>
-            
-            <div className="flex flex-col gap-1.5">
+
+            <div className="flex flex-col gap-1.5 shrink-0">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Status</label>
-              <select 
-                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
+              <select
+                className="bg-background border border-input rounded-lg text-sm px-3 min-h-[44px] py-1.5 sm:min-h-0 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterReplied}
                 onChange={e => setFilterReplied(e.target.value as any)}
               >
@@ -396,11 +396,11 @@ export default function ReviewsPage(props: any) {
                 <option value="replied">Replied</option>
               </select>
             </div>
-            
-            {!locationId && (<div className="flex flex-col gap-1.5">
+
+            {!locationId && (<div className="flex flex-col gap-1.5 shrink-0">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Location</label>
-              <select 
-                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
+              <select
+                className="bg-background border border-input rounded-lg text-sm px-3 min-h-[44px] py-1.5 sm:min-h-0 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterLocation}
                 onChange={e => setFilterLocation(e.target.value ? Number(e.target.value) : '')}
               >
@@ -411,10 +411,10 @@ export default function ReviewsPage(props: any) {
               </select>
             </div>)}
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 shrink-0">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Sentiment</label>
               <select
-                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
+                className="bg-background border border-input rounded-lg text-sm px-3 min-h-[44px] py-1.5 sm:min-h-0 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterSentiment}
                 onChange={e => setFilterSentiment(e.target.value)}
               >
@@ -426,10 +426,10 @@ export default function ReviewsPage(props: any) {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 shrink-0">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category</label>
               <select
-                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
+                className="bg-background border border-input rounded-lg text-sm px-3 min-h-[44px] py-1.5 sm:min-h-0 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterCategory}
                 onChange={e => { setFilterCategory(e.target.value); setCurrentPage(1); }}
               >
@@ -445,10 +445,10 @@ export default function ReviewsPage(props: any) {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 shrink-0">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">SLA Tier</label>
               <select
-                className="bg-background border border-input rounded-lg text-sm px-3 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
+                className="bg-background border border-input rounded-lg text-sm px-3 min-h-[44px] py-1.5 sm:min-h-0 text-foreground outline-none focus:ring-1 focus:ring-primary"
                 value={filterSlaTier}
                 onChange={e => { setFilterSlaTier(e.target.value); setCurrentPage(1); }}
               >
@@ -459,12 +459,12 @@ export default function ReviewsPage(props: any) {
                 <option value="Poor">Poor</option>
               </select>
             </div>
-            
-            <div className="flex items-center gap-2 pt-5">
-              <label className="text-sm font-bold text-foreground flex items-center gap-2 cursor-pointer">
+
+            <div className="flex items-center gap-2 shrink-0 sm:pt-5">
+              <label className="text-sm font-bold text-foreground flex items-center gap-2 cursor-pointer whitespace-nowrap min-h-[44px] sm:min-h-0">
                 <input
                   type="checkbox"
-                  className="rounded bg-background border-input text-primary focus:ring-primary"
+                  className="rounded bg-background border-input text-primary focus:ring-primary h-5 w-5 sm:h-4 sm:w-4"
                   checked={filterOverdue}
                   onChange={e => { setFilterOverdue(e.target.checked); setCurrentPage(1); }}
                 />
@@ -476,9 +476,9 @@ export default function ReviewsPage(props: any) {
           {filterLocation !== '' && slaMetrics && (
             <div className="bg-card shadow-sm border border-border p-4 rounded-xl flex items-center justify-between">
               {!slaMetrics.sla_enabled ? (
-                <div className="flex items-center justify-between w-full">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between w-full">
                   <span className="text-sm text-muted-foreground">SLA Tracking is not enabled for this location.</span>
-                  <button onClick={() => setShowSlaModal(true)} className="px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 transition-colors">Enable SLA Tracking</button>
+                  <button onClick={() => setShowSlaModal(true)} className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 transition-colors">Enable SLA Tracking</button>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-6">
@@ -530,11 +530,11 @@ export default function ReviewsPage(props: any) {
                           <UserIcon className="h-5 w-5 text-muted-foreground" />
                         </div>
                       )}
-                      <div>
+                      <div className="min-w-0">
                         <h4 className="font-bold text-foreground">{review.reviewer_name}</h4>
-                        <div className="flex items-center gap-2 mt-0.5">
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           <span className="text-xs text-muted-foreground">{new Date(review.review_created_at).toLocaleDateString()}</span>
-                          <span className="text-[10px] bg-muted/40 px-2 py-0.5 rounded-full text-primary font-medium">
+                          <span className="text-xs sm:text-[10px] bg-muted/40 px-2 py-0.5 rounded-full text-primary font-medium">
                             {locations.find(l => l.id === review.location_id)?.location_name || 'Unknown Location'}
                           </span>
                         </div>
@@ -551,7 +551,7 @@ export default function ReviewsPage(props: any) {
                       <div className="flex items-center gap-1.5 flex-wrap justify-end">
                         {renderSlaBadge(review)}
                         {review.sentiment && (
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs sm:text-[10px] font-semibold ${
                             review.sentiment === 'Positive' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' :
                             review.sentiment === 'Neutral'  ? 'bg-slate-500/15 text-slate-400 border border-slate-500/30' :
                             review.sentiment === 'Negative' ? 'bg-red-500/15 text-red-400 border border-red-500/30' :
@@ -562,7 +562,7 @@ export default function ReviewsPage(props: any) {
                           </span>
                         )}
                         {review.issue_category && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-700/40 text-blue-300 border border-slate-600/50">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs sm:text-[10px] font-medium bg-slate-700/40 text-blue-300 border border-slate-600/50">
                             {review.issue_category}
                           </span>
                         )}
@@ -579,7 +579,7 @@ export default function ReviewsPage(props: any) {
                   <div className="pt-2">
                     {review.is_replied ? (
                       <div className="pl-4 border-l-2 border-primary/50 space-y-1 mt-2">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-primary">Your Reply</span>
+                        <span className="text-xs sm:text-[10px] font-bold uppercase tracking-wider text-primary">Your Reply</span>
                         <p className="text-sm text-muted-foreground bg-primary/5 p-3 rounded-r-lg border border-primary/10">
                           {review.reply_text}
                         </p>
@@ -622,7 +622,7 @@ export default function ReviewsPage(props: any) {
                           }}
                           className="min-h-[100px] w-full rounded-lg border border-input bg-background text-foreground p-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                         />
-                        <div className="flex gap-3 justify-end">
+                        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-3 sm:justify-end">
                           <button
                             onClick={() => {
                               const newReplies = { ...generatedReplies };
@@ -632,14 +632,14 @@ export default function ReviewsPage(props: any) {
                               delete newErrors[review.id];
                               setGenerationError(newErrors);
                             }}
-                            className="px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors border border-transparent hover:border-border rounded-lg"
+                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors border border-border sm:border-transparent hover:border-border rounded-lg"
                           >
                             Discard
                           </button>
                           <button
                             onClick={() => handlePostAiReply(review.id)}
                             disabled={replying || !generatedReplies[review.id].reply.trim()}
-                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                           >
                             <Send className="h-4 w-4" />
                             {replying ? 'Sending...' : 'Send Reply'}
@@ -654,17 +654,17 @@ export default function ReviewsPage(props: any) {
                           placeholder="Write your response..."
                           className="w-full bg-background border border-input rounded-lg p-3 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary min-h-[100px]"
                         />
-                        <div className="flex gap-3 justify-end">
+                        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-3 sm:justify-end">
                           <button
                             onClick={() => { setReplyingTo(null); setReplyText(''); }}
-                            className="px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors border border-border sm:border-0 rounded-lg"
                           >
                             Cancel
                           </button>
                           <button
                             onClick={() => handlePostReply(review.id)}
                             disabled={replying || !replyText.trim()}
-                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                           >
                             <Send className="h-4 w-4" />
                             {replying ? 'Sending...' : 'Post Reply'}
@@ -673,17 +673,17 @@ export default function ReviewsPage(props: any) {
                       </div>
                     ) : userRole !== 'Viewer' ? (
                       <div className="mt-4">
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                           <button
                             onClick={() => { setReplyingTo(review.id); setReplyText(''); }}
-                            className="text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
+                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 flex items-center justify-center px-4 py-2 sm:p-0 rounded-lg sm:rounded-none text-sm font-semibold text-primary-foreground sm:text-primary bg-primary sm:bg-transparent hover:bg-primary/90 sm:hover:bg-transparent sm:hover:text-primary/80 transition-colors"
                           >
                             Reply to Review
                           </button>
                           <button
                             onClick={() => handleGenerateReply(review.id)}
                             disabled={generatingFor === review.id}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-purple-600 border border-purple-500/40 hover:bg-purple-500/10 disabled:opacity-50 transition-all"
+                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg text-sm sm:text-xs font-semibold text-purple-600 border border-purple-500/40 hover:bg-purple-500/10 disabled:opacity-50 transition-all"
                           >
                             {generatingFor === review.id ? (
                               <>
@@ -712,7 +712,7 @@ export default function ReviewsPage(props: any) {
                   <button
                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                     disabled={currentPage === 1 || loading}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold border border-border text-foreground hover:bg-muted/50 disabled:opacity-50"
+                    className="px-4 py-2 min-h-[44px] sm:min-h-0 rounded-lg text-sm font-semibold border border-border text-foreground hover:bg-muted/50 disabled:opacity-50"
                   >
                     Previous
                   </button>
@@ -722,7 +722,7 @@ export default function ReviewsPage(props: any) {
                   <button
                     onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                     disabled={currentPage === totalPages || loading}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold border border-border text-foreground hover:bg-muted/50 disabled:opacity-50"
+                    className="px-4 py-2 min-h-[44px] sm:min-h-0 rounded-lg text-sm font-semibold border border-border text-foreground hover:bg-muted/50 disabled:opacity-50"
                   >
                     Next
                   </button>
@@ -732,23 +732,23 @@ export default function ReviewsPage(props: any) {
           )}
 
           {showSlaModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-              <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
+            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 sm:backdrop-blur-sm">
+              <div className="bg-card border border-border w-full sm:max-w-md max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-xl p-6 shadow-2xl">
                 <h3 className="text-xl font-bold text-foreground mb-2">Enable SLA Tracking</h3>
                 <p className="text-sm text-muted-foreground mb-6">
                   Start tracking response times from today? Historical reviews will remain visible but will not affect SLA metrics or rankings.
                 </p>
-                <div className="flex justify-end gap-3">
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
                   <button
                     onClick={() => setShowSlaModal(false)}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                    className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors border border-border sm:border-0"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleEnableSla}
                     disabled={enablingSla}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                    className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                   >
                     {enablingSla ? 'Enabling...' : 'Enable from Today'}
                   </button>

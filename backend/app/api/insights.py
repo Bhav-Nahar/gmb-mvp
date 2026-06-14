@@ -850,9 +850,9 @@ def check_and_trigger_stale_insights_sync(organization_id: int, db: Session, for
     return {"triggered": False, "reason": "sync_already_in_progress" if (state and state.insights_sync_in_progress) else "data_is_fresh"}
 
 
-@router.post("/locations/{id}/sync", response_model=InsightsSyncPostResponse)
+@router.post("/locations/{location_id}/sync", response_model=InsightsSyncPostResponse)
 def trigger_insights_sync(
-    id: int,
+    location_id: int = Depends(deps.require_location_access),
     start_date: Optional[datetime.date] = Query(None),
     end_date: Optional[datetime.date] = Query(None),
     scope: str = Query("all", regex="^(daily|keywords|all)$"),
@@ -862,8 +862,7 @@ def trigger_insights_sync(
     """
     Manually trigger performance and reputation insights synchronization for a location (now invokes organization-wide sync).
     """
-    from app.core.authorization import assert_location_access
-    assert_location_access(db, current_user, id)
+    # Location scope is enforced by the require_location_access dependency.
     result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=True, scope=scope)
     return InsightsSyncPostResponse(
         task_id="org-orchestrated",

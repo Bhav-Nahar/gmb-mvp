@@ -116,7 +116,8 @@ class WebhookService:
         if not org:
             return
         payment = payload.get("payload", {}).get("payment", {}).get("entity", {})
-        WebhookService.apply_subscription_charged(db, org, subscription, payment)
+        invoice = payload.get("payload", {}).get("invoice", {}).get("entity", {})
+        WebhookService.apply_subscription_charged(db, org, subscription, payment, invoice)
 
     @staticmethod
     def apply_subscription_charged(
@@ -124,6 +125,7 @@ class WebhookService:
         org: Organization,
         subscription: Dict[str, Any],
         payment: Dict[str, Any] | None = None,
+        invoice: Dict[str, Any] | None = None,
     ) -> None:
         """Grant the entitlements for an active/charged subscription and record the
         charge. Shared by the webhook and the reconciliation path so both apply
@@ -253,6 +255,7 @@ class WebhookService:
             razorpay_payment_id=payment_id,
             razorpay_order_id=payment.get("order_id"),
             razorpay_subscription_id=subscription.get("id"),
+            invoice_url=(invoice or {}).get("short_url"),
         ))
 
     @staticmethod
@@ -292,19 +295,37 @@ class WebhookService:
 
     @staticmethod
     def _handle_refund(db: Session, payload: Dict[str, Any]) -> None:
-        """Reverse entitlements for a refunded payment. Top-up credit refunds are
-        reversed automatically; quota-bearing refunds (subscription/add-on) are logged
-        for manual reconciliation because reclaiming a specific location is a product
-        decision, not a mechanical one."""
+        """Reverse entitlements for a refunded payment.
+
+        - Top-up credit refunds: credits are clawed back directly.
+        - Quota-bearing refunds (subscription/add-on): a FULL refund locks the org
+          until it re-subscribes, because we don't track exactly which locations an
+          add-on unlocked and reclaiming a specific one is a product decision. Failing
+          CLOSED here is what kills the "pay -> consume credits/syncs -> refund ->
+          keep all entitlements" abuse path (BE-BILLING-2). Partial refunds are flagged
+          for manual reconciliation without locking.
+
+        Idempotent: a `refund_reversal` ledger row keyed on the payment id is written
+        exactly once (also backstopped by the partial-unique DB index)."""
         refund = payload.get("payload", {}).get("refund", {}).get("entity", {})
         payment_id = refund.get("payment_id")
         if not payment_id:
             return
         txn = db.query(BillingTransaction).filter(
-            BillingTransaction.razorpay_payment_id == payment_id
+            BillingTransaction.razorpay_payment_id == payment_id,
+            BillingTransaction.transaction_type != "refund_reversal",
         ).first()
         if not txn:
             logger.warning("Refund for unknown payment %s; nothing to reverse.", payment_id)
+            return
+
+        # Idempotency: skip if this refund was already reversed.
+        already_reversed = db.query(BillingTransaction).filter(
+            BillingTransaction.razorpay_payment_id == payment_id,
+            BillingTransaction.transaction_type == "refund_reversal",
+        ).first()
+        if already_reversed:
+            logger.info("Refund for payment %s already reversed. Skipping.", payment_id)
             return
 
         stmt = select(Organization).where(Organization.id == txn.organization_id).with_for_update()
@@ -312,16 +333,51 @@ class WebhookService:
         if not org:
             return
 
+        refund_paise = refund.get("amount") or 0
+        original_paise = txn.amount_paise or 0
+        is_full_refund = original_paise > 0 and refund_paise >= original_paise
+
         if txn.transaction_type == "topup_charge" and txn.credits:
             org.topup_ai_credits_balance = max(0, (org.topup_ai_credits_balance or 0) - txn.credits)
             logger.info("Reversed %s top-up credits for org %s on refund of %s",
                         txn.credits, org.id, payment_id)
+        elif txn.transaction_type in ("subscription_charge", "location_addon"):
+            if is_full_refund:
+                # Revoke entitlement by locking the org until it pays again. The exact
+                # quota/credit figures are reconciled manually, but the org cannot keep
+                # serving paid features for free in the meantime.
+                org.subscription_status = "locked"
+                org.grace_period_ends_at = None
+                org.subscription_ends_at = None
+                logger.warning(
+                    "FULL refund of %s payment %s for org %s: org LOCKED pending "
+                    "re-subscription. Verify quota/credits manually.",
+                    txn.transaction_type, payment_id, org.id,
+                )
+            else:
+                logger.warning(
+                    "PARTIAL refund (%s of %s paise) of %s payment %s for org %s needs "
+                    "MANUAL reconciliation.",
+                    refund_paise, original_paise, txn.transaction_type, payment_id, org.id,
+                )
         else:
             logger.warning(
-                "Refund of %s payment %s for org %s grants quota/credits that need MANUAL "
-                "reconciliation (type=%s).", txn.transaction_type, payment_id, org.id,
-                txn.transaction_type,
+                "Refund of payment %s (type=%s) for org %s has no automatic reversal rule; "
+                "manual review required.", payment_id, txn.transaction_type, org.id,
             )
+
+        # Record the reversal so a redelivered refund webhook is a no-op.
+        db.add(BillingTransaction(
+            organization_id=org.id,
+            transaction_type="refund_reversal",
+            amount_paise=refund_paise,
+            currency=refund.get("currency") or txn.currency,
+            status="success",
+            razorpay_payment_id=payment_id,
+            razorpay_order_id=txn.razorpay_order_id,
+            razorpay_subscription_id=txn.razorpay_subscription_id,
+            source="razorpay_refund",
+        ))
 
     @staticmethod
     def _handle_payment_captured(db: Session, payload: Dict[str, Any]) -> None:

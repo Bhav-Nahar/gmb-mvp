@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
-from app.api.deps import get_db, get_current_user, admin_required, staff_required, verify_location_access, get_user_location_ids
-from app.core.roles import Role, ADMIN_ROLES
+from app.api.deps import get_db, get_current_user, admin_required, staff_required, require_location_access
+from app.core.roles import Role
 from app.core.authorization import assert_location_access
 from app.models.user import User
 from app.models.location_edit import LocationEdit
@@ -45,11 +45,10 @@ def get_field_config(current_user: User = Depends(get_current_user)):
 
 @router.post("/locations/{location_id}/edits", response_model=LocationEditResponse, status_code=201)
 def create_edit(
-    location_id: int,
     payload: LocationEditCreate,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    _access: int = Depends(verify_location_access)
 ):
     """Staff: creates a Draft. Admin: creates and auto-advances to Pending."""
     from app.core.authorization import assert_location_active
@@ -77,7 +76,7 @@ def create_edit(
 
 @router.get("/locations/{location_id}/edits", response_model=list[LocationEditResponse])
 def list_edits(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     status_filter: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -110,12 +109,7 @@ def list_edits(
         LocationEdit.location_id == location_id,
         LocationEdit.organization_id == current_user.organization_id,
     )
-    # Enforce per-user location scope for every location-restricted role (Regional
-    # Manager, Store Manager, restricted Viewer). Org-wide roles (Owner/Admin and
-    # org-scoped Viewer) get None and pass through.
-    if get_user_location_ids(current_user, db) is not None:
-        assert_location_access(db, current_user, location_id)
-
+    # Location scope is enforced by the require_location_access dependency.
     # Store Managers additionally only see edits they personally submitted.
     if current_user.role == Role.STORE_MANAGER:
         query = query.filter(LocationEdit.submitted_by_user_id == current_user.id)
@@ -139,18 +133,9 @@ def submit_draft(
         if not edit_lookup:
             raise HTTPException(status_code=404, detail="Edit not found.")
             
-        # Verify access to the specific location this edit targets
-        from app.api.deps import verify_location_access
-        # We invoke the helper manually since we don't have location_id in the URL
-        # For a more robust fix, we'd refactor the dependency, but this is immediate.
-        from app.models.user_location_access import UserLocationAccess
-        if current_user.role not in ADMIN_ROLES:
-            has_access = db.query(UserLocationAccess).filter(
-                UserLocationAccess.user_id == current_user.id,
-                UserLocationAccess.location_id == edit_lookup.location_id
-            ).first()
-            if not has_access:
-                raise HTTPException(status_code=403, detail="You do not have access to this location.")
+        # Resource-indirect endpoint (no location_id in the URL), so enforce scope
+        # against the location this edit targets via the central helper.
+        assert_location_access(db, current_user, edit_lookup.location_id)
 
         edit = ListingEditService.submit_draft(
             db,
@@ -253,17 +238,14 @@ def publish_edit(
 
 @router.get("/locations/{location_id}/activity", response_model=list[ActivityLogResponse])
 def get_activity_log(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     limit: int = Query(50, le=200),
     offset: int = Query(0),
     entity_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Enforce per-user location scope for location-restricted roles.
-    if get_user_location_ids(current_user, db) is not None:
-        assert_location_access(db, current_user, location_id)
-
+    # Location scope is enforced by the require_location_access dependency.
     query = db.query(ActivityLog).filter(
         ActivityLog.location_id == location_id,
         ActivityLog.organization_id == current_user.organization_id,

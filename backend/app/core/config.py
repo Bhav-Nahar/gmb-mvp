@@ -11,11 +11,23 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    # Environment
-    APP_ENV: str = "development"
+    # Environment. Defaults to "production" so a deployment that forgets to set
+    # APP_ENV fails CLOSED (CSRF/HSTS/secret-validation stay on) rather than
+    # silently running in development mode. Local dev sets APP_ENV=development
+    # explicitly (see docker-compose.yml).
+    APP_ENV: str = "production"
 
     # Database
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@db:5432/gmb_db"
+
+    # Database connection pool. Defaults match SQLAlchemy's prior implicit
+    # behavior (pool_size=5, max_overflow=10, pool_timeout=30) so steady-state
+    # is unchanged; pool_recycle is added to avoid stale-connection errors on
+    # managed Postgres. All are env-tunable to right-size for concurrency.
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_RECYCLE_SECONDS: int = 1800
+    DB_POOL_TIMEOUT_SECONDS: int = 30
 
     @property
     def sqlalchemy_database_url(self) -> str:
@@ -41,15 +53,19 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_secrets(self) -> "Settings":
-        if self.APP_ENV != "development":
-            if not self.JWT_SECRET:
-                raise ValueError(
-                    "FATAL: JWT_SECRET must be set via environment variable in production"
-                )
-            if not self.ENCRYPTION_KEY:
-                raise ValueError(
-                    "FATAL: ENCRYPTION_KEY must be set via environment variable in production"
-                )
+        # JWT_SECRET signs every auth token and ENCRYPTION_KEY encrypts OAuth
+        # tokens at rest. An empty value here means tokens are signed with an
+        # empty key (forgeable) or tokens are not truly encrypted — there is no
+        # environment, development included, where that is acceptable. Validate
+        # unconditionally so misconfiguration fails loudly at startup.
+        if not self.JWT_SECRET:
+            raise ValueError(
+                "FATAL: JWT_SECRET must be set via environment variable"
+            )
+        if not self.ENCRYPTION_KEY:
+            raise ValueError(
+                "FATAL: ENCRYPTION_KEY must be set via environment variable"
+            )
         return self
 
     # Google OAuth

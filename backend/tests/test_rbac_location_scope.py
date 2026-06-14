@@ -1,15 +1,17 @@
 """Regression tests for per-user location-scope enforcement (horizontal privilege
 escalation within an organization).
 
-Each test sets up a Store Manager scoped to location A and asserts that acting on
-location B (same org, but not assigned) raises HTTP 403 — covering the endpoints
-hardened in the RBAC sweep: dynamic attributes, insights sync, billing unlock,
-posts campaign filter/resume/cancel, and listing-edits list/activity.
+Two enforcement styles are covered:
+  * Routes that take a location_id path param delegate to the require_location_access
+    FastAPI dependency — tested directly here (the dependency is a plain function).
+    One dependency test covers every endpoint wired to it (dynamic attributes,
+    locations, listing-edits list/activity/create, reviews retag, insights sync).
+  * Endpoints with an inline check (no location_id in the path, or a campaign-wide
+    action) are exercised by calling the handler directly.
 """
 import os
 import sys
 import types
-import asyncio
 import unittest
 
 from sqlalchemy import create_engine
@@ -49,7 +51,8 @@ from app.models.campaign import Campaign
 from app.models.publish_job import PublishJob
 from app.core.roles import Role
 from app.core.authorization import assert_location_access
-from app.api import dynamic_attributes, insights, billing, posts, listing_edits
+from app.api.deps import require_location_access
+from app.api import billing, posts, insights
 
 
 class LocationScopeRbacTests(unittest.TestCase):
@@ -99,37 +102,60 @@ class LocationScopeRbacTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
+    def _make_admin(self):
+        admin = User(
+            email="admin@acme.com",
+            name="Admin",
+            google_id="admin-gid",
+            role=Role.ADMIN,
+            is_active=True,
+            organization_id=self.org.id,
+        )
+        self.db.add(admin)
+        self.db.commit()
+        self.db.refresh(admin)
+        return admin
+
     def _assert_forbidden(self, callable_):
         with self.assertRaises(HTTPException) as ctx:
             callable_()
         self.assertEqual(ctx.exception.status_code, 403)
 
-    # --- positive control -------------------------------------------------
-    def test_assigned_location_is_allowed(self):
-        # The assigned location must NOT raise.
+    # --- require_location_access dependency (covers all location_id routes) ---
+    def test_require_location_access_blocks_foreign_location(self):
+        self._assert_forbidden(
+            lambda: require_location_access(
+                self.loc_b.id, db=self.db, current_user=self.store
+            )
+        )
+
+    def test_require_location_access_allows_assigned(self):
+        self.assertEqual(
+            require_location_access(self.loc_a.id, db=self.db, current_user=self.store),
+            self.loc_a.id,
+        )
+
+    def test_require_location_access_allows_org_wide_admin(self):
+        admin = self._make_admin()
+        # Admin has implicit org-wide access — no UserLocationAccess row needed.
+        self.assertEqual(
+            require_location_access(self.loc_b.id, db=self.db, current_user=admin),
+            self.loc_b.id,
+        )
+
+    # --- assert_location_access helper (used by resource-indirect endpoints) ---
+    def test_assert_location_access_allows_assigned(self):
         self.assertEqual(
             assert_location_access(self.db, self.store, self.loc_a.id),
             self.loc_a.id,
         )
 
-    # --- dynamic attributes ----------------------------------------------
-    def test_dynamic_attributes_form_schema_blocks_foreign_location(self):
+    def test_assert_location_access_blocks_foreign_location(self):
         self._assert_forbidden(
-            lambda: asyncio.run(
-                dynamic_attributes.get_form_schema(
-                    location_id=self.loc_b.id, db=self.db, current_user=self.store
-                )
-            )
+            lambda: assert_location_access(self.db, self.store, self.loc_b.id)
         )
 
-    # --- insights sync ----------------------------------------------------
-    def test_insights_location_sync_blocks_foreign_location(self):
-        self._assert_forbidden(
-            lambda: insights.trigger_insights_sync(
-                id=self.loc_b.id, current_user=self.store, db=self.db
-            )
-        )
-
+    # --- insights sync-all (inline org-wide guard) ----------------------------
     def test_insights_sync_all_blocks_restricted_user(self):
         self._assert_forbidden(
             lambda: insights.trigger_global_insights_sync(
@@ -137,9 +163,8 @@ class LocationScopeRbacTests(unittest.TestCase):
             )
         )
 
-    # --- billing unlock (cross-org IDOR) ----------------------------------
+    # --- billing unlock (inline; cross-org IDOR) ------------------------------
     def test_billing_unlock_blocks_cross_org_location(self):
-        # An admin of org1 must not be able to unlock a location in org2.
         org2 = Organization(name="Other")
         self.db.add(org2)
         self.db.commit()
@@ -154,18 +179,7 @@ class LocationScopeRbacTests(unittest.TestCase):
         self.db.commit()
         self.db.refresh(foreign_loc)
 
-        admin = User(
-            email="admin@acme.com",
-            name="Admin",
-            google_id="admin-gid",
-            role=Role.ADMIN,
-            is_active=True,
-            organization_id=self.org.id,
-        )
-        self.db.add(admin)
-        self.db.commit()
-        self.db.refresh(admin)
-
+        admin = self._make_admin()
         req = billing.UnlockLocationsRequest(location_ids=[foreign_loc.id])
         self._assert_forbidden(
             lambda: billing.unlock_locations(
@@ -173,7 +187,7 @@ class LocationScopeRbacTests(unittest.TestCase):
             )
         )
 
-    # --- posts: campaign list filter --------------------------------------
+    # --- posts: campaign list filter (inline) ---------------------------------
     def test_posts_list_campaigns_blocks_foreign_location(self):
         self._assert_forbidden(
             lambda: posts.list_campaigns(
@@ -181,8 +195,8 @@ class LocationScopeRbacTests(unittest.TestCase):
             )
         )
 
-    # --- posts: campaign resume / cancel ----------------------------------
-    def _make_paused_campaign_at_loc_b(self, status):
+    # --- posts: campaign resume / cancel (inline, campaign-wide) --------------
+    def _make_campaign_with_job_at_loc_b(self, status):
         post = Post(organization_id=self.org.id, summary="hi")
         campaign = Campaign(organization_id=self.org.id, name="C", status=status)
         self.db.add_all([post, campaign])
@@ -201,7 +215,7 @@ class LocationScopeRbacTests(unittest.TestCase):
         return campaign
 
     def test_posts_resume_campaign_blocks_foreign_location(self):
-        campaign = self._make_paused_campaign_at_loc_b("Paused")
+        campaign = self._make_campaign_with_job_at_loc_b("Paused")
         self._assert_forbidden(
             lambda: posts.resume_campaign(
                 id=campaign.id, db=self.db, current_user=self.store
@@ -209,25 +223,10 @@ class LocationScopeRbacTests(unittest.TestCase):
         )
 
     def test_posts_cancel_campaign_blocks_foreign_location(self):
-        campaign = self._make_paused_campaign_at_loc_b("Processing")
+        campaign = self._make_campaign_with_job_at_loc_b("Processing")
         self._assert_forbidden(
             lambda: posts.cancel_campaign(
                 id=campaign.id, db=self.db, current_user=self.store
-            )
-        )
-
-    # --- listing edits: list + activity -----------------------------------
-    def test_listing_edits_list_blocks_foreign_location(self):
-        self._assert_forbidden(
-            lambda: listing_edits.list_edits(
-                location_id=self.loc_b.id, db=self.db, current_user=self.store
-            )
-        )
-
-    def test_listing_edits_activity_blocks_foreign_location(self):
-        self._assert_forbidden(
-            lambda: listing_edits.get_activity_log(
-                location_id=self.loc_b.id, db=self.db, current_user=self.store
             )
         )
 

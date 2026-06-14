@@ -82,10 +82,10 @@ export function TasksTab({ locationId }: TasksTabProps) {
 
       {activeEdits.map(edit => (
         <div key={edit.id} className="p-4 border border-border/50 bg-card rounded-lg shadow-sm">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="font-semibold">{edit.field_name}</span>
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-start mb-4">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <span className="font-semibold break-words">{edit.field_name}</span>
                 <Badge variant={
                   edit.status === 'Pending' ? 'destructive' :
                   edit.status === 'Approved' ? 'default' :
@@ -99,12 +99,13 @@ export function TasksTab({ locationId }: TasksTabProps) {
               </div>
             </div>
             
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 shrink-0 w-full sm:w-auto">
               {edit.status === 'Draft' && (
-                <Button 
-                  size="sm" 
+                <Button
+                  size="sm"
                   onClick={() => handleSubmit(edit)}
                   disabled={submitMutation.isPending}
+                  className="w-full min-h-[44px] sm:w-auto sm:min-h-0"
                 >
                   {submitMutation.isPending && submitMutation.variables?.editId === edit.id ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                   Submit for Approval
@@ -112,19 +113,20 @@ export function TasksTab({ locationId }: TasksTabProps) {
               )}
               {edit.status === 'Pending' && isAdmin && (
                 <>
-                  <Button 
-                    size="sm" 
-                    variant="outline" 
-                    className="text-red-500 border-red-500/20 hover:bg-red-500/10"
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 min-h-[44px] sm:flex-none sm:min-h-0 text-red-500 border-red-500/20 hover:bg-red-500/10"
                     onClick={() => handleRejectClick(edit)}
                   >
                     <XCircle className="w-4 h-4 mr-2" />
                     Reject
                   </Button>
-                  <Button 
-                    size="sm" 
+                  <Button
+                    size="sm"
                     onClick={() => handleApprove(edit)}
                     disabled={approveMutation.isPending}
+                    className="flex-1 min-h-[44px] sm:flex-none sm:min-h-0"
                   >
                     {approveMutation.isPending && approveMutation.variables?.editId === edit.id ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
                     Approve
@@ -132,17 +134,18 @@ export function TasksTab({ locationId }: TasksTabProps) {
                 </>
               )}
               {edit.status === 'Approved' && isAdmin && (
-                <Button 
-                  size="sm" 
+                <Button
+                  size="sm"
                   onClick={() => handlePublish(edit)}
                   disabled={publishMutation.isPending}
+                  className="w-full min-h-[44px] sm:w-auto sm:min-h-0"
                 >
                   {publishMutation.isPending && publishMutation.variables?.editId === edit.id ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                   Publish to Google
                 </Button>
               )}
               {edit.status === 'Publishing' && (
-                <Button size="sm" variant="secondary" disabled>
+                <Button size="sm" variant="secondary" disabled className="w-full min-h-[44px] sm:w-auto sm:min-h-0">
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Publishing...
                 </Button>
@@ -150,7 +153,7 @@ export function TasksTab({ locationId }: TasksTabProps) {
             </div>
           </div>
           
-          <div className="grid grid-cols-2 gap-4 text-sm bg-muted/50 p-3 rounded-md">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm bg-muted/50 p-3 rounded-md">
             <div>
               <span className="text-muted-foreground block text-xs mb-1 uppercase tracking-wider">Original Value</span>
               <span className="font-mono break-words">{renderValue(edit.original_value)}</span>

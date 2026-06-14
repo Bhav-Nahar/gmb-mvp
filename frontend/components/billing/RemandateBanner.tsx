@@ -5,6 +5,8 @@ import { useRazorpay } from '@/hooks/useRazorpay';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle } from 'lucide-react';
+import { useState } from 'react';
+import { isPaymentVerificationError, PAYMENT_VERIFICATION_FAILED_MSG } from '@/lib/payment';
 
 /**
  * Shown when a UPI subscription's recurring amount needs to rise (after a location
@@ -17,6 +19,7 @@ export function RemandateBanner() {
   const { mutateAsync: confirmRemandate } = useConfirmRemandate();
   const { openRazorpay } = useRazorpay();
   const queryClient = useQueryClient();
+  const [submitting, setSubmitting] = useState(false);
 
   if (!billing?.needs_remandate) return null;
 
@@ -27,14 +30,16 @@ export function RemandateBanner() {
   const quota = billing.location_quota ?? 0;
 
   const handleApprove = async () => {
+    if (submitting) return;
     const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY;
     if (!razorpayKey) {
       toast.error('Payments are not configured (missing key). Please contact support.');
       return;
     }
+    setSubmitting(true);
     try {
       const { subscription } = await startRemandate();
-      openRazorpay({
+      await openRazorpay({
         key: razorpayKey,
         subscription_id: subscription.id,
         name: 'GMB MVP',
@@ -51,23 +56,31 @@ export function RemandateBanner() {
             } else {
               toast.info('Mandate approved! Finalizing — this updates shortly.');
             }
-          } catch {
-            toast.info('Mandate approved! Finalizing shortly...');
+          } catch (err) {
+            if (isPaymentVerificationError(err)) {
+              toast.error(PAYMENT_VERIFICATION_FAILED_MSG);
+            } else {
+              toast.info('Mandate approved! Finalizing shortly...');
+            }
           } finally {
+            setSubmitting(false);
             queryClient.invalidateQueries({ queryKey: ['billing_status'] });
             window.dispatchEvent(new Event('billing:refresh'));
           }
         },
         onFailure: (err: any) => {
+          setSubmitting(false);
           toast.error(err?.description || 'Payment failed. Your AutoPay was not updated.');
         },
         modal: {
           ondismiss: function () {
+            setSubmitting(false);
             toast.info('AutoPay not updated yet. Approve before the deadline to keep all locations.');
           },
         },
       } as any);
     } catch (error: any) {
+      setSubmitting(false);
       toast.error(error?.message || 'Failed to start AutoPay update');
     }
   };
@@ -85,10 +98,10 @@ export function RemandateBanner() {
       </div>
       <button
         onClick={handleApprove}
-        disabled={starting}
+        disabled={starting || submitting}
         className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest bg-amber-500 text-white hover:bg-amber-600 shadow-sm cursor-pointer transition-colors shrink-0 disabled:opacity-60"
       >
-        {starting ? 'Starting…' : 'Approve updated AutoPay'}
+        {starting || submitting ? 'Starting…' : 'Approve updated AutoPay'}
       </button>
     </div>
   );

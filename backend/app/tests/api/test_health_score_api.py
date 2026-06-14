@@ -17,8 +17,8 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.db.session import get_db
-from app.api.deps import staff_required
-import app.api.locations as locations_module
+from app.api.deps import staff_required, get_current_user
+import app.api.deps as deps_module
 
 
 def _stub_health_score(location_id: int = 42):
@@ -48,11 +48,13 @@ def client(fake_admin_user, monkeypatch):
     # A precomputed row exists, so the endpoint returns it directly.
     mock_db.query.return_value.filter.return_value.first.return_value = _stub_health_score()
 
-    # Admin sees all locations -> None means "no restriction".
-    monkeypatch.setattr(locations_module, "get_user_location_ids", lambda user, db: None)
+    # Location scope now runs in the require_location_access dependency, which calls
+    # get_user_location_ids from the deps module. None => "no restriction".
+    monkeypatch.setattr(deps_module, "get_user_location_ids", lambda user, db: None)
 
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[staff_required] = lambda: fake_admin_user
+    app.dependency_overrides[get_current_user] = lambda: fake_admin_user
     try:
         yield TestClient(app)
     finally:
@@ -74,11 +76,12 @@ def test_health_score_endpoint_returns_200_not_typeerror(client):
 def test_health_score_endpoint_forbidden_for_unscoped_location(fake_admin_user, monkeypatch):
     """A user whose location scope excludes the id must get 403, not a score."""
     mock_db = MagicMock()
-    # Restrict the user to other locations only.
-    monkeypatch.setattr(locations_module, "get_user_location_ids", lambda user, db: [1, 2, 3])
+    # Restrict the user to other locations only (42 excluded).
+    monkeypatch.setattr(deps_module, "get_user_location_ids", lambda user, db: [1, 2, 3])
 
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[staff_required] = lambda: fake_admin_user
+    app.dependency_overrides[get_current_user] = lambda: fake_admin_user
     try:
         resp = TestClient(app).get("/api/v1/locations/42/health-score")
         assert resp.status_code == 403, resp.text

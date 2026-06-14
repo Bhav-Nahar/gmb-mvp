@@ -370,7 +370,7 @@ function ReputationGrid({
           <div className="bg-rose-400" style={{ width: `${sentiment.negative_percentage}%` }} />
         </div>
         {sentiment.avg_sentiment_score !== null && sentiment.avg_sentiment_score !== undefined && (
-          <div className="mt-3 flex items-center justify-between text-[11px]">
+          <div className="mt-3 flex items-center justify-between text-xs sm:text-[11px]">
             <span className="text-muted-foreground">Sentiment score</span>
             <span className={`font-bold ${sentiment.avg_sentiment_score > 0.1 ? 'text-emerald-600 dark:text-emerald-400' : sentiment.avg_sentiment_score < -0.1 ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground'}`}>
               {sentiment.avg_sentiment_score > 0 ? '+' : ''}{sentiment.avg_sentiment_score.toFixed(2)} <span className="text-muted-foreground font-normal">/ 1.0</span>
@@ -402,7 +402,7 @@ function ReputationGrid({
             </span>
           </div>
         </div>
-        <div className="text-[10px] text-muted-foreground text-center">
+        <div className="text-xs sm:text-[10px] text-muted-foreground text-center">
           Total Reviews: {sla.total_reviews} • Replied: {sla.replied_reviews}
         </div>
       </div>
@@ -678,7 +678,7 @@ export default function InsightsPage() {
           {/* Header */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
             <div>
-              <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Performance Insights</h1>
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Performance Insights</h1>
               <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                 {syncState.insights_sync_in_progress ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20">
@@ -704,10 +704,10 @@ export default function InsightsPage() {
             </div>
 
             
-            <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
               {/* Location Dropdown Filter */}
-              <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-muted/20">
-                <MapPin className="h-4 w-4 text-muted-foreground" />
+              <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 min-h-[44px] sm:min-h-0 bg-muted/20">
+                <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />
                 <select
                   value={selectedLocation}
                   onChange={(e) => setSelectedLocation(e.target.value)}
@@ -723,8 +723,8 @@ export default function InsightsPage() {
               </div>
 
               {/* Date Range Selector */}
-              <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-muted/20">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
+              <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 min-h-[44px] sm:min-h-0 bg-muted/20">
+                <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
                 <select
                   value={range}
                   onChange={(e) => setRange(e.target.value)}
@@ -739,7 +739,7 @@ export default function InsightsPage() {
 
               {/* Custom date inputs (only when Custom Range is chosen) */}
               {range === 'custom' && (
-                <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-muted/20">
+                <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 min-h-[44px] sm:min-h-0 bg-muted/20">
                   <input
                     type="date"
                     value={customStart}
@@ -759,11 +759,11 @@ export default function InsightsPage() {
                   />
                 </div>
               )}
-              
+
               <button
                 onClick={fetchOverviewData}
                 disabled={loading}
-                className="p-2 rounded-lg border border-border bg-muted/20 text-muted-foreground hover:text-foreground transition-colors"
+                className="h-10 w-10 sm:h-auto sm:w-auto flex items-center justify-center sm:p-2 rounded-lg border border-border bg-muted/20 text-muted-foreground hover:text-foreground transition-colors"
                 title="Refresh Metrics"
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -772,7 +772,7 @@ export default function InsightsPage() {
                <button
                 onClick={handleSyncNow}
                 disabled={syncState.insights_sync_in_progress || loading}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-3 py-2 min-h-[44px] sm:min-h-0 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
                 title={selectedLocation === 'all' ? "Sync All Locations from Google" : "Force Sync from Google"}
               >
                 {syncState.insights_sync_in_progress ? (
@@ -886,7 +886,7 @@ export default function InsightsPage() {
                             <button
                               key={m.key}
                               onClick={() => toggleMetric(m.key)}
-                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${
+                              className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-full text-xs sm:text-[11px] font-semibold border transition-colors ${
                                 active
                                   ? 'border-border bg-muted/40 text-foreground'
                                   : 'border-transparent bg-transparent text-muted-foreground/50 hover:text-muted-foreground'
@@ -951,8 +951,8 @@ export default function InsightsPage() {
                                   {((s.value / totalSearches) * 100).toFixed(0)}%
                                 </span>
                               </div>
-                              <span className="text-[11px] text-muted-foreground mt-0.5">{s.help}</span>
-                              <span className="text-[11px] text-muted-foreground/70">{s.value.toLocaleString()} searches</span>
+                              <span className="text-xs sm:text-[11px] text-muted-foreground mt-0.5">{s.help}</span>
+                              <span className="text-xs sm:text-[11px] text-muted-foreground/70">{s.value.toLocaleString()} searches</span>
                             </div>
                           ))}
                         </div>

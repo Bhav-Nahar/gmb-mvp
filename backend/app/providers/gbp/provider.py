@@ -4,7 +4,7 @@ import logging
 import asyncio
 from sqlalchemy.orm import Session
 from app.providers.base.provider import BaseProvider
-from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric, KeywordInsightMetric
+from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric, KeywordInsightMetric, MediaItemModel, PostInsightMetric
 from app.providers.base.exceptions import ProviderAPIError, ProviderError
 from app.providers.base.auth import AuthContext
 from app.core.config import settings
@@ -771,3 +771,185 @@ class GBPProvider(BaseProvider):
             if resp.status_code == 404:
                 return {"name": f"{google_location_id}/attributes", "attributes": []}
             return resp.json()
+
+    @staticmethod
+    def _media_key_from_name(name: Optional[str]) -> Optional[str]:
+        # Media resource name is accounts/{a}/locations/{l}/media/{mediaKey}
+        if not name:
+            return None
+        return name.split("/media/")[-1] if "/media/" in name else name
+
+    async def create_location_media(self, location_id: str, source_url: str, category: str = "ADDITIONAL", media_format: str = "PHOTO") -> MediaItemModel:
+        # Note: Media management remains on the legacy v4 surface
+        # (mybusiness.googleapis.com/v4) — like reviews and local posts —
+        # because Google has not migrated media resources to v1.
+        access_token = await self._auth.get_valid_token()
+
+        if "mock_access_token" in access_token:
+            mock_name = f"{location_id}/media/mock-{int(datetime.datetime.now(timezone.utc).timestamp())}"
+            return MediaItemModel(
+                resource_name=mock_name,
+                media_key=self._media_key_from_name(mock_name),
+                category=category,
+                source_url=source_url,
+                view_count=0,
+                provider="gbp",
+            )
+
+        account_id = await self._resolve_account_id(location_id, access_token)
+        headers = {"Authorization": f"Bearer {access_token}"}
+        url = f"https://mybusiness.googleapis.com/v4/{account_id}/{location_id}/media"
+        payload = {
+            "mediaFormat": media_format,
+            "sourceUrl": source_url,
+            "locationAssociation": {"category": category},
+        }
+
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            resp = await client.request("POST", url, headers=headers, json=payload)
+
+        if resp.status_code not in [200, 201]:
+            raise httpx.HTTPStatusError(
+                message=f"Google API media create failed with status {resp.status_code}: {resp.text}",
+                request=resp.request,
+                response=resp,
+            )
+
+        data = resp.json()
+        name = data.get("name")
+        return MediaItemModel(
+            resource_name=name,
+            media_key=self._media_key_from_name(name),
+            category=(data.get("locationAssociation", {}) or {}).get("category", category),
+            media_format=data.get("mediaFormat") or media_format,
+            source_url=source_url,
+            thumbnail_url=data.get("thumbnailUrl"),
+            view_count=(data.get("insights", {}) or {}).get("viewCount"),
+            provider="gbp",
+            provider_metadata=data,
+        )
+
+    async def list_location_media(self, location_id: str) -> List[MediaItemModel]:
+        access_token = await self._auth.get_valid_token()
+
+        if "mock_access_token" in access_token:
+            return []
+
+        account_id = await self._resolve_account_id(location_id, access_token)
+        headers = {"Authorization": f"Bearer {access_token}"}
+        url = f"https://mybusiness.googleapis.com/v4/{account_id}/{location_id}/media"
+
+        items: List[MediaItemModel] = []
+        next_page_token = None
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            while True:
+                params = {"pageSize": 100}
+                if next_page_token:
+                    params["pageToken"] = next_page_token
+                resp = await client.request("GET", url, headers=headers, params=params)
+                data = resp.json()
+                for item in data.get("mediaItems", []):
+                    name = item.get("name")
+                    items.append(MediaItemModel(
+                        resource_name=name,
+                        media_key=self._media_key_from_name(name),
+                        category=(item.get("locationAssociation", {}) or {}).get("category"),
+                        media_format=item.get("mediaFormat") or "PHOTO",
+                        source_url=item.get("sourceUrl") or item.get("googleUrl"),
+                        thumbnail_url=item.get("thumbnailUrl"),
+                        view_count=(item.get("insights", {}) or {}).get("viewCount"),
+                        provider="gbp",
+                        provider_metadata=item,
+                    ))
+                next_page_token = data.get("nextPageToken")
+                if not next_page_token:
+                    break
+        return items
+
+    async def delete_location_media(self, location_id: str, media_key: str) -> bool:
+        access_token = await self._auth.get_valid_token()
+
+        if "mock_access_token" in access_token:
+            return True
+
+        account_id = await self._resolve_account_id(location_id, access_token)
+        headers = {"Authorization": f"Bearer {access_token}"}
+        url = f"https://mybusiness.googleapis.com/v4/{account_id}/{location_id}/media/{media_key}"
+
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            resp = await client.request("DELETE", url, headers=headers)
+
+        # 200 (deleted) or 404 (already gone) are both acceptable end-states.
+        if resp.status_code not in [200, 204, 404]:
+            raise httpx.HTTPStatusError(
+                message=f"Google API media delete failed with status {resp.status_code}: {resp.text}",
+                request=resp.request,
+                response=resp,
+            )
+        return True
+
+    async def get_post_insights(self, location_id: str, post_names: List[str], start_date: datetime.date, end_date: datetime.date) -> List[PostInsightMetric]:
+        # Local post insights via legacy v4 localPosts:reportInsights.
+        access_token = await self._auth.get_valid_token()
+
+        if "mock_access_token" in access_token:
+            import random
+            return [
+                PostInsightMetric(
+                    post_name=pn,
+                    view_count=random.randint(20, 200),
+                    cta_click_count=random.randint(0, 30),
+                )
+                for pn in post_names
+            ]
+
+        if not post_names:
+            return []
+
+        account_id = await self._resolve_account_id(location_id, access_token)
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+        url = f"https://mybusiness.googleapis.com/v4/{account_id}/{location_id}/localPosts:reportInsights"
+
+        # Map Google's metric enum -> our flat fields.
+        VIEW_METRICS = {"LOCAL_POST_VIEWS_SEARCH"}
+        CTA_METRICS = {"LOCAL_POST_ACTIONS_CALL_TO_ACTION"}
+
+        payload = {
+            "localPostNames": post_names,
+            "basicRequest": {
+                "metricRequests": [
+                    {"metric": "LOCAL_POST_VIEWS_SEARCH"},
+                    {"metric": "LOCAL_POST_ACTIONS_CALL_TO_ACTION"},
+                ],
+                "timeRange": {
+                    "startTime": f"{start_date.isoformat()}T00:00:00Z",
+                    "endTime": f"{end_date.isoformat()}T00:00:00Z",
+                },
+            },
+        }
+
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            resp = await client.request("POST", url, headers=headers, json=payload)
+
+        if resp.status_code != 200:
+            raise ProviderAPIError(self.provider_name, resp.status_code, resp.text)
+
+        data = resp.json()
+        results: List[PostInsightMetric] = []
+        for entry in data.get("localPostMetrics", []):
+            post_name = entry.get("localPostName")
+            views = 0
+            ctas = 0
+            for mv in entry.get("metricValues", []):
+                metric = mv.get("metric")
+                total = (mv.get("totalValue", {}) or {}).get("value", 0)
+                try:
+                    total = int(total)
+                except (TypeError, ValueError):
+                    total = 0
+                if metric in VIEW_METRICS:
+                    views += total
+                elif metric in CTA_METRICS:
+                    ctas += total
+            results.append(PostInsightMetric(post_name=post_name, view_count=views, cta_click_count=ctas))
+        return results

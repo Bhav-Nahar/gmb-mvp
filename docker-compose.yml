@@ -45,6 +45,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - APP_ENV=${APP_ENV:-development}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}
@@ -83,6 +84,7 @@ services:
     volumes:
       - ./backend:/app
     environment:
+      - APP_ENV=${APP_ENV:-development}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}
@@ -112,6 +114,7 @@ services:
     volumes:
       - ./backend:/app
     environment:
+      - APP_ENV=${APP_ENV:-development}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}

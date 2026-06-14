@@ -15,6 +15,9 @@ class BillingTransaction(Base):
     razorpay_payment_id = Column(String, nullable=True)
     razorpay_order_id = Column(String, nullable=True)
     razorpay_subscription_id = Column(String, nullable=True)
+    # Hosted Razorpay invoice URL (invoice.short_url), captured from the webhook when
+    # present. Nullable: reconciliation-path rows and add-ons may not carry one.
+    invoice_url = Column(String, nullable=True)
     source = Column(String, nullable=True)  # e.g., 'razorpay_event_id', 'admin', 'system'
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

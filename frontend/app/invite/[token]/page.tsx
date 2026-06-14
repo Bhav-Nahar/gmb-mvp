@@ -62,7 +62,7 @@ export default function InviteLandingPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background text-white px-4 py-12 sm:px-6 lg:px-8">
-      <div className="w-full max-w-md space-y-8 glass-panel p-8 rounded-2xl border border-border shadow-2xl relative overflow-hidden text-center">
+      <div className="w-full max-w-sm sm:max-w-md space-y-8 glass-panel p-6 sm:p-8 rounded-2xl border border-border shadow-2xl relative overflow-hidden text-center">
         {/* Background visual spheres */}
         <div className="absolute -top-24 -left-24 w-48 h-48 rounded-full bg-indigo-600/10 blur-3xl pointer-events-none"></div>
         <div className="absolute -bottom-24 -right-24 w-48 h-48 rounded-full bg-purple-600/10 blur-3xl pointer-events-none"></div>
@@ -98,7 +98,7 @@ export default function InviteLandingPage() {
             </div>
             <button
               onClick={() => router.push('/login')}
-              className="inline-flex justify-center items-center rounded-lg py-2 px-4 text-xs font-semibold text-white bg-muted/20 border border-border hover:bg-muted/30 transition-colors cursor-pointer"
+              className="inline-flex justify-center items-center rounded-lg py-2.5 sm:py-2 px-5 sm:px-4 min-h-[44px] sm:min-h-0 text-xs font-semibold text-white bg-muted/20 border border-border hover:bg-muted/30 transition-colors cursor-pointer"
             >
               Back to Login
             </button>
@@ -114,9 +114,9 @@ export default function InviteLandingPage() {
                   <Layers className="h-5 w-5 text-indigo-400" />
                   {invite.organization_name}
                 </h3>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 mt-2">
-                  <Shield className="h-3.5 w-3.5" />
-                  <span>Joining as {invite.role}</span>
+                <div className="inline-flex flex-wrap items-center justify-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 mt-2 max-w-full">
+                  <Shield className="h-3.5 w-3.5 shrink-0" />
+                  <span className="break-words">Joining as {invite.role}</span>
                 </div>
               </div>
 
@@ -129,7 +129,7 @@ export default function InviteLandingPage() {
                 <button
                   onClick={handleContinueWithGoogle}
                   disabled={loginLoading}
-                  className="w-full flex justify-center items-center gap-3 rounded-lg py-3 px-4 text-sm font-semibold text-white bg-white hover:bg-gray-50 border border-gray-200 text-gray-900 shadow-sm cursor-pointer disabled:opacity-50 transition-colors"
+                  className="w-full flex justify-center items-center gap-3 rounded-lg py-3.5 sm:py-3 px-4 min-h-[48px] sm:min-h-0 text-sm font-semibold text-white bg-white hover:bg-gray-50 border border-gray-200 text-gray-900 shadow-sm cursor-pointer disabled:opacity-50 transition-colors"
                 >
                   {loginLoading ? (
                     <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent"></div>
