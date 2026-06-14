@@ -26,12 +26,11 @@ export default function Navbar() {
         {/* Left Side: Brand Logo & Navigation */}
         <div className="flex items-center gap-8">
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20">
-              <RefreshCw className="h-5 w-5 text-white animate-pulse" />
-            </div>
-            <span className="bg-gradient-to-r from-indigo-600 to-purple-700 bg-clip-text text-lg font-bold tracking-tight text-transparent">
-              Pinzo
-            </span>
+            <img
+              src="/logo-horizontal-3.png"
+              alt="Pinzo"
+              className="h-8 object-contain shrink-0"
+            />
           </div>
 
           <nav className="flex items-center gap-6">

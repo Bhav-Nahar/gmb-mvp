@@ -60,12 +60,13 @@ function LoginContent() {
         <div className="absolute -top-24 -left-24 w-48 h-48 rounded-full bg-indigo-600/10 blur-3xl pointer-events-none"></div>
         <div className="absolute -bottom-24 -right-24 w-48 h-48 rounded-full bg-purple-600/10 blur-3xl pointer-events-none"></div>
 
-        {/* Brand Header */}
         <div className="flex flex-col items-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-xl shadow-indigo-500/20">
-            <RefreshCw className="h-6 w-6 text-white animate-pulse" />
-          </div>
-          <h2 className="mt-6 text-center text-2xl sm:text-3xl font-bold tracking-tight text-white font-sans">
+          <img
+            src="/icon.jpg"
+            alt="Pinzo App Icon"
+            className="h-16 w-16 rounded-2xl shadow-xl shadow-indigo-500/20 object-cover"
+          />
+          <h2 className="mt-6 text-center text-2xl sm:text-3xl font-bold tracking-tight text-foreground font-sans">
             Pinzo
           </h2>
           <p className="mt-2 text-center text-xs text-muted-foreground max-w-xs leading-relaxed">
