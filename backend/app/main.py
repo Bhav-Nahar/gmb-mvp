@@ -47,7 +47,7 @@ app.add_middleware(
     allow_methods=["*"],
     # Explicitly list X-CSRF-Token to ensure compatibility with all mobile browsers
     # and proxies that might struggle with wildcard headers when credentials=True.
-    allow_headers=["*", "X-CSRF-Token", "X-Requested-With"],
+    allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With", "Accept"],
     expose_headers=["X-CSRF-Token"],
 )
 
