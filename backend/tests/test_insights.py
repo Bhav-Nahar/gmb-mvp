@@ -79,6 +79,24 @@ class InsightsSystemTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
+    def _seed_daily_insight(self, date):
+        """Insert a LocationDailyInsight row so the insights endpoints produce a
+        non-empty `trends` list and therefore exercise the cache-write path."""
+        insight = LocationDailyInsight(
+            organization_id=self.org.id,
+            location_id=self.location.id,
+            date=date,
+            provider="gbp",
+            profile_views=100,
+            search_impressions=80,
+            maps_views=40,
+            phone_calls=10,
+            website_clicks=20,
+            direction_requests=30,
+        )
+        self.db.add(insight)
+        self.db.commit()
+
     def test_calculate_delta(self):
         self.assertEqual(calculate_delta(130, 100), 30.0)
         self.assertEqual(calculate_delta(50, 100), -50.0)
@@ -208,7 +226,11 @@ class InsightsSystemTests(unittest.TestCase):
         mock_redis_client = MagicMock()
         mock_get_redis.return_value = mock_redis_client
         mock_redis_client.get.return_value = None # Cache miss first
-        
+
+        # Seed a daily insight in-range so `trends` is non-empty: the endpoint
+        # deliberately skips caching empty (not-yet-synced) ranges.
+        self._seed_daily_insight(datetime.date.today())
+
         # Test cache miss (should compute and write to cache)
         response = get_insights_overview(
             start_date=datetime.date.today(),
@@ -239,7 +261,11 @@ class InsightsSystemTests(unittest.TestCase):
         mock_redis_client = MagicMock()
         mock_get_redis.return_value = mock_redis_client
         mock_redis_client.get.return_value = None # Cache miss first
-        
+
+        # Seed a daily insight in-range so `trends` is non-empty (empty ranges
+        # are intentionally not cached).
+        self._seed_daily_insight(datetime.date.today())
+
         response = get_location_insights(
             id=self.location.id,
             start_date=datetime.date.today(),

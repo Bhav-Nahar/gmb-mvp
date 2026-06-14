@@ -3,7 +3,14 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.api.deps import get_current_user, admin_required, RoleChecker, get_user_location_ids
+from app.api.deps import (
+    get_current_user,
+    admin_required,
+    RoleChecker,
+    get_user_location_ids,
+    team_viewer_required,
+    regional_manager_plus,
+)
 from app.models.user import User
 from app.models.oauth_account import OAuthAccount
 from app.models.sync_log import SyncLog
@@ -16,11 +23,9 @@ from app.models.invite import Invite
 from app.services.invite_service import invite_service
 from app.core.config import settings
 from app.core.authorization import validate_location_access, validate_user_access, validate_org_resource
+from app.core.roles import Role, ADMIN_ROLES
 
 router = APIRouter()
-
-team_viewer_required = RoleChecker(["Owner", "Admin", "Regional Manager"])
-regional_manager_plus = RoleChecker(["Owner", "Admin", "Regional Manager"])
 
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):
@@ -41,7 +46,7 @@ def get_token_status(
         .join(User)
         .filter(
             User.organization_id == current_user.organization_id,
-            User.role.in_(["Owner", "Admin"]),
+            User.role.in_(ADMIN_ROLES),
             User.is_active == True,
             OAuthAccount.provider.in_(["gbp", "google"])
         )
@@ -98,7 +103,7 @@ def disconnect_google(
         .join(User)
         .filter(
             User.organization_id == current_user.organization_id,
-            User.role.in_(["Owner", "Admin"]),
+            User.role.in_(ADMIN_ROLES),
             OAuthAccount.provider.in_(["gbp", "google"])
         )
         .all()
@@ -138,18 +143,18 @@ def invite_user(
     """
     Invite a new team member to join the active organization.
     """
-    if current_user.role == "Regional Manager":
-        if invite_in.role != "Store Manager":
+    if current_user.role == Role.REGIONAL_MANAGER:
+        if invite_in.role != Role.STORE_MANAGER:
             raise HTTPException(status_code=403, detail="Regional Managers can only invite Store Managers.")
         # Ensure assigned locations are within the Regional Manager's own scope
         rm_locs = get_user_location_ids(current_user, db)
         if not invite_in.location_ids or any(loc not in rm_locs for loc in invite_in.location_ids):
             raise HTTPException(status_code=403, detail="You can only assign locations you have access to.")
 
-    if invite_in.role == "Store Manager" and (not invite_in.location_ids or len(invite_in.location_ids) != 1):
+    if invite_in.role == Role.STORE_MANAGER and (not invite_in.location_ids or len(invite_in.location_ids) != 1):
         raise HTTPException(status_code=400, detail="Store Manager must be assigned exactly one location.")
 
-    if invite_in.role == "Regional Manager" and not invite_in.location_ids:
+    if invite_in.role == Role.REGIONAL_MANAGER and not invite_in.location_ids:
         raise HTTPException(status_code=400, detail="Regional Manager must be assigned at least one location.")
 
     # Enforce organization ownership and access controls (Anti-IDOR)
@@ -198,8 +203,8 @@ def verify_invite_token(
     }
 
 def _check_regional_manager_invite_access(invite: Invite, current_user: User, db: Session):
-    if current_user.role == "Regional Manager":
-        if invite.role != "Store Manager":
+    if current_user.role == Role.REGIONAL_MANAGER:
+        if invite.role != Role.STORE_MANAGER:
             raise HTTPException(status_code=403, detail="Regional Managers can only manage invitations for Store Managers.")
         rm_locs = get_user_location_ids(current_user, db)
         if not invite.location_ids or any(loc not in rm_locs for loc in invite.location_ids):
@@ -216,11 +221,11 @@ def list_invites(
     Regional Managers only see Store Manager invites for their assigned locations."""
     all_invites = invite_service.list_organization_invites(db, current_user.organization_id, limit=limit, offset=offset)
 
-    if current_user.role == "Regional Manager":
+    if current_user.role == Role.REGIONAL_MANAGER:
         rm_locs = set(get_user_location_ids(current_user, db) or [])
         return [
             inv for inv in all_invites
-            if inv.role == "Store Manager"
+            if inv.role == Role.STORE_MANAGER
             and inv.location_ids
             and any(loc in rm_locs for loc in inv.location_ids)
         ]
@@ -261,14 +266,14 @@ def update_user_role(
 ):
     user = validate_user_access(db, current_user, user_id)
         
-    if user.role == "Owner":
+    if user.role == Role.OWNER:
         raise HTTPException(status_code=403, detail="Cannot modify Owner role through this endpoint.")
 
-    if role_update.role == "Owner":
+    if role_update.role == Role.OWNER:
         raise HTTPException(status_code=403, detail="Use ownership transfer to assign a new Owner.")
 
     user.role = role_update.role
-    if role_update.role == "Viewer":
+    if role_update.role == Role.VIEWER:
         user.viewer_scope = role_update.viewer_scope
     else:
         user.viewer_scope = "assigned"
@@ -297,17 +302,17 @@ def update_user_locations(
 ):
     user = validate_user_access(db, current_user, user_id)
         
-    if user.role in ["Owner", "Admin"]:
+    if user.role in ADMIN_ROLES:
         raise HTTPException(status_code=400, detail="Cannot assign specific locations to Owner or Admin.")
         
-    if current_user.role == "Regional Manager":
-        if user.role != "Store Manager":
+    if current_user.role == Role.REGIONAL_MANAGER:
+        if user.role != Role.STORE_MANAGER:
             raise HTTPException(status_code=403, detail="Regional Managers can only modify Store Managers.")
         rm_locs = get_user_location_ids(current_user, db)
         if any(loc not in rm_locs for loc in loc_update.location_ids):
             raise HTTPException(status_code=403, detail="You can only assign locations you have access to.")
 
-    if user.role == "Store Manager" and len(loc_update.location_ids) != 1:
+    if user.role == Role.STORE_MANAGER and len(loc_update.location_ids) != 1:
         raise HTTPException(status_code=400, detail="Store Manager must have exactly one location.")
 
     # Enforce organization ownership and access controls (Anti-IDOR)
@@ -336,7 +341,7 @@ def update_user_locations(
 def transfer_ownership(
     req: TransferOwnershipRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["Owner"]))
+    current_user: User = Depends(RoleChecker([Role.OWNER]))
 ):
     new_owner = db.query(User).filter(User.id == req.new_owner_id, User.organization_id == current_user.organization_id).first()
     if not new_owner:
@@ -346,11 +351,11 @@ def transfer_ownership(
         raise HTTPException(status_code=400, detail="You are already the owner.")
         
     # Demote old owner
-    current_user.role = "Admin"
+    current_user.role = Role.ADMIN
     current_user.token_version += 1
     
     # Promote new owner
-    new_owner.role = "Owner"
+    new_owner.role = Role.OWNER
     new_owner.viewer_scope = "assigned"
     new_owner.token_version += 1
     
@@ -374,7 +379,7 @@ def deactivate_user(
 ):
     user = validate_user_access(db, current_user, user_id)
         
-    if user.role == "Owner":
+    if user.role == Role.OWNER:
         raise HTTPException(status_code=403, detail="Cannot deactivate the organization owner.")
         
     user.is_active = False
@@ -422,11 +427,11 @@ def delete_my_account(
     Permanently delete the authenticated user's account and related records.
     If the user is the ONLY Owner in the organization, deletes the local organization and all its data.
     """
-    is_owner = current_user.role == "Owner"
+    is_owner = current_user.role == Role.OWNER
     
     owners_count = db.query(User).filter(
         User.organization_id == current_user.organization_id,
-        User.role == "Owner"
+        User.role == Role.OWNER
     ).count()
     
     # Create audit log entry before deletion

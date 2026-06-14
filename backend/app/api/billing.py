@@ -9,6 +9,8 @@ from app.api.deps import get_current_user, admin_required
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.location import Location
+from app.models.billing_transaction import BillingTransaction
+from app.core import plan_config
 from app.services.billing.pricing_service import PricingService
 from app.services.billing.subscription_service import SubscriptionService
 from app.services.billing.webhook_service import WebhookService
@@ -183,6 +185,14 @@ def get_billing_status(
         "plan": org.plan,
         "subscription_status": org.subscription_status,
         "monthly_ai_credits_balance": org.monthly_ai_credits_balance,
+        # Monthly allowance = the full grant the org gets each cycle, used as the
+        # denominator for the usage bar. For a paid org this scales with quota; on
+        # the trial it is the flat trial grant.
+        "monthly_ai_credits_allowance": (
+            org.location_quota * plan_config.CREDITS_PER_LOCATION
+            if org.plan == "active" and org.location_quota
+            else plan_config.TRIAL_AI_CREDITS
+        ),
         "topup_ai_credits_balance": org.topup_ai_credits_balance,
         "location_quota": org.location_quota,
         "active_location_count": active_count,
@@ -198,6 +208,54 @@ def get_billing_status(
         "needs_remandate": bool(org.subscription_needs_remandate),
         "remandate_due_at": org.remandate_due_at,
         "paid_location_quota": org.paid_location_quota,
+    }
+
+
+@router.get("/transactions")
+def get_transactions(
+    limit: int = 10,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """Paginated payment history for the current org, most recent first. Drives the
+    billing history table. Restricted to admins/owners like the rest of the billing
+    surface. Returns `total` so the client can render page controls."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+
+    base = db.query(BillingTransaction).filter(
+        BillingTransaction.organization_id == current_user.organization_id
+    )
+    total = base.count()
+    rows = (
+        base.order_by(BillingTransaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "transactions": [
+            {
+                "id": t.id,
+                "type": t.transaction_type,
+                "credits": t.credits,
+                "amount_paise": t.amount_paise,
+                "currency": t.currency or "INR",
+                "status": t.status,
+                "invoice_url": t.invoice_url,
+                "created_at": t.created_at,
+            }
+            for t in rows
+        ],
     }
 
 
@@ -250,6 +308,11 @@ def unlock_locations(
     org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Anti-IDOR: ensure every location belongs to the caller's org (and is within
+    # their location scope) before creating a paid order against it.
+    from app.core.authorization import validate_location_access
+    validate_location_access(db, current_user, request.location_ids)
 
     result = SubscriptionService.create_location_addon_order(
         db=db,

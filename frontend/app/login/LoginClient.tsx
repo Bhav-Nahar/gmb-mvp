@@ -55,7 +55,7 @@ function LoginContent() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
-      <div className="w-full max-w-md space-y-8 glass-panel p-8 rounded-2xl border border-border shadow-2xl relative overflow-hidden">
+      <div className="w-full max-w-sm sm:max-w-md space-y-8 glass-panel p-6 sm:p-8 rounded-2xl border border-border shadow-2xl relative overflow-hidden">
         {/* Background visual blur spheres */}
         <div className="absolute -top-24 -left-24 w-48 h-48 rounded-full bg-indigo-600/10 blur-3xl pointer-events-none"></div>
         <div className="absolute -bottom-24 -right-24 w-48 h-48 rounded-full bg-purple-600/10 blur-3xl pointer-events-none"></div>
@@ -65,7 +65,7 @@ function LoginContent() {
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-xl shadow-indigo-500/20">
             <RefreshCw className="h-6 w-6 text-white animate-pulse" />
           </div>
-          <h2 className="mt-6 text-center text-3xl font-bold tracking-tight text-white font-sans">
+          <h2 className="mt-6 text-center text-2xl sm:text-3xl font-bold tracking-tight text-white font-sans">
             GBP Manager Pro
           </h2>
           <p className="mt-2 text-center text-xs text-muted-foreground max-w-xs leading-relaxed">
@@ -91,7 +91,7 @@ function LoginContent() {
           <button
             onClick={handleContinueWithGoogle}
             disabled={loading}
-            className="w-full flex justify-center items-center gap-3 rounded-lg py-3 px-4 text-sm font-semibold bg-white hover:bg-gray-50 border border-gray-200 text-gray-950 shadow-sm cursor-pointer disabled:opacity-50 transition-colors"
+            className="w-full flex justify-center items-center gap-3 rounded-lg py-3.5 sm:py-3 px-4 min-h-[48px] sm:min-h-0 text-sm font-semibold bg-white hover:bg-gray-50 border border-gray-200 text-gray-950 shadow-sm cursor-pointer disabled:opacity-50 transition-colors"
           >
             {loading ? (
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent"></div>

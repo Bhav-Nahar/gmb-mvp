@@ -30,10 +30,11 @@ async function refreshSession(): Promise<boolean> {
         headers
       })
       if (response.ok) {
-        const data = await response.json().catch(() => ({}))
-        if (data.csrf_token && typeof document !== 'undefined') {
-          document.cookie = `gmb_csrf_token=${data.csrf_token}; path=/; max-age=${3600 * 24 * 7}; samesite=lax`
-        }
+        // Do NOT rewrite gmb_csrf_token here. /auth/refresh already returns it via a
+        // Set-Cookie with the correct attributes (SameSite=None; Secure in production
+        // for the cross-site SPA<->API topology). Writing it from JS with samesite=lax
+        // and no Secure downgraded the cookie so it was no longer sent on cross-site
+        // mutating requests, causing CSRF 403s right after every token refresh.
         return true
       }
       return false

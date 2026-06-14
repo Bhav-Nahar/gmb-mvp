@@ -12,6 +12,7 @@ from app.services.billing.entitlement_service import EntitlementService
 from app.core import plan_config
 import redis
 from app.core.config import settings
+from app.core.roles import Role, ADMIN_ROLES, STAFF_ROLES, TEAM_VIEWER_ROLES
 from sqlalchemy import select
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
@@ -72,13 +73,15 @@ class RoleChecker:
         return current_user
 
 # Predefined role dependencies
-admin_required = RoleChecker(["Owner", "Admin"])
-staff_required = RoleChecker(["Owner", "Admin", "Regional Manager", "Store Manager"])
+admin_required = RoleChecker(list(ADMIN_ROLES))
+staff_required = RoleChecker(list(STAFF_ROLES))
+team_viewer_required = RoleChecker(list(TEAM_VIEWER_ROLES))
+regional_manager_plus = RoleChecker(list(TEAM_VIEWER_ROLES))
 
 def get_user_location_ids(user: User, db: Session) -> Optional[List[int]]:
-    if user.role in ["Owner", "Admin"]:
+    if user.role in ADMIN_ROLES:
         return None
-    if user.role == "Viewer" and user.viewer_scope == "organization":
+    if user.role == Role.VIEWER and user.viewer_scope == "organization":
         return None
     
     # Fetch assigned locations
@@ -91,11 +94,11 @@ def verify_location_access(location_id: int):
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user)
     ):
-        if current_user.role in ["Owner", "Admin"]:
+        if current_user.role in ADMIN_ROLES:
             # Optionally check if location belongs to org here, but usually done at query level
             return location_id
-            
-        if current_user.role == "Viewer":
+
+        if current_user.role == Role.VIEWER:
             if request.method not in ["GET", "OPTIONS", "HEAD"]:
                 raise HTTPException(status_code=403, detail="Viewers cannot perform mutations")
             if current_user.viewer_scope == "organization":
@@ -112,6 +115,51 @@ def verify_location_access(location_id: int):
             
         return location_id
     return _verify
+
+def require_location_access(
+    location_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> int:
+    """FastAPI dependency enforcing BOTH tenant (org) boundary AND per-user
+    location scope for a path's location_id.
+
+    Declare a route's path param as `location_id: int = Depends(require_location_access)`
+    so both checks run automatically before the handler — making it structurally
+    impossible to forget either one.
+
+    1. Tenant boundary: the location must exist within the caller's organization.
+       This runs for ALL roles (Owner/Admin included), so an endpoint can never
+       leak or mutate another org's location by forgetting its own org filter
+       (the class of bug that caused the health-score IDOR).
+    2. Location scope: org-wide roles (Owner/Admin and org-scoped Viewer) pass;
+       location-restricted roles must have the location in their assigned set.
+
+    Returns the validated location_id for inline use.
+    """
+    # Tenant boundary first — a cross-org id is "not found", regardless of role.
+    location_exists = (
+        db.query(Location.id)
+        .filter(
+            Location.id == location_id,
+            Location.organization_id == current_user.organization_id,
+        )
+        .first()
+    )
+    if location_exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found",
+        )
+
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    if allowed_location_ids is not None and location_id not in allowed_location_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this location",
+        )
+    return location_id
+
 
 def check_csrf(request: Request):
     """

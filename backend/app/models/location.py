@@ -56,6 +56,7 @@ class Location(Base):
     post_variants = relationship("PostVariant", back_populates="location", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="location", cascade="all, delete-orphan")
     edits = relationship("LocationEdit", back_populates="location", cascade="all, delete-orphan")
+    media_items = relationship("LocationMedia", back_populates="location", cascade="all, delete-orphan")
     daily_insights = relationship("LocationDailyInsight", back_populates="location", cascade="all, delete-orphan")
     keyword_metrics = relationship("KeywordMonthlyMetric", back_populates="location", cascade="all, delete-orphan")
     # Named *_record to avoid colliding with the LocationOut.health_score (int)

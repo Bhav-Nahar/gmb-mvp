@@ -1,9 +1,10 @@
+import asyncio
 import json
 import logging
 import re
-import time
 from datetime import datetime, timezone
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,16 @@ from app.llm.factory import get_llm_provider
 from app.models.review import Review
 
 logger = logging.getLogger(__name__)
+
+# Number of reviews classified per LLM call. Used by BOTH the chunking and the
+# max_tokens budget below so the two can never drift (a stale "5" in the docstring
+# vs a real "15" once made truncation silent — see _tag_batch).
+SENTIMENT_BATCH_SIZE = 15
+# Worst-case completion tokens for one classified review (its JSON object plus the
+# array punctuation). max_tokens is sized to the batch from this so a full batch's
+# JSON array is never truncated mid-output (which would drop the whole batch).
+_TOKENS_PER_REVIEW = 60
+_MIN_COMPLETION_TOKENS = 256
 
 SYSTEM_PROMPT = """You are a review classification engine for a local business reputation management platform.
 
@@ -49,32 +60,32 @@ Rules:
 
 async def tag_reviews_sentiment(reviews: list[Review], db: Session) -> None:
     """
-    Public entry point. Filters to untagged reviews, splits into batches of 5,
-    and calls _tag_batch() for each. A failed batch never aborts remaining batches.
+    Public entry point. Filters to untagged reviews, splits into batches of
+    SENTIMENT_BATCH_SIZE, and calls _tag_batch() for each. A failed batch never
+    aborts remaining batches.
+
+    On LLM failure we intentionally do NOT re-enqueue work here. Reviews that fail
+    tagging keep sentiment_tagged_at = NULL and are re-swept by the hourly
+    retry_failed_sentiment_beat_task. Re-enqueuing the whole-location task per failing
+    chunk (as we used to) multiplied calls into an unbounded paid-LLM storm whenever
+    Groq was unhealthy — the hourly sweep already provides bounded, idempotent retry.
     """
     untagged = [r for r in reviews if r.sentiment_tagged_at is None]
 
     if not untagged:
         return
 
-    # Split into chunks of 15
-    chunks: list[list[Review]] = [untagged[i:i + 15] for i in range(0, len(untagged), 15)]
+    chunks: list[list[Review]] = [
+        untagged[i:i + SENTIMENT_BATCH_SIZE]
+        for i in range(0, len(untagged), SENTIMENT_BATCH_SIZE)
+    ]
 
     for chunk in chunks:
         try:
             await _tag_batch(chunk, db)
         except LLMProviderError as e:
-            logger.error("LLMProviderError tagging sentiment batch: %s", str(e))
-            if chunk:
-                from app.worker import celery as celery_app
-                celery_app.send_task(
-                    "app.tasks.tag_reviews_sentiment_task",
-                    kwargs={
-                        "location_id": chunk[0].location_id,
-                        "organization_id": chunk[0].organization_id
-                    },
-                    countdown=60
-                )
+            # Leave these reviews untagged; the hourly beat sweep will retry them.
+            logger.error("LLMProviderError tagging sentiment batch (will retry via hourly sweep): %s", str(e))
         except Exception as e:
             logger.error("Unexpected error tagging sentiment batch: %s", str(e))
 
@@ -84,10 +95,14 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
     Classifies a batch of reviews via LLM and persists valid results.
     Skips individual items that fail validation; never writes partial/invalid labels.
     """
-    # Build user message
+    # Build user message. The comment is attacker-controlled text, so XML-escape it
+    # before embedding in <review> tags — otherwise a review containing "</review>",
+    # fake "ID:"/"---" delimiters, or direct instructions could spoof another review's
+    # id or coax a wrong sentiment label (prompt/structure injection). Matches the
+    # escaping the ai_reply_service already applies to the same field.
     review_lines: list[str] = []
     for review in reviews:
-        safe_comment = (review.comment or "")[:500]
+        safe_comment = xml_escape((review.comment or "")[:500])
         comment_xml = f"<review>{safe_comment}</review>" if safe_comment else "<review></review>"
         review_lines.append(
             f"ID: {review.id}\nRating: {review.rating} stars\nReview: {comment_xml}"
@@ -100,18 +115,23 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
         f"Reviews:\n{reviews_block}\n\n---"
     )
 
+    # Size the completion budget to the batch so the JSON array can't be truncated
+    # mid-output (which raises JSONDecodeError below and silently drops the entire
+    # batch, leaving the reviews to loop through the hourly retry forever).
+    max_tokens = max(_MIN_COMPLETION_TOKENS, len(reviews) * _TOKENS_PER_REVIEW)
+
     llm = get_llm_provider()
     raw: str = ""
     for attempt in range(3):
         try:
-            raw = await llm.complete(SYSTEM_PROMPT, user_message, max_tokens=300, temperature=0.1)
+            raw = await llm.complete(SYSTEM_PROMPT, user_message, max_tokens=max_tokens, temperature=0.1)
             break
         except LLMProviderError as e:
             if attempt == 2:
                 raise
             wait = 2 ** attempt  # 1s, 2s
             logger.warning("LLM batch attempt %d failed, retrying in %ds: %s", attempt + 1, wait, str(e))
-            time.sleep(wait)
+            await asyncio.sleep(wait)
 
     # Strip markdown fences if present
     raw_text = raw

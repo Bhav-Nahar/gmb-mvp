@@ -850,9 +850,9 @@ def check_and_trigger_stale_insights_sync(organization_id: int, db: Session, for
     return {"triggered": False, "reason": "sync_already_in_progress" if (state and state.insights_sync_in_progress) else "data_is_fresh"}
 
 
-@router.post("/locations/{id}/sync", response_model=InsightsSyncPostResponse)
+@router.post("/locations/{location_id}/sync", response_model=InsightsSyncPostResponse)
 def trigger_insights_sync(
-    id: int,
+    location_id: int = Depends(deps.require_location_access),
     start_date: Optional[datetime.date] = Query(None),
     end_date: Optional[datetime.date] = Query(None),
     scope: str = Query("all", regex="^(daily|keywords|all)$"),
@@ -862,6 +862,7 @@ def trigger_insights_sync(
     """
     Manually trigger performance and reputation insights synchronization for a location (now invokes organization-wide sync).
     """
+    # Location scope is enforced by the require_location_access dependency.
     result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=True, scope=scope)
     return InsightsSyncPostResponse(
         task_id="org-orchestrated",
@@ -879,6 +880,14 @@ def trigger_global_insights_sync(
     """
     Manually trigger performance and reputation insights synchronization for ALL locations of the organization.
     """
+    # An org-wide sync touches every location; only users with org-wide access may
+    # trigger it. Location-restricted roles (Regional/Store Manager, restricted Viewer)
+    # get a non-None allow-list and are forbidden.
+    if deps.get_user_location_ids(current_user, db) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to sync all organization locations.",
+        )
     result = check_and_trigger_stale_insights_sync(current_user.organization_id, db, force=force, scope=scope)
     return InsightsSyncPostResponse(
         task_id="org-orchestrated",

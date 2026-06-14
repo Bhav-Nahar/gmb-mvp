@@ -1,5 +1,5 @@
 import React from "react"
-import { AlertCircle, CheckCircle2, ChevronRight, MessageSquare, ClipboardList, MapPin, Sparkles, Activity } from "lucide-react"
+import { AlertCircle, CheckCircle2, ChevronRight, MessageSquare, ClipboardList, MapPin, Sparkles, Activity, ImageIcon } from "lucide-react"
 import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
 
 interface OverviewTabProps {
@@ -38,7 +38,7 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
         {/* Health Score Card */}
-        <div className="bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col items-center justify-center text-center">
+        <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm flex flex-col items-center justify-center text-center">
           <h3 className="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
             <Activity className="w-4 h-4" />
             Profile Health
@@ -86,7 +86,7 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
         </div>
 
         {/* Action Required Panel (Recommendations) */}
-        <div className="md:col-span-2 bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col">
+        <div className="md:col-span-2 bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm flex flex-col">
           <h3 className="text-sm font-medium text-foreground mb-4 flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
             Top Recommendations
@@ -119,28 +119,29 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
                </div>
             ) : (
               recommendations.map((rec, idx) => (
-                <button 
+                <button
                   key={idx}
                   onClick={() => setActiveTab(rec.target_tab)}
-                  className="w-full flex items-center justify-between p-3 rounded-lg border border-border hover:border-primary/50 hover:bg-muted/30 transition-colors text-left group"
+                  className="w-full flex items-center justify-between p-4 sm:p-3 rounded-lg border border-border hover:border-primary/50 hover:bg-muted/30 active:bg-muted/50 transition-colors text-left group"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-primary/10 text-primary rounded-md group-hover:scale-110 transition-transform">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 bg-primary/10 text-primary rounded-md shrink-0 group-hover:scale-110 transition-transform">
                       {rec.target_tab === 'reviews' ? <MessageSquare className="h-4 w-4" /> :
                        rec.target_tab === 'posts' ? <ClipboardList className="h-4 w-4" /> :
+                       rec.target_tab === 'photos' ? <ImageIcon className="h-4 w-4" /> :
                        <MapPin className="h-4 w-4" />}
                     </div>
-                    <div>
-                      <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-foreground flex flex-wrap items-center gap-2">
                         {rec.title}
-                        <span className="text-[10px] bg-emerald-500/10 text-emerald-600 px-1.5 py-0.5 rounded font-bold">
+                        <span className="text-[11px] sm:text-[10px] bg-emerald-500/10 text-emerald-600 px-1.5 py-0.5 rounded font-bold">
                           +{rec.potential_gain} pts
                         </span>
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">{rec.description}</div>
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground opacity-50 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-50 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
                 </button>
               ))
             )}
@@ -151,7 +152,7 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
 
       {/* Breakdown Section */}
       {breakdown && (
-        <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
+        <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm">
           <h3 className="text-sm font-medium text-foreground mb-4">Score Breakdown</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             

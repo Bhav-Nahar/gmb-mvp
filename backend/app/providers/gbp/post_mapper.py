@@ -58,8 +58,10 @@ class GBPPostMapper:
 
         # 4. Add Media URL if present
         valid_media = [
-            m for m in post.media 
-            if m.validation_status and m.validation_status.upper() == "VALID" 
+            m for m in post.media
+            if not m.is_deleted
+            and (m.upload_status or "").upper() != "DELETED"
+            and m.validation_status and m.validation_status.upper() == "VALID"
             and m.optimized_url
         ]
         

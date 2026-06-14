@@ -29,10 +29,12 @@ def test_health_score_perfect_profile(db: Session):
         db.add(Review(
             organization_id=1,
             location_id=location.id,
-            google_review_id=f"r_{i}",
+            provider="gbp",
+            provider_review_id=f"r_{i}",
             reviewer_name="John",
             rating=5,
-            is_replied=True
+            is_replied=True,
+            review_created_at=datetime.now(timezone.utc),
         ))
     db.commit()
 

@@ -5,6 +5,7 @@ from app.providers.registry import ProviderRegistry
 from app.models.user import User
 from app.models.oauth_account import OAuthAccount
 from app.core.security import decrypt_token
+from app.core.roles import ADMIN_ROLES
 
 # Make sure all providers are imported so they register themselves!
 from app.providers.gbp.provider import GBPProvider
@@ -40,7 +41,7 @@ class ProviderFactory:
             .join(User)
             .filter(
                 User.organization_id == organization_id,
-                User.role.in_(["Owner", "Admin"]),
+                User.role.in_(ADMIN_ROLES),
                 User.is_active == True,
                 OAuthAccount.provider.in_(provider_names)
             )

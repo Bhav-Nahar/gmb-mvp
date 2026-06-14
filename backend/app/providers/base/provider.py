@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, ClassVar, Dict, Any
 import datetime
 from datetime import date
-from .models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric, KeywordInsightMetric
+from .models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric, KeywordInsightMetric, MediaItemModel, PostInsightMetric
 
 class BaseProvider(ABC):
     provider_name: ClassVar[str]
@@ -52,5 +52,25 @@ class BaseProvider(ABC):
     @abstractmethod
     async def get_search_keyword_insights(self, location_id: str, start_date: date, end_date: date) -> List["KeywordInsightMetric"]:
         """Fetch monthly search keyword impressions for a location for a date range."""
+        ...
+
+    @abstractmethod
+    async def create_location_media(self, location_id: str, source_url: str, category: str = "ADDITIONAL", media_format: str = "PHOTO") -> "MediaItemModel":
+        """Publish a photo/video to a location's Google profile gallery."""
+        ...
+
+    @abstractmethod
+    async def list_location_media(self, location_id: str) -> List["MediaItemModel"]:
+        """List the media items in a location's Google profile gallery (with view counts)."""
+        ...
+
+    @abstractmethod
+    async def delete_location_media(self, location_id: str, media_key: str) -> bool:
+        """Delete a media item from a location's Google profile gallery."""
+        ...
+
+    @abstractmethod
+    async def get_post_insights(self, location_id: str, post_names: List[str], start_date: date, end_date: date) -> List["PostInsightMetric"]:
+        """Fetch view/CTA-click insights for one or more local posts."""
         ...
 

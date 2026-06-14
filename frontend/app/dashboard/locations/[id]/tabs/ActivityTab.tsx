@@ -40,28 +40,28 @@ export function ActivityTab({ locationId }: ActivityTabProps) {
       <div className="flex flex-wrap gap-2">
         <Badge 
           variant={filter === null ? "default" : "outline"}
-          className="cursor-pointer"
+          className="cursor-pointer h-auto py-2 px-3 text-xs sm:h-5 sm:py-0.5 sm:px-2"
           onClick={() => setFilter(null)}
         >
           All
         </Badge>
         <Badge 
           variant={filter === "ListingEdit" ? "default" : "outline"}
-          className="cursor-pointer"
+          className="cursor-pointer h-auto py-2 px-3 text-xs sm:h-5 sm:py-0.5 sm:px-2"
           onClick={() => setFilter("ListingEdit")}
         >
           Edits
         </Badge>
         <Badge 
           variant={filter === "SyncLog" ? "default" : "outline"}
-          className="cursor-pointer"
+          className="cursor-pointer h-auto py-2 px-3 text-xs sm:h-5 sm:py-0.5 sm:px-2"
           onClick={() => setFilter("SyncLog")}
         >
           Syncs
         </Badge>
         <Badge 
           variant={filter === "Review" || filter === "ReviewReply" ? "default" : "outline"}
-          className="cursor-pointer"
+          className="cursor-pointer h-auto py-2 px-3 text-xs sm:h-5 sm:py-0.5 sm:px-2"
           onClick={() => setFilter("Review")}
         >
           Reviews

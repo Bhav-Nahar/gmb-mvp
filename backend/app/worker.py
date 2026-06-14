@@ -22,6 +22,13 @@ celery.conf.update(
     enable_utc=True,
     broker_connection_retry_on_startup=True,
     broker_heartbeat=300, # Heartbeat every 5 minutes to reduce PING commands
+    # Hard/soft task time limits. These MUST stay below the broker
+    # visibility_timeout (3600s) below: without them a task that runs longer than
+    # the visibility window is redelivered and runs concurrently with itself. The
+    # soft limit raises SoftTimeLimitExceeded (catchable for cleanup) ~5 min before
+    # the hard kill.
+    task_time_limit=1800,       # hard kill at 30 min
+    task_soft_time_limit=1500,  # soft (catchable) at 25 min
     # Redis Broker Optimizations for Upstash/Limited Quotas
     broker_transport_options={
         'visibility_timeout': 3600,
@@ -39,9 +46,18 @@ celery.autodiscover_tasks(["app"])
 
 # Periodic Celery Beat Scheduling
 celery.conf.beat_schedule = {
-    "sync-locations-every-hour": {
+    "sync-locations-periodic": {
         "task": "app.tasks.sync_all_organizations_task",
-        "schedule": 21600.0, # Every 6 hours (21600 seconds)
+        "schedule": 86400.0, # Every 24 hours (86400 seconds) — Google profile/review
+                             # data changes slowly; cuts the heavy fan-out cost ~4x vs
+                             # the original 6h. Lifecycle transitions are handled
+                             # separately by transition-subscriptions below.
+    },
+    "transition-subscriptions": {
+        "task": "app.tasks.transition_subscriptions_task",
+        "schedule": 21600.0, # Every 6 hours — preserves the lifecycle-sweep cadence
+                             # previously provided by the (now 12h) location sync, so
+                             # trial/grace/expiry transitions are NOT delayed.
     },
     "check-scheduled-posts-every-minute": {
         "task": "app.tasks.check_scheduled_posts_task",
@@ -57,11 +73,15 @@ celery.conf.beat_schedule = {
     },
     "retry-failed-sentiment-hourly": {
         "task": "app.tasks.retry_failed_sentiment_beat_task",
-        "schedule": 900.0, # Every 15 minutes (900 seconds)
+        "schedule": 3600.0, # Every 60 minutes — this only re-enqueues reviews that
+                            # failed/were-missed tagging; hourly is ample and 4x cheaper.
     },
     "reconcile-pending-subscriptions": {
         "task": "app.tasks.reconcile_pending_subscriptions_task",
-        "schedule": 600.0, # Every 10 minutes — catch missed payment webhooks
+        "schedule": 1800.0, # Every 30 minutes — safety net for missed payment webhooks.
+                            # Happy-path activation is synchronous (webhook + /billing/confirm),
+                            # so this fallback can run less often. Worst-case activation
+                            # latency for a *missed* webhook rises from ~10m to ~30m.
     },
     "enforce-upi-remandate-grace-daily": {
         "task": "app.tasks.enforce_upi_remandate_grace_task",

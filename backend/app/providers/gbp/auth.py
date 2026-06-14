@@ -11,6 +11,7 @@ from app.providers.base.auth import AuthContext
 from app.core.config import settings
 from app.core.security import encrypt_token, decrypt_token
 from app.models.oauth_account import OAuthAccount
+from app.core.roles import ADMIN_ROLES
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class GBPAuthManager:
         with SessionLocal() as db_check:
             oauth_account = db_check.query(OAuthAccount).join(User).filter(
                 User.organization_id == org_id,
-                User.role.in_(["Owner", "Admin"]),
+                User.role.in_(ADMIN_ROLES),
                 OAuthAccount.provider.in_(["gbp", "google"])
             ).first()
 
@@ -115,7 +116,7 @@ class GBPAuthManager:
             with SessionLocal() as db_check:
                 oauth_account = db_check.query(OAuthAccount).join(User).filter(
                     User.organization_id == org_id,
-                    User.role.in_(["Owner", "Admin"]),
+                    User.role.in_(ADMIN_ROLES),
                     OAuthAccount.provider.in_(["gbp", "google"])
                 ).first()
 
@@ -182,7 +183,7 @@ class GBPAuthManager:
                 # SELECT ... FOR UPDATE to lock the row
                 oauth_account_write = write_db.query(OAuthAccount).join(User).filter(
                     User.organization_id == org_id,
-                    User.role.in_(["Owner", "Admin"]),
+                    User.role.in_(ADMIN_ROLES),
                     OAuthAccount.provider.in_(["gbp", "google"])
                 ).with_for_update().first()
 

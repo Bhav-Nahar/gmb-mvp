@@ -12,16 +12,17 @@ import {
   XCircle,
   HelpCircle,
   MapPin,
-  Calendar,
   Globe,
   Phone,
-  Layers,
   Sparkles,
   LogOut,
   ChevronRight,
   PlusCircle,
   MoreHorizontal,
-  Lock
+  Lock,
+  LayoutGrid,
+  Table as TableIcon,
+  Star
 } from 'lucide-react'
 import Link from 'next/link'
 import { UpgradeModal } from '@/components/modals/UpgradeModal'
@@ -90,6 +91,35 @@ interface OrganizationHealthSummaryOut {
   critical_count: number
 }
 
+// Locations store the GBP storefrontAddress as a JSON string
+// ({addressLines, locality, administrativeArea, postalCode, regionCode}).
+// Flatten it into a single readable line; fall back to the raw value if it
+// isn't the JSON shape we expect (older rows / already-formatted strings).
+function formatAddress(raw?: string | null): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith('{')) return trimmed
+  try {
+    const a = JSON.parse(trimmed) as {
+      addressLines?: string[]
+      locality?: string
+      administrativeArea?: string
+      postalCode?: string
+      regionCode?: string
+    }
+    const parts = [
+      ...(Array.isArray(a.addressLines) ? a.addressLines : []),
+      a.locality,
+      a.administrativeArea,
+      a.postalCode,
+      a.regionCode,
+    ].filter(Boolean)
+    return parts.length ? parts.join(', ') : trimmed
+  } catch {
+    return trimmed
+  }
+}
+
 function DashboardContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -128,6 +158,7 @@ function DashboardContent() {
 
   // Filters
   const [activeFilter, setActiveFilter] = useState<'all' | 'unverified' | 'suspended'>('all');
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [connMenuOpen, setConnMenuOpen] = useState(false);
 
@@ -224,8 +255,21 @@ function DashboardContent() {
 
     if (pollingLocationIds.length === 0) return;
 
+    // Hard cap so we never poll forever: if a location stays stuck in "Pending"
+    // (e.g. a sync task died or Google errored out), stop after ~3 minutes
+    // instead of hammering /locations/ every 5s for the life of the open tab.
+    // The poll restarts naturally with a fresh budget whenever the pending set
+    // actually changes (effect dep below), so genuine progress is never cut off.
+    const MAX_LOCATION_POLLS = 36; // 36 × 5s = 3 minutes
+    let pollCount = 0;
+
     locationPollingIntervalRef.current = setInterval(() => {
+      pollCount++;
       loadLocations(false);
+      if (pollCount >= MAX_LOCATION_POLLS && locationPollingIntervalRef.current) {
+        clearInterval(locationPollingIntervalRef.current);
+        locationPollingIntervalRef.current = null;
+      }
     }, 5000);
 
     return () => {
@@ -340,6 +384,30 @@ function DashboardContent() {
       </div>
     );
   }
+
+  // Single primary state badge (priority: suspended > duplicate > unverified > verified).
+  // Darker text + stronger border so it stays readable on the white card background.
+  const renderStateBadge = (loc: Location) => {
+    if (loc.is_suspended) {
+      return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 border border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/30">Suspended</span>;
+    }
+    if (loc.is_duplicate) {
+      return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30">Duplicate</span>;
+    }
+    if (loc.is_verified === false) {
+      return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-zinc-200 text-zinc-700 border border-zinc-400 dark:bg-zinc-500/15 dark:text-zinc-300 dark:border-zinc-500/30">Unverified</span>;
+    }
+    if (loc.is_verified === true) {
+      return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">Verified</span>;
+    }
+    return null;
+  };
+
+  // Colour ramp shared by the health dot/score anchor.
+  const healthClasses = (score: number) =>
+    score >= 75 ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+      : score >= 60 ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30'
+      : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/30';
 
   const loadDashboardData = async () => {
     // Run all loaders in parallel — errors are handled inside each loader
@@ -566,7 +634,7 @@ function DashboardContent() {
       )}
 
       <div className="w-full">
-        <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 space-y-6 sm:space-y-8">
           {/* Action alerts */}
           {errorAlert && (
             <div className="flex items-center gap-3 rounded-xl bg-red-500/10 border border-red-500/20 p-4 text-sm font-medium text-red-400">
@@ -624,14 +692,14 @@ function DashboardContent() {
                   <button
                     onClick={handleTriggerSync}
                     disabled={syncing}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] sm:min-h-0 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors cursor-pointer"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
                     <span>{syncing ? 'Syncing...' : 'Sync'}</span>
                   </button>
                   <button
                     onClick={() => setConnMenuOpen(o => !o)}
-                    className="flex items-center justify-center p-1.5 rounded-lg text-muted-foreground hover:bg-muted/40 transition-colors cursor-pointer"
+                    className="flex items-center justify-center h-10 w-10 sm:h-auto sm:w-auto sm:p-1.5 rounded-lg text-muted-foreground hover:bg-muted/40 transition-colors cursor-pointer"
                     aria-label="Connection options"
                   >
                     <MoreHorizontal className="h-4 w-4" />
@@ -684,7 +752,7 @@ function DashboardContent() {
           )}
 
           {/* Summary KPI Cards — clickable to filter the storefront grid below */}
-          <section className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
             <div className="text-left bg-card border border-border rounded-xl p-5 shadow-sm">
               <div className="text-sm font-medium text-muted-foreground mb-1">Avg Health Score</div>
               <div className={`text-2xl font-bold ${healthSummary?.average_score ? (healthSummary.average_score >= 75 ? 'text-emerald-600' : healthSummary.average_score >= 60 ? 'text-amber-600' : 'text-red-600') : 'text-muted-foreground'}`}>
@@ -732,25 +800,45 @@ function DashboardContent() {
                   Synced Storefronts ({locations.length})
                 </h3>
               </div>
-              <div className="flex items-center gap-2">
-                <button 
+              <div className="flex flex-wrap items-center gap-2">
+                <button
                   onClick={() => setActiveFilter('all')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeFilter === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                  className={`px-3 py-1.5 min-h-[40px] sm:min-h-0 rounded-md text-xs font-medium transition-colors ${activeFilter === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
                 >
                   All
                 </button>
                 <button 
                   onClick={() => setActiveFilter('unverified')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeFilter === 'unverified' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                  className={`px-3 py-1.5 min-h-[40px] sm:min-h-0 rounded-md text-xs font-medium transition-colors ${activeFilter === 'unverified' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
                 >
                   Unverified
                 </button>
                 <button 
                   onClick={() => setActiveFilter('suspended')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeFilter === 'suspended' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                  className={`px-3 py-1.5 min-h-[40px] sm:min-h-0 rounded-md text-xs font-medium transition-colors ${activeFilter === 'suspended' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
                 >
                   Suspended
                 </button>
+
+                {/* Grid / Table view toggle — cards for browsing, table for scale */}
+                <div className="ml-1 flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
+                  <button
+                    onClick={() => setViewMode('grid')}
+                    aria-label="Card view"
+                    title="Card view"
+                    className={`flex items-center justify-center h-9 w-9 sm:h-7 sm:w-7 rounded transition-colors ${viewMode === 'grid' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode('table')}
+                    aria-label="Table view"
+                    title="Table view"
+                    className={`flex items-center justify-center h-9 w-9 sm:h-7 sm:w-7 rounded transition-colors ${viewMode === 'table' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    <TableIcon className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -769,6 +857,77 @@ function DashboardContent() {
                   We found no GBP storefront locations linked to this account. Refresh or connect a profile.
                 </p>
               </div>
+            ) : viewMode === 'table' ? (
+              /* Dense table view — scales past ~10 storefronts, scannable & comparable */
+              <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-sm">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                      <th className="px-4 py-3 font-bold">Storefront</th>
+                      <th className="px-4 py-3 font-bold">Health</th>
+                      <th className="px-4 py-3 font-bold">Rating</th>
+                      <th className="px-4 py-3 font-bold hidden md:table-cell">To reply</th>
+                      <th className="px-4 py-3 font-bold">Status</th>
+                      <th className="px-4 py-3 font-bold text-right hidden md:table-cell">Last sync</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedLocations.map((loc, index) => {
+                      const isBlocked = loc.billing_status
+                        ? loc.billing_status === 'pending_payment'
+                        : (billing?.location_quota !== undefined && index >= billing.location_quota);
+                      const pending = slaSummaries[loc.id]?.pending_count ?? 0;
+                      const addr = formatAddress(loc.address);
+                      return (
+                        <tr
+                          key={loc.id}
+                          onClick={() => isBlocked ? setShowUpgrade(true) : router.push(`/dashboard/locations/${loc.id}`)}
+                          className={`border-b border-border/50 last:border-0 transition-colors cursor-pointer ${isBlocked ? 'opacity-60 hover:bg-amber-500/5 active:bg-amber-500/10' : 'hover:bg-muted/30 active:bg-muted/50'}`}
+                        >
+                          <td className="px-4 py-3 max-w-xs">
+                            <div className="font-bold text-foreground truncate">{loc.location_name}</div>
+                            <div className="text-xs sm:text-[11px] text-muted-foreground truncate">
+                              <span className="uppercase font-semibold tracking-wide text-primary/80">{loc.primary_category || 'Storefront'}</span>
+                              {addr && <span> &middot; {addr}</span>}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            {loc.health_score != null ? (
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold border ${healthClasses(loc.health_score)}`}>
+                                {loc.health_score}
+                              </span>
+                            ) : <span className="text-muted-foreground/50">—</span>}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {loc.average_rating != null ? (
+                              <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400">
+                                <Star className="h-3.5 w-3.5 fill-current" />
+                                {Number(loc.average_rating).toFixed(1)}
+                                {loc.total_reviews != null && <span className="text-muted-foreground font-normal">({loc.total_reviews})</span>}
+                              </span>
+                            ) : <span className="text-muted-foreground/50">—</span>}
+                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell">
+                            {pending > 0 ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 border border-indigo-300 dark:bg-indigo-500/15 dark:text-indigo-300 dark:border-indigo-500/30">{pending}</span>
+                            ) : <span className="text-muted-foreground/50">0</span>}
+                          </td>
+                          <td className="px-4 py-3">
+                            {isBlocked ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30">
+                                <Lock className="h-3 w-3" /> Locked
+                              </span>
+                            ) : (renderStateBadge(loc) ?? <span className="text-muted-foreground/50 text-xs">—</span>)}
+                          </td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap text-xs text-muted-foreground hidden md:table-cell" title={loc.last_synced_at ? new Date(loc.last_synced_at).toLocaleString() : ''}>
+                            {relativeTime(loc.last_synced_at) ?? 'never'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {sortedLocations.map((loc, index) => {
@@ -778,141 +937,120 @@ function DashboardContent() {
                   const isBlocked = loc.billing_status
                     ? loc.billing_status === 'pending_payment'
                     : (billing?.location_quota !== undefined && index >= billing.location_quota);
+                  const pending = slaSummaries[loc.id]?.pending_count ?? 0;
+                  const sla = slaSummaries[loc.id];
+                  const addr = formatAddress(loc.address);
 
                   return (
-                  <Link 
-                    href={isBlocked ? '#' : `/dashboard/locations/${loc.id}`} 
-                    key={loc.id} 
+                  <Link
+                    href={isBlocked ? '#' : `/dashboard/locations/${loc.id}`}
+                    key={loc.id}
                     onClick={(e) => {
                       if (isBlocked) e.preventDefault();
                     }}
                     className={`bg-card text-card-foreground border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 transition-colors shadow-sm group block ${isBlocked ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:border-primary/50 hover:shadow-md'}`}
                   >
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <h4 className={`text-base font-bold leading-tight flex items-center gap-2 ${isBlocked ? 'text-muted-foreground' : 'text-foreground group-hover:text-primary'} transition-colors`}>
-                            {loc.location_name}
-                            {!isBlocked && <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />}
-                          </h4>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] uppercase font-bold tracking-wider text-primary">{loc.primary_category || 'Storefront'}</span>
-                            
-                            {/* State Badges */}
-                            {isBlocked && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  // The card is a disabled Link; intercept so the
-                                  // click opens the upgrade flow instead of navigating.
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  setShowUpgrade(true);
-                                }}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 cursor-pointer transition-colors"
-                              >
-                                <Sparkles className="h-3 w-3" />
-                                Upgrade to Reactivate
-                              </button>
-                            )}
-                            {/* Single primary status badge (priority: suspended > duplicate
-                                > unverified > verified). Suppressed when locked — the
-                                upgrade button above is the primary status. */}
-                            {!isBlocked && (
-                              loc.is_suspended ? (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
-                                  Suspended
-                                </span>
-                              ) : loc.is_duplicate ? (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                  Duplicate
-                                </span>
-                              ) : loc.is_verified === false ? (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
-                                  Unverified
-                                </span>
-                              ) : loc.is_verified === true ? (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                  Verified
-                                </span>
-                              ) : null
-                            )}
-                            
-                            {/* SLA Badge */}
-                            {slaSummaries[loc.id]?.sla_enabled && (
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${
-                                slaSummaries[loc.id].avg_sla_tier === 'Best' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                                slaSummaries[loc.id].avg_sla_tier === 'Good' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                                slaSummaries[loc.id].avg_sla_tier === 'Average' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                                slaSummaries[loc.id].avg_sla_tier === 'Poor' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                                'bg-muted/20 text-muted-foreground border-border'
-                              }`}>
-                                {slaSummaries[loc.id].avg_response_hours !== null ? `${slaSummaries[loc.id].avg_response_hours}h SLA` : 'SLA: No Data'}
-                              </span>
-                            )}
-                            
-                            {loc.average_rating !== undefined && loc.average_rating !== null && (
-                              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 text-[10px] font-bold">
-                                <Sparkles className="h-2.5 w-2.5 fill-current" />
-                                <span>{Number(loc.average_rating).toFixed(1)}</span>
-                                {loc.total_reviews !== undefined && loc.total_reviews !== null && (
-                                  <span className="text-muted-foreground/70 ml-0.5">({loc.total_reviews})</span>
-                                )}
-                              </div>
-                            )}
+                    <div className="space-y-3">
+                      {/* Title row: health anchor · name + category + one state badge · sync */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          {/* Health score as the card's visual anchor */}
+                          {loc.health_score != null ? (
+                            <div
+                              className={`flex flex-col items-center justify-center h-11 w-11 shrink-0 rounded-lg border ${healthClasses(loc.health_score)}`}
+                              title={`Health ${loc.health_score}${loc.health_score_label ? ` (${loc.health_score_label})` : ''}`}
+                            >
+                              <span className="text-sm font-bold leading-none">{loc.health_score}</span>
+                              <span className="text-[8px] uppercase font-bold tracking-wide opacity-70 mt-0.5">Health</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center h-11 w-11 shrink-0 rounded-lg border border-border bg-muted/30 text-muted-foreground text-[9px] font-bold">N/A</div>
+                          )}
 
-                            {loc.health_score !== undefined && loc.health_score !== null && (
-                              <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border ${
-                                loc.health_score >= 75 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                                loc.health_score >= 60 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                                'bg-red-500/10 text-red-400 border-red-500/20'
-                              }`}>
-                                Health: {loc.health_score} ({loc.health_score_label})
-                              </div>
-                            )}
+                          <div className="min-w-0">
+                            <h4 className={`text-base font-bold leading-tight flex items-center gap-1.5 ${isBlocked ? 'text-muted-foreground' : 'text-foreground group-hover:text-primary'} transition-colors`}>
+                              <span className="truncate">{loc.location_name}</span>
+                              {!isBlocked && <ChevronRight className="h-4 w-4 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />}
+                            </h4>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              <span className="text-[10px] uppercase font-bold tracking-wider text-primary">{loc.primary_category || 'Storefront'}</span>
+                              {isBlocked ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    // The card is a disabled Link; intercept so the
+                                    // click opens the upgrade flow instead of navigating.
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setShowUpgrade(true);
+                                  }}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30 dark:hover:bg-amber-500/25 cursor-pointer transition-colors"
+                                >
+                                  <Sparkles className="h-3 w-3" />
+                                  Upgrade to Reactivate
+                                </button>
+                              ) : renderStateBadge(loc)}
+                            </div>
                           </div>
                         </div>
                         {renderSyncStatus(loc)}
                       </div>
 
-                      {loc.address && (
-                        <p className="text-xs text-muted-foreground/90 font-medium leading-relaxed pt-1 flex items-start gap-1.5">
+                      {/* Metrics row — quiet, uniform, no longer competing with status */}
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-[11px] font-semibold">
+                        {loc.average_rating != null && (
+                          <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400">
+                            <Star className="h-3 w-3 fill-current" />
+                            {Number(loc.average_rating).toFixed(1)}
+                            {loc.total_reviews != null && <span className="text-muted-foreground font-normal">({loc.total_reviews})</span>}
+                          </span>
+                        )}
+                        {sla?.sla_enabled && (
+                          <span className="text-muted-foreground">
+                            <span className="text-muted-foreground/40 mr-2">&middot;</span>
+                            {sla.avg_response_hours != null ? `${sla.avg_response_hours}h SLA` : 'SLA: No data'}
+                          </span>
+                        )}
+                        {pending > 0 && (
+                          <span className="inline-flex items-center gap-1 text-indigo-700 dark:text-indigo-400">
+                            <span className="text-muted-foreground/40 mr-1">&middot;</span>
+                            {pending} to reply
+                          </span>
+                        )}
+                      </div>
+
+                      {addr && (
+                        <p className="text-xs text-muted-foreground/90 font-medium leading-relaxed flex items-start gap-1.5">
                           <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60 mt-0.5" />
-                          <span>{loc.address}</span>
+                          <span>{addr}</span>
                         </p>
                       )}
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/50 pt-4 text-xs font-semibold text-muted-foreground">
-                      {loc.phone && (
-                        <span className="flex items-center gap-1">
-                          <Phone className="h-3.5 w-3.5 text-muted-foreground/50" />
-                          {loc.phone}
-                        </span>
-                      )}
-                      {loc.website && (
-                        <span
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            window.open(loc.website, '_blank', 'noopener,noreferrer');
-                          }}
-                          className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 cursor-pointer"
-                        >
-                          <Globe className="h-3.5 w-3.5" />
-                          <span>Website</span>
-                        </span>
-                      )}
-                      {loc.last_synced_at && (
-                        <span
-                          className="ml-auto text-[10px] text-muted-foreground/60 flex items-center gap-1"
-                          title={new Date(loc.last_synced_at).toLocaleString()}
-                        >
-                          <Calendar className="h-3.5 w-3.5" />
-                          Synced {relativeTime(loc.last_synced_at)}
-                        </span>
-                      )}
-                    </div>
+                    {/* Footer — contact only; sync timestamp already lives in the status badge */}
+                    {(loc.phone || loc.website) && (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/50 pt-4 text-xs font-semibold text-muted-foreground">
+                        {loc.phone && (
+                          <span className="flex items-center gap-1">
+                            <Phone className="h-3.5 w-3.5 text-muted-foreground/50" />
+                            {loc.phone}
+                          </span>
+                        )}
+                        {loc.website && (
+                          <span
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              window.open(loc.website, '_blank', 'noopener,noreferrer');
+                            }}
+                            className="flex items-center gap-1 text-indigo-500 hover:text-indigo-400 cursor-pointer"
+                          >
+                            <Globe className="h-3.5 w-3.5" />
+                            <span>Website</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </Link>
                 )})}
               </div>

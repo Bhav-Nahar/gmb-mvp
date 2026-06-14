@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, update
 from app.db.session import get_db
-from app.api.deps import get_current_user, staff_required, admin_required, get_user_location_ids, verify_location_access
+from app.api.deps import get_current_user, staff_required, admin_required, get_user_location_ids, require_location_access
 from app.models.user import User
 from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
+from app.core.roles import ADMIN_ROLES
 from app.models.sync_log import SyncLog
 from app.schemas.schemas import LocationOut, SyncLogOut, SyncLogPaginated
 from app.schemas.location import LocationSyncStatus, LocationHealthScoreOut, OrganizationHealthSummaryOut
@@ -96,14 +97,11 @@ async def get_locations_sla_summary(
 
 @router.get("/{location_id}/sla", response_model=LocationSLAMetrics)
 async def get_location_sla(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
     """Fetch SLA metrics for a specific location."""
-    allowed_location_ids = get_user_location_ids(current_user, db)
-    if allowed_location_ids is not None and location_id not in allowed_location_ids:
-        raise HTTPException(status_code=403, detail="You do not have access to this location")
         
     location = db.query(Location).filter(
         Location.id == location_id,
@@ -116,14 +114,11 @@ async def get_location_sla(
 
 @router.post("/{location_id}/sla/enable", status_code=status.HTTP_200_OK)
 def enable_location_sla(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required)
 ):
     """Enable SLA tracking for a specific location."""
-    allowed_location_ids = get_user_location_ids(current_user, db)
-    if allowed_location_ids is not None and location_id not in allowed_location_ids:
-        raise HTTPException(status_code=403, detail="You do not have access to this location")
         
     location = db.query(Location).filter(
         Location.id == location_id,
@@ -200,21 +195,12 @@ def get_organization_health_summary(
 
 @router.get("/{location_id}", response_model=LocationOut)
 def get_location(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
     """Fetch a specific location by ID."""
-    # Ensure they have access to this location
-    verify_access = verify_location_access(location_id)
-    # verify_location_access returns a dependency function, so we must call it manually here or use it in the path
-    # Actually, verify_location_access is designed as a dependency. Let's do it in the path instead... wait, we can just call the closure since we have db and current_user? No, it requires a request.
-    # We will do it the manual way since we need db and user, let's just check get_user_location_ids.
-    
-    allowed_location_ids = get_user_location_ids(current_user, db)
-    if allowed_location_ids is not None and location_id not in allowed_location_ids:
-        raise HTTPException(status_code=403, detail="You do not have access to this location")
-        
+    # Location scope is enforced by the require_location_access dependency.
     location = db.query(Location).filter(
         Location.id == location_id,
         Location.organization_id == current_user.organization_id
@@ -297,7 +283,7 @@ def trigger_sync(
         .join(OAuthAccount, OAuthAccount.user_id == User.id)
         .filter(
             User.organization_id == current_user.organization_id,
-            User.role.in_(["Owner", "Admin"]),
+            User.role.in_(ADMIN_ROLES),
             User.is_active == True
         )
         .order_by(OAuthAccount.expires_at.desc(), User.id.asc())
@@ -327,7 +313,7 @@ def trigger_sync(
 
 @router.get("/{location_id}/sync-status", response_model=LocationSyncStatus)
 def get_location_sync_status(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -335,9 +321,6 @@ def get_location_sync_status(
     Get the sync status of a specific location.
     Enforces that the location belongs to the user's organization.
     """
-    allowed_location_ids = get_user_location_ids(current_user, db)
-    if allowed_location_ids is not None and location_id not in allowed_location_ids:
-        raise HTTPException(status_code=403, detail="You do not have access to this location")
 
     location = db.query(Location).filter(
         Location.id == location_id,
@@ -379,17 +362,15 @@ def get_location_sync_status(
 
 @router.get("/{location_id}/health-score", response_model=LocationHealthScoreOut)
 def get_location_health_score(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
     """Fetch the health score for a specific location. If it doesn't exist, calculate it."""
-    # Access check (verify_location_access is a dependency factory and cannot be
-    # called directly here, so we replicate the manual check used by get_location).
-    allowed_location_ids = get_user_location_ids(current_user, db)
-    if allowed_location_ids is not None and location_id not in allowed_location_ids:
-        raise HTTPException(status_code=403, detail="You do not have access to this location")
-
+    # Tenant boundary AND per-user location scope are both enforced by the
+    # require_location_access dependency, so location_id is guaranteed to belong
+    # to current_user's organization here (prevents the cross-tenant IDOR where an
+    # admin could read/recalculate another org's location by raw id).
     score = db.query(LocationHealthScore).filter(LocationHealthScore.location_id == location_id).first()
     
     if not score:

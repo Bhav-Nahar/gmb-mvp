@@ -8,6 +8,7 @@ from app.models.location import Location
 from app.core.listing_fields import FIELD_MAP
 from app.services.activity_log_service import ActivityLogService
 from app.core.exceptions import PermissionDeniedError, ConflictError, NotFoundError
+from app.core.roles import Role
 
 # =============================================================================
 # LOCK ACQUISITION ORDER — MUST BE FOLLOWED BY ALL METHODS IN THIS MODULE
@@ -47,7 +48,7 @@ class ListingEditService:
             raise NotFoundError(f"Unknown field: {field_name}")
         if config.is_read_only:
             raise PermissionDeniedError(f"'{config.label}' is read-only and cannot be edited.")
-        is_admin_or_owner = actor_role in ("Admin", "admin", "Owner", "owner")
+        is_admin_or_owner = actor_role in (Role.ADMIN, "admin", Role.OWNER, "owner")
         if not is_admin_or_owner and not config.is_staff_editable:
             raise PermissionDeniedError(
                 f"Staff cannot edit '{config.label}'. Submit a request to your admin."
@@ -112,7 +113,7 @@ class ListingEditService:
              old_value = str(old_value)
 
         # Admins and Owners skip Draft → go straight to Pending (they can self-approve)
-        is_admin_or_owner = actor_role in ("Admin", "admin", "Owner", "owner")
+        is_admin_or_owner = actor_role in (Role.ADMIN, "admin", Role.OWNER, "owner")
         initial_status = "Pending" if is_admin_or_owner else "Draft"
 
         edit = LocationEdit(

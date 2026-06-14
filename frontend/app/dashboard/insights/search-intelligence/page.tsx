@@ -204,11 +204,11 @@ export default function SearchIntelligencePage() {
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-8">
       {/* Header */}
       <div className="flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Search Intelligence</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">Search Intelligence</h1>
           <p className="text-muted-foreground mt-1">Discover how customers find your business on Google.</p>
           {syncState.insights_sync_in_progress ? (
             <span className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700">
@@ -220,16 +220,16 @@ export default function SearchIntelligencePage() {
             </span>
           ) : null}
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <Button variant="outline" onClick={handleSync} disabled={syncState.insights_sync_in_progress} className="gap-2">
+        <div className="grid grid-cols-2 sm:flex items-center gap-3 sm:flex-wrap">
+          <Button variant="outline" onClick={handleSync} disabled={syncState.insights_sync_in_progress} className="gap-2 w-full sm:w-auto min-h-[44px] sm:min-h-0">
             <RefreshCw className={`w-4 h-4 ${syncState.insights_sync_in_progress ? 'animate-spin' : ''}`} /> Sync Now
           </Button>
-          <Button variant="outline" onClick={handleExport} disabled={exporting} className="gap-2">
+          <Button variant="outline" onClick={handleExport} disabled={exporting} className="gap-2 w-full sm:w-auto min-h-[44px] sm:min-h-0">
             <Download className="w-4 h-4" /> {exporting ? 'Exporting…' : 'Export CSV'}
           </Button>
           <Dialog>
             <DialogTrigger render={
-              <Button className="gap-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
+              <Button className="gap-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white col-span-2 w-full sm:w-auto min-h-[44px] sm:min-h-0">
                 <BarChart2 className="w-4 h-4" /> Brand Terms
               </Button>
             } />
@@ -266,8 +266,8 @@ export default function SearchIntelligencePage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-muted/20">
+      <div className="flex gap-3 overflow-x-auto sm:flex-wrap sm:items-center sm:overflow-visible">
+        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 min-h-[44px] sm:min-h-0 bg-muted/20 shrink-0">
           <MapPin className="h-4 w-4 text-muted-foreground" />
           <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)}
             className="bg-transparent text-sm font-medium outline-none cursor-pointer max-w-[200px]">
@@ -275,7 +275,7 @@ export default function SearchIntelligencePage() {
             {locations.map((l) => <option key={l.id} value={String(l.id)}>{l.location_name}</option>)}
           </select>
         </div>
-        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-muted/20">
+        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 min-h-[44px] sm:min-h-0 bg-muted/20 shrink-0">
           <Calendar className="h-4 w-4 text-muted-foreground" />
           <select value={months} onChange={(e) => setMonths(parseInt(e.target.value))}
             className="bg-transparent text-sm font-medium outline-none cursor-pointer">
@@ -420,14 +420,14 @@ export default function SearchIntelligencePage() {
             <Input placeholder="Search keywords…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
           <div className="flex items-center gap-2">
-            <select className="h-10 px-3 rounded-md border border-input bg-background text-sm"
+            <select className="h-11 sm:h-10 flex-1 sm:flex-none px-3 rounded-md border border-input bg-background text-sm"
               value={isBrandFilter === null ? 'all' : isBrandFilter ? 'brand' : 'non-brand'}
               onChange={(e) => { const v = e.target.value; setIsBrandFilter(v === 'all' ? null : v === 'brand') }}>
               <option value="all">All Keywords</option>
               <option value="brand">Branded Only</option>
               <option value="non-brand">Discovery Only</option>
             </select>
-            <select className="h-10 px-3 rounded-md border border-input bg-background text-sm"
+            <select className="h-11 sm:h-10 flex-1 sm:flex-none px-3 rounded-md border border-input bg-background text-sm"
               value={sort} onChange={(e) => setSort(e.target.value)}>
               <option value="impressions_desc">Impressions ↓</option>
               <option value="impressions_asc">Impressions ↑</option>
@@ -508,8 +508,8 @@ export default function SearchIntelligencePage() {
             Showing <span className="font-semibold">{total === 0 ? 0 : Math.min((page - 1) * PAGE_SIZE + 1, total)}</span> to <span className="font-semibold">{Math.min(page * PAGE_SIZE, total)}</span> of <span className="font-semibold">{total}</span>
           </p>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1 || loading}>Previous</Button>
-            <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={page * PAGE_SIZE >= total || loading}>Next</Button>
+            <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1 || loading} className="min-h-[44px] sm:min-h-0">Previous</Button>
+            <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={page * PAGE_SIZE >= total || loading} className="min-h-[44px] sm:min-h-0">Next</Button>
           </div>
         </div>
       </div>

@@ -8,6 +8,7 @@ from app.providers.gbp.auth import GBPAuthManager
 from app.providers.base.auth import AuthContext
 from app.models.oauth_account import OAuthAccount
 from app.models.user import User
+from app.core.roles import ADMIN_ROLES
 from app.models.location import Location
 from app.models.gbp_attribute_metadata import GbpAttributeMetadata
 from app.models.gbp_attribute_definition import GbpAttributeDefinition
@@ -26,7 +27,7 @@ class AttributeSyncService:
         # Get OAuth account for org
         oauth_account = self.db.query(OAuthAccount).join(User).filter(
             User.organization_id == organization_id,
-            User.role.in_(["Owner", "Admin"]),
+            User.role.in_(ADMIN_ROLES),
             OAuthAccount.provider.in_(["gbp", "google"])
         ).first()
 

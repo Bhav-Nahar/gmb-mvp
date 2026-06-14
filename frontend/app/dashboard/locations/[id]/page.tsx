@@ -10,10 +10,12 @@ import { ReviewsTab } from "./tabs/ReviewsTab"
 import { PostsTab } from "./tabs/PostsTab"
 import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
 import { InsightsTab } from "./tabs/InsightsTab"
+import { SearchIntelligenceTab } from "./tabs/SearchIntelligenceTab"
+import { PhotosTab } from "./tabs/PhotosTab"
 import { OverviewTab } from "./tabs/OverviewTab"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { AlertCircle, ArrowLeft, RefreshCw, AlertTriangle, MessageSquare, Edit3, ClipboardList, TrendingUp, LayoutDashboard } from "lucide-react"
+import { AlertCircle, ArrowLeft, RefreshCw, AlertTriangle, MessageSquare, Edit3, ClipboardList, TrendingUp, LayoutDashboard, Search, ImageIcon } from "lucide-react"
 import Link from "next/link"
 import { SkeletonLoader } from "./components/SkeletonLoader"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
@@ -93,25 +95,25 @@ export default function LocationProfilePage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <main className="mx-auto max-w-7xl px-4 py-8 space-y-6">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-4">
-              <Link href="/dashboard" className="p-2 rounded-full hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:py-8 space-y-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
+            <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+              <Link href="/dashboard" className="p-2 rounded-full hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
                 <ArrowLeft className="h-5 w-5" />
               </Link>
-              <div>
-                <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
+              <div className="min-w-0">
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground flex items-center gap-2 truncate">
                   {location.location_name}
                 </h1>
-                <p className="text-muted-foreground mt-1 flex items-center gap-2 text-sm">
-                  {formatAddress(location.address)}
-                  <span className="text-muted-foreground/30">•</span>
+                <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
+                  <span className="break-words">{formatAddress(location.address)}</span>
+                  <span className="text-muted-foreground/30 hidden sm:inline">•</span>
                   <span>{location.primary_category || 'No category'}</span>
                 </p>
               </div>
             </div>
-            
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => {/* Future implementation for force sync */}}>
+
+            <Button variant="outline" size="sm" className="gap-2 shrink-0 w-full min-h-[44px] self-start sm:w-auto sm:min-h-0 sm:self-auto" onClick={() => {/* Future implementation for force sync */}}>
               <RefreshCw className="w-4 h-4" />
               Force Sync
             </Button>
@@ -145,16 +147,16 @@ export default function LocationProfilePage() {
               }} 
               className="w-full"
             >
-              <TabsList className="w-full justify-start bg-transparent border-b border-border/50 rounded-none p-0 h-auto gap-6 pb-2 mb-6 overflow-x-auto overflow-y-hidden">
-                <TabsTrigger value="overview" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 pb-2 pt-1 text-muted-foreground data-[state=active]:text-primary">
+              <TabsList className="w-full justify-start bg-transparent border-b border-border/50 rounded-none p-0 h-auto gap-4 sm:gap-6 pb-2 mb-6 overflow-x-auto overflow-y-hidden -mx-4 px-4 sm:mx-0 sm:px-0 sticky top-14 z-20 bg-background/95 backdrop-blur sm:static sm:bg-transparent sm:backdrop-blur-none">
+                <TabsTrigger value="overview" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
                   <LayoutDashboard className="w-4 h-4 mr-2" />
                   Overview
                 </TabsTrigger>
-                <TabsTrigger value="profile" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 pb-2 pt-1 text-muted-foreground data-[state=active]:text-primary">
+                <TabsTrigger value="profile" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
                   <Edit3 className="w-4 h-4 mr-2" />
                   Profile Details
                 </TabsTrigger>
-                <TabsTrigger value="tasks" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 pb-2 pt-1 text-muted-foreground data-[state=active]:text-primary relative">
+                <TabsTrigger value="tasks" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0 relative">
                   <ClipboardList className="w-4 h-4 mr-2" />
                   Tasks
                   {pendingCount > 0 && (
@@ -163,21 +165,29 @@ export default function LocationProfilePage() {
                     </Badge>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="activity" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 pb-2 pt-1 text-muted-foreground data-[state=active]:text-primary">
+                <TabsTrigger value="activity" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
                   <RefreshCw className="w-4 h-4 mr-2" />
                   Activity Log
                 </TabsTrigger>
-                <TabsTrigger value="reviews" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 pb-2 pt-1 text-muted-foreground data-[state=active]:text-primary">
+                <TabsTrigger value="reviews" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
                   <MessageSquare className="w-4 h-4 mr-2" />
                   Reviews
                 </TabsTrigger>
-                <TabsTrigger value="posts" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 pb-2 pt-1 text-muted-foreground data-[state=active]:text-primary">
+                <TabsTrigger value="posts" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
                   <AlertTriangle className="w-4 h-4 mr-2" />
                   Posts
                 </TabsTrigger>
-                <TabsTrigger value="insights" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 pb-2 pt-1 text-muted-foreground data-[state=active]:text-primary">
+                <TabsTrigger value="photos" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
+                  <ImageIcon className="w-4 h-4 mr-2" />
+                  Photos
+                </TabsTrigger>
+                <TabsTrigger value="insights" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
                   <TrendingUp className="w-4 h-4 mr-2" />
                   Insights
+                </TabsTrigger>
+                <TabsTrigger value="search" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
+                  <Search className="w-4 h-4 mr-2" />
+                  Search
                 </TabsTrigger>
               </TabsList>
               
@@ -201,8 +211,14 @@ export default function LocationProfilePage() {
                   <TabsContent value="posts" className="mt-0">
                     <PostsTab locationId={locationId} />
                   </TabsContent>
+                  <TabsContent value="photos" className="mt-0">
+                    <PhotosTab locationId={locationId} />
+                  </TabsContent>
                   <TabsContent value="insights" className="mt-0">
                     <InsightsTab locationId={locationId} />
+                  </TabsContent>
+                  <TabsContent value="search" className="mt-0">
+                    <SearchIntelligenceTab locationId={locationId} />
                   </TabsContent>
                 </ErrorBoundary>
               </div>

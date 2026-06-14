@@ -6,8 +6,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.api.deps import get_current_user, staff_required, get_user_location_ids
+from app.api.deps import get_current_user, staff_required, get_user_location_ids, require_location_access
 from app.core.authorization import assert_location_active
+from app.core.roles import Role, ADMIN_ROLES
 from app.models.user import User
 from app.models.location import Location
 from app.models.review import Review
@@ -134,8 +135,8 @@ def trigger_reviews_sync(
         task = celery_app.send_task("app.tasks.sync_reviews_task", args=[location_id, "Manual", current_user.id])
         return {"message": "Sync task has been queued for the location.", "task_id": task.id}
     else:
-        if current_user.role not in ["Owner", "Admin", "Manager"]:
-            raise HTTPException(status_code=403, detail="Only Managers, Owners, and Admins can trigger organization-wide sync")
+        if current_user.role not in ADMIN_ROLES:
+            raise HTTPException(status_code=403, detail="Only Owners and Admins can trigger organization-wide sync")
             
         from app.core.config import settings
         chunk_size = getattr(settings, "REVIEW_SYNC_CHUNK_SIZE", 20)
@@ -163,7 +164,7 @@ async def reply_to_review(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
-    if current_user.role == "Viewer":
+    if current_user.role == Role.VIEWER:
         raise HTTPException(status_code=403, detail="Viewers cannot reply to reviews")
 
     review = db.query(Review).filter(
@@ -221,7 +222,7 @@ async def generate_review_reply(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
-    if current_user.role == "Viewer":
+    if current_user.role == Role.VIEWER:
         raise HTTPException(status_code=403, detail="Viewers cannot generate replies")
 
     review = db.query(Review).filter(
@@ -271,7 +272,7 @@ async def generate_review_reply(
 
 @router.post("/locations/{location_id}/retag-sentiment", status_code=status.HTTP_200_OK)
 def retag_sentiment(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -279,10 +280,7 @@ def retag_sentiment(
     Reset sentiment_tagged_at for all non-deleted reviews of a location to NULL,
     then enqueue the sentiment tagging task.
     """
-    allowed_location_ids = get_user_location_ids(current_user, db)
-    if allowed_location_ids is not None and location_id not in allowed_location_ids:
-        raise HTTPException(status_code=403, detail="You do not have access to this location")
-
+    # Location scope is enforced by the require_location_access dependency.
     location = db.query(Location).filter(
         Location.id == location_id,
         Location.organization_id == current_user.organization_id

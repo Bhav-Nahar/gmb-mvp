@@ -12,6 +12,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRazorpay } from '@/hooks/useRazorpay';
 import { toast } from 'sonner';
 import { useState } from 'react';
+import { isPaymentVerificationError, PAYMENT_VERIFICATION_FAILED_MSG } from '@/lib/payment';
 
 interface UpgradeModalProps {
   open: boolean;
@@ -26,6 +27,9 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const queryClient = useQueryClient();
   const [paymentTerm, setPaymentTerm] = useState<'monthly' | 'annual'>('monthly');
   const [locationCount, setLocationCount] = useState<number>(1);
+  // Held true across the whole Razorpay flow so a second click can't create a second
+  // subscription/order (the backend overwrites razorpay_subscription_id each call).
+  const [submitting, setSubmitting] = useState(false);
 
   // An org that already has an active subscription doesn't re-subscribe to unlock a
   // newly-added location — it pays a prorated add-on whose order carries the
@@ -48,6 +52,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const unlockRupees = pending?.quote ? Math.round(pending.quote.amount_paise / 100) : null;
 
   const handleUnlock = async () => {
+    if (submitting) return;
     const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY;
     if (!razorpayKey) {
       toast.error('Payments are not configured (missing key). Please contact support.');
@@ -58,9 +63,10 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
       toast.error('No locked locations to unlock.');
       return;
     }
+    setSubmitting(true);
     try {
       const { order } = await unlockLocations({ location_ids: ids });
-      openRazorpay({
+      await openRazorpay({
         key: razorpayKey,
         order_id: order.id,
         amount: order.amount,
@@ -81,9 +87,14 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             } else {
               toast.info('Payment received! Unlocking shortly...');
             }
-          } catch {
-            toast.info('Payment received! Unlocking shortly...');
+          } catch (err) {
+            if (isPaymentVerificationError(err)) {
+              toast.error(PAYMENT_VERIFICATION_FAILED_MSG);
+            } else {
+              toast.info('Payment received! Unlocking shortly...');
+            }
           } finally {
+            setSubmitting(false);
             queryClient.invalidateQueries({ queryKey: ['billing_status'] });
             queryClient.invalidateQueries({ queryKey: ['pending_locations'] });
             window.dispatchEvent(new Event('billing:refresh'));
@@ -91,25 +102,30 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
           }
         },
         onFailure: (err: any) => {
+          setSubmitting(false);
           toast.error(err?.description || 'Payment failed. No locations were unlocked.');
         },
         modal: {
           ondismiss: function () {
+            setSubmitting(false);
             toast.info('Checkout closed. No payment was made.');
           },
         },
       } as any);
     } catch (error: any) {
+      setSubmitting(false);
       toast.error(error.message || 'Failed to start unlock');
     }
   };
 
   const handleUpgrade = async () => {
+    if (submitting) return;
     const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY;
     if (!razorpayKey) {
       toast.error('Payments are not configured (missing key). Please contact support.');
       return;
     }
+    setSubmitting(true);
     try {
       const response = await checkoutSubscription({
         location_count: locationCount,
@@ -136,26 +152,34 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             } else {
               toast.info('Payment received! Confirming activation shortly...');
             }
-          } catch {
-            toast.info('Payment received! Confirming activation shortly...');
+          } catch (err) {
+            if (isPaymentVerificationError(err)) {
+              toast.error(PAYMENT_VERIFICATION_FAILED_MSG);
+            } else {
+              toast.info('Payment received! Confirming activation shortly...');
+            }
           } finally {
+            setSubmitting(false);
             queryClient.invalidateQueries({ queryKey: ['billing_status'] });
             window.dispatchEvent(new Event('billing:refresh'));
             onOpenChange(false);
           }
         },
         onFailure: (err: any) => {
+          setSubmitting(false);
           toast.error(err?.description || 'Payment failed. Subscription not activated.');
         },
         modal: {
           ondismiss: function () {
+            setSubmitting(false);
             toast.info('Checkout closed. No payment was made.');
           },
         },
       };
 
-      openRazorpay(options as any);
+      await openRazorpay(options as any);
     } catch (error: any) {
+      setSubmitting(false);
       toast.error(error.message || 'Failed to initialize checkout');
     }
   };
@@ -190,7 +214,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
               </ul>
             </div>
 
-            <div className="pt-4 border-t flex items-end justify-between">
+            <div className="pt-4 border-t flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Prorated charge</p>
                 <p className="text-3xl font-bold">
@@ -198,10 +222,11 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                 </p>
               </div>
               <Button
+                className="w-full sm:w-auto"
                 onClick={handleUnlock}
-                disabled={unlockPending || pendingLoading || (pending?.pending_locations?.length ?? 0) === 0}
+                disabled={unlockPending || submitting || pendingLoading || (pending?.pending_locations?.length ?? 0) === 0}
               >
-                {unlockPending ? 'Starting…' : 'Pay & Unlock'}
+                {unlockPending || submitting ? 'Starting…' : 'Pay & Unlock'}
               </Button>
             </div>
           </div>
@@ -220,11 +245,12 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex justify-center my-4 space-x-2">
+        <div className="flex justify-center my-4 gap-2 sm:space-x-2">
           <Button
             variant={paymentTerm === 'monthly' ? 'default' : 'outline'}
             onClick={() => setPaymentTerm('monthly')}
             size="sm"
+            className="flex-1 min-h-[44px] sm:flex-none sm:min-h-0"
           >
             Monthly
           </Button>
@@ -232,6 +258,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             variant={paymentTerm === 'annual' ? 'default' : 'outline'}
             onClick={() => setPaymentTerm('annual')}
             size="sm"
+            className="flex-1 min-h-[44px] sm:flex-none sm:min-h-0"
           >
             Yearly (Save 20%)
           </Button>
@@ -241,17 +268,19 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
           <div className="space-y-2">
             <label className="text-sm font-medium">Number of Locations</label>
             <div className="flex items-center space-x-4">
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 text-lg sm:text-[0.8rem]"
                 onClick={() => setLocationCount(Math.max(1, locationCount - 1))}
               >
                 -
               </Button>
               <span className="text-xl font-bold w-12 text-center">{locationCount}</span>
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 text-lg sm:text-[0.8rem]"
                 onClick={() => setLocationCount(locationCount + 1)}
               >
                 +
@@ -259,7 +288,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             </div>
           </div>
 
-          <div className="pt-4 border-t flex items-end justify-between">
+          <div className="pt-4 border-t flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Total Price</p>
               <p className="text-3xl font-bold">
@@ -267,8 +296,12 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                 <span className="text-sm font-normal text-muted-foreground">/{paymentTerm === 'monthly' ? 'mo' : 'yr'}</span>
               </p>
             </div>
-            <Button onClick={handleUpgrade} disabled={isPending || quoteLoading}>
-              Checkout
+            <Button
+              className="w-full sm:w-auto"
+              onClick={handleUpgrade}
+              disabled={isPending || submitting || quoteLoading || totalRupees === null}
+            >
+              {isPending || submitting ? 'Starting…' : 'Checkout'}
             </Button>
           </div>
         </div>

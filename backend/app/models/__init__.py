@@ -29,6 +29,7 @@ from app.models.razorpay_plan import RazorpayPlan
 from app.models.location_health_score import LocationHealthScore
 from app.models.keyword_monthly_metrics import KeywordMonthlyMetric
 from app.models.organization_brand_terms import OrganizationBrandTerm
+from app.models.location_media import LocationMedia
 
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location", 
@@ -37,6 +38,7 @@ __all__ = [
     "CampaignAuditLog", "LocationEdit", "ActivityLog", "ActivityLogArchive",
     "LocationDailyInsight", "OrganizationSyncState", "GbpAttributeMetadata", "GbpAttributeDefinition",
     "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction",
-    "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm"
+    "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm",
+    "LocationMedia"
 ]
 

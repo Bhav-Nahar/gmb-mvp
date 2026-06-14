@@ -84,3 +84,21 @@ class KeywordInsightMetric(BaseModel):
     impressions: int
     period_start: date
 
+class MediaItemModel(BaseModel):
+    # Google's media item resource name, e.g.
+    # accounts/{a}/locations/{l}/media/{mediaKey}
+    resource_name: Optional[str] = None
+    media_key: Optional[str] = None
+    category: Optional[str] = None          # LOGO/COVER/INTERIOR/EXTERIOR/PRODUCT/...
+    media_format: Optional[str] = "PHOTO"   # PHOTO or VIDEO
+    source_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    view_count: Optional[int] = None
+    provider: str = "gbp"
+    provider_metadata: Dict[str, Any] = {}
+
+class PostInsightMetric(BaseModel):
+    post_name: str                          # localPost resource name
+    view_count: int = 0
+    cta_click_count: int = 0
+

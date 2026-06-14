@@ -99,8 +99,12 @@ def list_campaigns(
 ):
     """Fetch paginated list of campaigns for the organization."""
     query = db.query(Campaign).filter(Campaign.organization_id == current_user.organization_id)
-    
+
     if location_id:
+        # Anti-IDOR: don't let a location-restricted user filter/enumerate campaigns
+        # by a location they cannot access.
+        from app.core.authorization import assert_location_access
+        assert_location_access(db, current_user, location_id)
         from app.models.publish_job import PublishJob
         query = query.join(PublishJob).filter(PublishJob.location_id == location_id)
         query = query.distinct()
@@ -490,10 +494,21 @@ def resume_campaign(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Campaign is in {campaign.status} state and cannot be resumed."
         )
-        
+
     from app.constants.posts import CampaignStatus, PublishJobStatus
     from app.models.campaign_audit_log import CampaignAuditLog
     from app.models.publish_job import PublishJob
+    from app.core.authorization import validate_location_access
+
+    # Resuming is a campaign-wide action; ensure the caller has access to every
+    # location the campaign touches (org-wide roles pass automatically).
+    campaign_location_ids = [
+        row[0] for row in db.query(PublishJob.location_id)
+        .filter(PublishJob.campaign_id == campaign.id)
+        .distinct()
+        .all()
+    ]
+    validate_location_access(db, current_user, campaign_location_ids)
 
     old_status = campaign.status
     campaign.status = CampaignStatus.PROCESSING.value
@@ -560,10 +575,21 @@ def cancel_campaign(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Campaign is in {campaign.status} state and cannot be cancelled."
         )
-        
+
     from app.constants.posts import CampaignStatus, PublishJobStatus
     from app.models.campaign_audit_log import CampaignAuditLog
     from app.models.publish_job import PublishJob
+    from app.core.authorization import validate_location_access
+
+    # Cancelling is a campaign-wide action; ensure the caller has access to every
+    # location the campaign touches (org-wide roles pass automatically).
+    campaign_location_ids = [
+        row[0] for row in db.query(PublishJob.location_id)
+        .filter(PublishJob.campaign_id == campaign.id)
+        .distinct()
+        .all()
+    ]
+    validate_location_access(db, current_user, campaign_location_ids)
 
     old_status = campaign.status
     campaign.status = CampaignStatus.CANCELLED.value

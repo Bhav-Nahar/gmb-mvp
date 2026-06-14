@@ -5,10 +5,8 @@ import json
 
 from app.models.location import Location
 from app.models.review import Review
-from app.models.post_media import PostMedia
-from app.models.post import Post
-from app.models.post_variant import PostVariant
 from app.models.location_health_score import LocationHealthScore
+from app.models.location_media import LocationMedia, LocationMediaStatus
 
 class HealthScoreService:
     SCORE_VERSION = "HEALTH_V1"
@@ -94,21 +92,34 @@ class HealthScoreService:
             else: post_score = 5
 
         # 5. Photos & Media (15 Max)
-        photo_score = 0
-        photos_count = (
-            db.query(func.count(func.distinct(PostMedia.id)))
-            .join(Post, Post.id == PostMedia.post_id)
-            .join(PostVariant, PostVariant.post_id == Post.id)
+        # Reward the photos that matter, not a raw count: a Logo (4), a Cover (4),
+        # and content/additional photos (up to 7). Counts only photos actually
+        # live on the Google profile gallery (synced or published via the app).
+        cat_rows = (
+            db.query(LocationMedia.gbp_category, func.count(LocationMedia.id))
             .filter(
-                PostVariant.location_id == location_id,
-                PostMedia.is_deleted == False,
-                PostMedia.upload_status.in_(["Uploaded", "Valid"])
+                LocationMedia.location_id == location_id,
+                LocationMedia.is_deleted == False,
+                LocationMedia.publish_status == LocationMediaStatus.PUBLISHED,
             )
-            .scalar() or 0
+            .group_by(LocationMedia.gbp_category)
+            .all()
         )
+        cat_counts = {c: n for c, n in cat_rows}
+        # Google's profile photo serves as the logo/avatar, so PROFILE counts too.
+        has_logo = (cat_counts.get("LOGO", 0) + cat_counts.get("PROFILE", 0)) > 0
+        has_cover = cat_counts.get("COVER", 0) > 0
+        additional_count = sum(
+            n for c, n in cat_counts.items() if c not in ("LOGO", "PROFILE", "COVER")
+        )
+        photos_count = sum(cat_counts.values())
 
-        if photos_count >= 5: photo_score = 15
-        elif photos_count >= 1: photo_score = 5
+        logo_score = 4 if has_logo else 0
+        cover_score = 4 if has_cover else 0
+        if additional_count >= 5: additional_score = 7
+        elif additional_count >= 1: additional_score = 3
+        else: additional_score = 0
+        photo_score = logo_score + cover_score + additional_score
 
         # --- Totals ---
         total_score = prof_score + reviews_score + resp_score + post_score + photo_score
@@ -153,8 +164,12 @@ class HealthScoreService:
             recs.append({"priority": 3, "title": "Improve Rating", "description": "Your average rating is below 4.0. Focus on customer experience.", "potential_gain": 20 - rating_score, "target_tab": "reviews"})
 
         # Priority 4
-        if photo_score < 15:
-            recs.append({"priority": 4, "title": "Upload Photos", "description": "Add more photos via posts to reach 5+ photos.", "potential_gain": 15 - photo_score, "target_tab": "posts"})
+        if not has_logo:
+            recs.append({"priority": 4, "title": "Add a Logo", "description": "Add a logo/profile photo so customers recognise your brand.", "potential_gain": 4, "target_tab": "photos"})
+        if not has_cover:
+            recs.append({"priority": 4, "title": "Add a Cover Photo", "description": "A cover photo makes your profile stand out in search and maps.", "potential_gain": 4, "target_tab": "photos"})
+        if additional_score < 7:
+            recs.append({"priority": 4, "title": "Add More Photos", "description": "Add photos of your products, interior, and team (5+ recommended).", "potential_gain": 7 - additional_score, "target_tab": "photos"})
 
         # Sort recommendations by priority asc, then potential_gain desc
         recs.sort(key=lambda r: (r["priority"], -r["potential_gain"]))

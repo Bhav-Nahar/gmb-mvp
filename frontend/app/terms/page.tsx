@@ -21,10 +21,10 @@ export default function TermsPage() {
           <ArrowLeft className="h-4 w-4" /> Back to home
         </Link>
 
-        <h1 className="mt-8 text-3xl font-extrabold tracking-tight sm:text-4xl">Terms of Service</h1>
+        <h1 className="mt-8 text-2xl font-extrabold tracking-tight sm:text-4xl">Terms of Service</h1>
         <p className="mt-2 text-sm text-muted-foreground">Last updated: {updated}</p>
 
-        <div className="mt-10 space-y-8 text-sm leading-relaxed text-muted-foreground">
+        <div className="mt-10 space-y-8 text-[15px] leading-relaxed sm:text-sm text-muted-foreground">
           <section className="space-y-3">
             <p>
               These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of GBP Manager Pro (the
@@ -94,7 +94,7 @@ export default function TermsPage() {
                 href="https://wa.me/917021052482"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-primary hover:underline"
+                className="text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
               >
                 WhatsApp
               </a>

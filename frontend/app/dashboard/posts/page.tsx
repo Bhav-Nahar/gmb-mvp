@@ -7,17 +7,18 @@ import {
   Plus,
   FileText,
   History,
-  MapPin,
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  RefreshCw,
   Search,
   Upload,
   Send,
   Loader2,
   X,
-  Lock
+  Lock,
+  ChevronLeft,
+  ChevronRight,
+  RotateCw,
 } from 'lucide-react'
 
 interface Location {
@@ -33,7 +34,9 @@ interface CampaignJob {
   id: number
   location_id: number
   status: string
+  retry_count?: number
   last_error?: string | null
+  google_post_id?: string | null
 }
 
 interface CampaignAuditLog {
@@ -57,13 +60,85 @@ interface Campaign {
   audit_logs?: CampaignAuditLog[]
 }
 
+const CTA_LABELS: Record<string, string> = {
+  LEARN_MORE: 'Learn More',
+  BOOK: 'Book',
+  ORDER: 'Order',
+  SHOP: 'Shop',
+  SIGN_UP: 'Sign Up',
+  CALL: 'Call',
+}
+
+const SUMMARY_MAX = 1500
+const TITLE_MAX = 100
+
+// Relative "3h ago" / "2d ago" for campaign timestamps.
+function relativeTime(dateStr?: string | null): string {
+  if (!dateStr) return ''
+  const diffMs = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diffMs / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
+
+// Campaign-level badge — full status coverage with readable contrast on white.
+function CampaignBadge({ status }: { status: string }) {
+  const s = (status || '').toUpperCase().replace(/[_\s]/g, '')
+  const base = 'px-2 py-0.5 rounded text-[10px] font-bold border'
+  switch (s) {
+    case 'DRAFT':
+      return <span className={`${base} bg-zinc-100 text-zinc-700 border-zinc-300 dark:bg-zinc-500/15 dark:text-zinc-300 dark:border-zinc-500/30`}>Draft</span>
+    case 'QUEUED':
+      return <span className={`${base} bg-sky-100 text-sky-700 border-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30`}>Queued</span>
+    case 'PROCESSING':
+    case 'RUNNING':
+      return <span className={`${base} bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30 animate-pulse`}>Running</span>
+    case 'PAUSED':
+      return <span className={`${base} bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30`}>Paused</span>
+    case 'COMPLETED':
+      return <span className={`${base} bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30`}>Completed</span>
+    case 'PARTIALLYCOMPLETED':
+      return <span className={`${base} bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30`}>Partial</span>
+    case 'FAILED':
+      return <span className={`${base} bg-red-100 text-red-800 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/30`}>Failed</span>
+    case 'CANCELLED':
+      return <span className={`${base} bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-500/15 dark:text-zinc-400 dark:border-zinc-500/30`}>Cancelled</span>
+    default:
+      return <span className={`${base} bg-zinc-100 text-zinc-700 border-zinc-300`}>{status}</span>
+  }
+}
+
+// Per-location job badge.
+function JobBadge({ status }: { status: string }) {
+  const s = (status || '').toUpperCase()
+  const base = 'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border'
+  switch (s) {
+    case 'SUCCESS':
+    case 'PUBLISHED':
+      return <span className={`${base} bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30`}>Published</span>
+    case 'RUNNING':
+      return <span className={`${base} bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30 animate-pulse`}>Running</span>
+    case 'RETRYING':
+      return <span className={`${base} bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30`}>Retrying</span>
+    case 'FAILED':
+      return <span className={`${base} bg-red-100 text-red-800 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/30`}>Failed</span>
+    default:
+      return <span className={`${base} bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-500/15 dark:text-zinc-400 dark:border-zinc-500/30`}>Pending</span>
+  }
+}
+
 export default function PostsPage(props: any) {
   const locationId = props.locationId;
   const [locations, setLocations] = useState<Location[]>([])
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [loadError, setLoadError] = useState('')
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [step, setStep] = useState(1) // 1 Content · 2 Media · 3 Locations
   const [campaignName, setCampaignName] = useState('')
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
@@ -81,10 +156,20 @@ export default function PostsPage(props: any) {
   // Guard refs
   const isMounted = useRef(true)
   const campaignsLoadedOnce = useRef(false)
-
-  // Autocomplete & Live Preview State
-  const [showSuggest, setShowSuggest] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Submitting / feedback
+  const [submitting, setSubmitting] = useState(false)
+  const [errorAlert, setErrorAlert] = useState('')
+  const [successAlert, setSuccessAlert] = useState('')
+
+  // Selected Campaign + monitor
+  const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null)
+  const [pollingActive, setPollingActive] = useState(false)
+  const [pollNonce, setPollNonce] = useState(0)
+  const [jobSearch, setJobSearch] = useState('')
+  const [retryingJobId, setRetryingJobId] = useState<number | null>(null)
+  const [retryingAll, setRetryingAll] = useState(false)
 
   const getCityFromAddress = (address?: string, name?: string) => {
     if (!address) return name || ''
@@ -99,50 +184,33 @@ export default function PostsPage(props: any) {
   }
 
   const getLivePreview = () => {
-    if (selectedLocationIds.length === 0) return 'Select a location to see a live preview...'
+    if (selectedLocationIds.length === 0) return 'Select a location to see a live preview…'
     const firstLoc = locations.find(l => l.id === selectedLocationIds[0])
-    if (!firstLoc) return 'Select a location to see a live preview...'
-    
+    if (!firstLoc) return 'Select a location to see a live preview…'
     const city = getCityFromAddress(firstLoc.address, firstLoc.location_name)
     const phone = firstLoc.phone || ''
-    
-    return summary
+    return (summary || 'Your post body will appear here…')
       .replaceAll('{{location}}', firstLoc.location_name)
       .replaceAll('{{city}}', city)
       .replaceAll('{{phone}}', phone)
   }
 
-  const handleSummaryChange = (val: string) => {
-    setSummary(val)
-    const textarea = textareaRef.current
-    if (!textarea) return
-    const selectionEnd = textarea.selectionEnd
-    const textBeforeCursor = val.slice(0, selectionEnd)
-    
-    if (textBeforeCursor.endsWith('{{')) {
-      setShowSuggest(true)
-    } else if (!textBeforeCursor.includes('{{') || (textBeforeCursor.lastIndexOf('}}') > textBeforeCursor.lastIndexOf('{{'))) {
-      setShowSuggest(false)
-    }
-  }
-
+  // Insert a {{variable}} at the textarea cursor.
   const insertVariable = (variable: string) => {
     const textarea = textareaRef.current
-    if (!textarea) return
+    const token = `{{${variable}}}`
+    if (!textarea) {
+      setSummary(s => (s + token).slice(0, SUMMARY_MAX))
+      return
+    }
     const start = textarea.selectionStart
     const end = textarea.selectionEnd
-    const textBefore = summary.slice(0, start)
-    const lastOpenIndex = textBefore.lastIndexOf('{{')
-    if (lastOpenIndex === -1) return
-    
-    const newSummary = summary.slice(0, lastOpenIndex) + `{{${variable}}}` + summary.slice(end)
-    setSummary(newSummary)
-    setShowSuggest(false)
-    
+    const next = (summary.slice(0, start) + token + summary.slice(end)).slice(0, SUMMARY_MAX)
+    setSummary(next)
     setTimeout(() => {
       textarea.focus()
-      const newCursorPos = lastOpenIndex + variable.length + 4
-      textarea.setSelectionRange(newCursorPos, newCursorPos)
+      const pos = start + token.length
+      textarea.setSelectionRange(pos, pos)
     }, 10)
   }
 
@@ -152,21 +220,43 @@ export default function PostsPage(props: any) {
       setSuccessAlert('')
       setErrorAlert('')
       const updated: Campaign = await api.post(`/posts/campaigns/${selectedCampaignId}/${action}`)
-      setCampaigns(prev => prev.map(c => c.id === updated.id ? updated : c))
+      setCampaigns(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c))
       setSuccessAlert(`Campaign ${action}d successfully.`)
+      setPollNonce(n => n + 1)
     } catch (err: any) {
       setErrorAlert(err.message || `Failed to ${action} campaign.`)
     }
   }
 
-  // Submitting
-  const [submitting, setSubmitting] = useState(false)
-  const [errorAlert, setErrorAlert] = useState('')
-  const [successAlert, setSuccessAlert] = useState('')
+  const handleRetryAll = async () => {
+    if (!selectedCampaignId) return
+    setRetryingAll(true)
+    setErrorAlert('')
+    try {
+      await api.post(`/posts/campaigns/${selectedCampaignId}/retry-failed`)
+      setSuccessAlert('Retrying all failed locations…')
+      await loadCampaignProgress()
+      setPollNonce(n => n + 1)
+    } catch (err: any) {
+      setErrorAlert(err.message || 'Failed to retry campaign.')
+    } finally {
+      setRetryingAll(false)
+    }
+  }
 
-  // Selected Campaign
-  const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null)
-  const [pollingActive, setPollingActive] = useState(false)
+  const handleRetryJob = async (jobId: number) => {
+    setRetryingJobId(jobId)
+    setErrorAlert('')
+    try {
+      await api.post(`/posts/jobs/${jobId}/retry`)
+      await loadCampaignProgress()
+      setPollNonce(n => n + 1)
+    } catch (err: any) {
+      setErrorAlert(err.message || 'Failed to retry location.')
+    } finally {
+      setRetryingJobId(null)
+    }
+  }
 
   useEffect(() => {
     isMounted.current = true
@@ -175,20 +265,12 @@ export default function PostsPage(props: any) {
       campaignsLoadedOnce.current = true
       loadCampaigns()
     }
-    return () => {
-      isMounted.current = false
-    }
+    return () => { isMounted.current = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    if (locationId) {
-      setSelectedLocationIds([locationId])
-      if (!campaignsLoadedOnce.current) {
-        campaignsLoadedOnce.current = true
-        loadCampaigns()
-      }
-    }
+    if (locationId) setSelectedLocationIds([locationId])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationId])
 
@@ -197,38 +279,34 @@ export default function PostsPage(props: any) {
       setPollingActive(false)
       return
     }
+    const terminal = ['COMPLETED', 'FAILED', 'CANCELLED', 'PARTIALLYCOMPLETED']
+    const isTerminal = (st?: string) => !!st && terminal.includes(st.toUpperCase().replace(/[_\s]/g, ''))
 
-    // Do not start polling if the campaign is already in a terminal state
-    const currentCampaign = campaigns.find(c => c.id === selectedCampaignId)
-    const terminalStatuses = ['COMPLETED', 'FAILED', 'CANCELLED']
-    if (currentCampaign && terminalStatuses.includes(currentCampaign.status.toUpperCase())) {
+    loadCampaignProgress()
+    const current = campaigns.find(c => c.id === selectedCampaignId)
+    if (isTerminal(current?.status)) {
       setPollingActive(false)
       return
     }
-
-    loadCampaignProgress()
     setPollingActive(true)
-    const interval = setInterval(() => {
-      const latest = campaigns.find(c => c.id === selectedCampaignId)
-      if (latest && terminalStatuses.includes(latest.status.toUpperCase())) {
+    const interval = setInterval(async () => {
+      const updated = await loadCampaignProgress()
+      if (isTerminal(updated?.status)) {
         clearInterval(interval)
         setPollingActive(false)
-        return
       }
-      loadCampaignProgress()
     }, 3000)
-    return () => {
-      clearInterval(interval)
-      setPollingActive(false)
-    }
+    return () => { clearInterval(interval); setPollingActive(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCampaignId])
+  }, [selectedCampaignId, pollNonce])
 
   const loadLocations = async () => {
     try {
       const data = await api.get<Location[]>('/locations/')
       setLocations(data)
-    } catch (e: any) {}
+    } catch (e: any) {
+      setLoadError(e.message || 'Failed to load locations.')
+    }
   }
 
   const loadCampaigns = async () => {
@@ -236,24 +314,26 @@ export default function PostsPage(props: any) {
       const url = locationId ? `/posts/campaigns?size=50&location_id=${locationId}` : '/posts/campaigns?size=50'
       const data: any = await api.get(url)
       const allCampaigns = data.campaigns || []
-      
       setCampaigns(allCampaigns)
       if (allCampaigns.length > 0 && !selectedCampaignId) {
         setSelectedCampaignId(allCampaigns[0].id)
       }
-    } catch (e: any) {}
+    } catch (e: any) {
+      setLoadError(e.message || 'Failed to load campaigns.')
+    }
   }
 
-  const loadCampaignProgress = async () => {
+  const loadCampaignProgress = async (): Promise<Campaign | undefined> => {
     if (!selectedCampaignId) return
     try {
       const updated: Campaign = await api.get(`/posts/campaigns/${selectedCampaignId}/progress`)
-      setCampaigns(prev => prev.map(c => c.id === updated.id ? updated : c))
-    } catch (e) {}
+      setCampaigns(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c))
+      return updated
+    } catch (e) { return undefined }
   }
 
   const validateUrl = (url: string): boolean => {
-    if (!url) return true // empty is allowed; required check is separate
+    if (!url) return true
     try {
       const parsed = new URL(url)
       return parsed.protocol === 'http:' || parsed.protocol === 'https:'
@@ -266,12 +346,14 @@ export default function PostsPage(props: any) {
     const files = e.target.files
     if (!files || files.length === 0) return
     const file = files[0]
-    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
-      setErrorAlert('Invalid file type. Please upload an image or video file.')
+    // Google Business Profile posts accept images only (JPG/PNG/WEBP).
+    if (!file.type.startsWith('image/')) {
+      setErrorAlert('Please upload an image (JPG, PNG or WEBP). Google does not accept video in posts.')
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
     setUploading(true)
+    setErrorAlert('')
     const formData = new FormData()
     formData.append('file', file)
     try {
@@ -288,14 +370,10 @@ export default function PostsPage(props: any) {
   const handleRemoveMedia = () => {
     setMediaUrl('')
     setMediaPayload(null)
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const handleToggleSelectAll = () => {
-    // Only selectable (active) locations participate in select-all; locked ones
-    // can't be published to and are excluded.
     const selectable = filteredLocations.filter(l => l.billing_status !== 'pending_payment')
     if (selectedLocationIds.length === selectable.length && selectable.length > 0) {
       setSelectedLocationIds([])
@@ -304,38 +382,48 @@ export default function PostsPage(props: any) {
     }
   }
 
+  const resetForm = () => {
+    setStep(1)
+    setCampaignName('')
+    setTitle('')
+    setSummary('')
+    setCtaType('NONE')
+    setCtaUrl('')
+    setMediaUrl('')
+    setMediaPayload(null)
+    setLocationSearch('')
+    setSelectedLocationIds(locationId ? [locationId] : [])
+  }
+
+  const openModal = () => { resetForm(); setErrorAlert(''); setIsModalOpen(true) }
+
   const handleCreateCampaign = async () => {
     if (!campaignName || !summary || selectedLocationIds.length === 0) {
       setErrorAlert('Please provide a campaign name, post summary, and select at least one location.')
       return
     }
-    if (ctaUrl && !validateUrl(ctaUrl)) {
+    if (ctaType !== 'NONE' && ctaType !== 'CALL' && ctaUrl && !validateUrl(ctaUrl)) {
       setErrorAlert('CTA URL must be a valid http or https URL.')
       return
     }
     setSubmitting(true)
     setErrorAlert('')
     setSuccessAlert('')
-
     try {
-      // 1. Create Campaign
       const camp: any = await api.post('/posts/campaigns', {
         name: campaignName,
         total_locations: selectedLocationIds.length
       })
-
-      // 2. Create Post
       const post: any = await api.post('/posts/draft', {
         title: title || null,
         summary,
         post_type: 'UPDATE',
         cta_type: ctaType !== 'NONE' ? ctaType : null,
-        cta_url: ctaType !== 'NONE' && ctaUrl ? ctaUrl : null,
+        // CALL CTAs use the location phone — never a URL.
+        cta_url: ctaType !== 'NONE' && ctaType !== 'CALL' && ctaUrl ? ctaUrl : null,
         is_bulk_post: true,
         campaign_id: camp.id
       })
-
-      // 3. Attach Media (ONLY if mediaPayload is present)
       if (mediaPayload) {
         await api.post(`/posts/${post.id}/media`, {
           storage_provider: mediaPayload.storage_provider,
@@ -350,31 +438,16 @@ export default function PostsPage(props: any) {
           cdn_url: mediaPayload.cdn_url
         })
       }
-
-      // 4. Launch Campaign
-      await api.post(`/posts/campaigns/${camp.id}/launch`, {
-        location_ids: selectedLocationIds
-      })
-
+      await api.post(`/posts/campaigns/${camp.id}/launch`, { location_ids: selectedLocationIds })
       setSuccessAlert('Campaign launched successfully!')
-      
-      // Reset form
-      setCampaignName('')
-      setTitle('')
-      setSummary('')
-      setCtaType('NONE')
-      setCtaUrl('')
-      setMediaUrl('')
-      setMediaPayload(null)
-      setSelectedLocationIds(locationId ? [locationId] : [])
-      
-      // Close modal and refresh after a short delay
       setTimeout(() => {
         if (!isMounted.current) return
         setIsModalOpen(false)
+        resetForm()
         loadCampaigns()
         setSelectedCampaignId(camp.id)
-      }, 1000)
+        setPollNonce(n => n + 1)
+      }, 800)
     } catch (e: any) {
       console.error('Campaign creation error:', e)
       setErrorAlert(e.message || 'Failed to launch campaign.')
@@ -384,428 +457,467 @@ export default function PostsPage(props: any) {
   }
 
   const filteredLocations = locations.filter(l => l.location_name.toLowerCase().includes(locationSearch.toLowerCase()))
-
-  const getStatusBadge = (status: string) => {
-    switch(status.toUpperCase()) {
-      case 'DRAFT': return <span className="bg-gray-500/20 text-gray-400 px-2 py-1 rounded text-[10px] font-bold">Draft</span>
-      case 'QUEUED':
-      case 'RUNNING': return <span className="bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded text-[10px] font-bold animate-pulse">Running</span>
-      case 'COMPLETED': return <span className="bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded text-[10px] font-bold">Completed</span>
-      default: return <span className="bg-gray-500/20 text-gray-400 px-2 py-1 rounded text-[10px] font-bold">{status}</span>
-    }
-  }
-
   const selectedCampaign = campaigns.find(c => c.id === selectedCampaignId)
+  const mediaReady = mediaPayload?.is_ready === true
+
+  // Step gating
+  const canLeaveStep1 = !!campaignName.trim() && !!summary.trim() && (ctaType === 'NONE' || ctaType === 'CALL' || !ctaUrl || validateUrl(ctaUrl))
+  const canLaunch = canLeaveStep1 && selectedLocationIds.length > 0
+  const lastStep = locationId ? 2 : 3 // single-location mode collapses the targeting step
+
+  const pct = (n: number, d: number) => Math.round((n / (d || 1)) * 100)
 
   return (
     <div className={locationId ? "" : "min-h-screen bg-background text-foreground"}>
-      <main className={locationId ? "" : "mx-auto max-w-7xl px-4 py-8 space-y-8"}>
-          
-          {!locationId && (<div className="flex justify-between items-center bg-card shadow-sm border border-border p-6 rounded-2xl relative overflow-hidden">
+      <main className={locationId ? "" : "mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8"}>
+
+        {!locationId && (
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center bg-card shadow-sm border border-border p-4 sm:p-6 rounded-2xl relative overflow-hidden">
             <div className="absolute -top-12 -right-12 w-32 h-32 rounded-full bg-primary/5 blur-2xl"></div>
             <div>
-              <h2 className="text-2xl font-bold flex items-center gap-2 text-foreground">
+              <h2 className="text-2xl sm:text-3xl font-bold flex items-center gap-2 text-foreground">
                 <Sparkles className="h-6 w-6 text-primary" />
                 Campaign Orchestrator
               </h2>
               <p className="text-muted-foreground text-sm mt-1">Manage bulk publishing campaigns across thousands of locations.</p>
             </div>
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="bg-primary hover:bg-primary/90 px-4 py-2 rounded-lg font-bold text-sm text-primary-foreground flex items-center gap-2 transition-colors cursor-pointer"
-            >
+            <button onClick={openModal} className="shrink-0 bg-primary hover:bg-primary/90 px-4 py-2 rounded-lg font-bold text-sm text-primary-foreground flex items-center justify-center gap-2 transition-colors cursor-pointer">
               <Plus className="h-4 w-4" /> New Campaign
             </button>
           </div>
+        )}
 
-          )}
+        {locationId && (
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold flex items-center gap-2 text-foreground">
+              <FileText className="h-5 w-5 text-primary" />
+              Location Posts
+            </h2>
+            <button onClick={openModal} className="bg-primary hover:bg-primary/90 px-4 py-2 rounded-lg font-bold text-sm text-primary-foreground flex items-center gap-2 transition-colors cursor-pointer">
+              <Plus className="h-4 w-4" /> New Post
+            </button>
+          </div>
+        )}
 
-          {locationId && (
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold flex items-center gap-2 text-foreground">
-                <FileText className="h-5 w-5 text-primary" />
-                Location Posts
-              </h2>
-              <button
-                onClick={() => setIsModalOpen(true)}
-                className="bg-primary hover:bg-primary/90 px-4 py-2 rounded-lg font-bold text-sm text-primary-foreground flex items-center gap-2 transition-colors cursor-pointer"
-              >
-                <Plus className="h-4 w-4" /> New Post
-              </button>
-            </div>
-          )}
+        {loadError && (
+          <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg">
+            <AlertTriangle className="h-4 w-4 shrink-0" /> {loadError}
+          </div>
+        )}
+        {successAlert && (
+          <div className="flex items-center gap-2 p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-sm font-medium rounded-lg">
+            <CheckCircle2 className="h-4 w-4 shrink-0" /> {successAlert}
+          </div>
+        )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1 bg-card shadow-sm border border-border rounded-2xl p-5 h-fit">
-              <h3 className="text-sm font-bold uppercase text-muted-foreground mb-4 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-primary" /> Campaigns
-              </h3>
-              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
-                {campaigns.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center">No campaigns yet. Create one!</p>
-                ) : (
-                  campaigns.map(c => (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Campaign list — richer scannable cards */}
+          <div className="lg:col-span-1 bg-card shadow-sm border border-border rounded-2xl p-5 h-fit">
+            <h3 className="text-sm font-bold uppercase text-muted-foreground mb-4 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-primary" /> Campaigns
+            </h3>
+            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+              {campaigns.length === 0 ? (
+                <div className="text-center py-8">
+                  <FileText className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-xs text-muted-foreground">No campaigns yet. Create one to start publishing.</p>
+                </div>
+              ) : (
+                campaigns.map(c => {
+                  const published = c.total_published ?? 0
+                  const failed = c.total_failed ?? 0
+                  return (
                     <button
                       key={c.id}
                       onClick={() => setSelectedCampaignId(c.id)}
-                      className={`w-full text-left p-4 rounded-xl border transition-all cursor-pointer ${selectedCampaignId === c.id ? 'bg-primary/5 border-primary/30' : 'bg-background border-border/40 hover:bg-muted/30 hover:border-border/80 text-foreground'}`}
+                      className={`w-full text-left p-4 rounded-xl border transition-all cursor-pointer ${selectedCampaignId === c.id ? 'bg-primary/5 border-primary/40 ring-1 ring-primary/20' : 'bg-background border-border/50 hover:bg-muted/30 hover:border-border text-foreground'}`}
                     >
-                      <div className="flex justify-between items-start mb-2">
+                      <div className="flex justify-between items-start gap-2 mb-2">
                         <span className="font-bold truncate text-sm">{c.name}</span>
-                        {getStatusBadge(c.status)}
+                        <CampaignBadge status={c.status} />
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        Locations: {c.total_locations}
+                      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden mb-2">
+                        <div className="h-full bg-primary transition-all" style={{ width: `${pct(published, c.total_locations)}%` }} />
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span className="flex items-center gap-2">
+                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{published} sent</span>
+                          {failed > 0 && <span className="text-red-600 dark:text-red-400 font-semibold">{failed} failed</span>}
+                          <span>· {c.total_locations} loc</span>
+                        </span>
+                        <span>{relativeTime(c.created_at)}</span>
                       </div>
                     </button>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="lg:col-span-2 space-y-6">
-              {selectedCampaign ? (
-                <div className="bg-card shadow-sm border border-border rounded-2xl p-6">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
-                      <History className="w-5 h-5 text-primary" /> Campaign Progress Monitor
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      {['QUEUED', 'PROCESSING'].includes(selectedCampaign.status.toUpperCase()) && (
-                        <button
-                          onClick={() => handleCampaignAction('pause')}
-                          className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                        >
-                          Pause
-                        </button>
-                      )}
-                      {selectedCampaign.status.toUpperCase() === 'PAUSED' && (
-                        <button
-                          onClick={() => handleCampaignAction('resume')}
-                          className="bg-primary hover:bg-primary/90 text-primary-foreground px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                        >
-                          Resume
-                        </button>
-                      )}
-                      {['QUEUED', 'PROCESSING', 'PAUSED'].includes(selectedCampaign.status.toUpperCase()) && (
-                        <button
-                          onClick={() => handleCampaignAction('cancel')}
-                          className="bg-red-600/80 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                      {pollingActive && <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping ml-2"></span>}
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-4 gap-4 mb-8">
-                    <div className="bg-muted/30 p-4 rounded-xl border border-border text-center">
-                      <div className="text-2xl font-bold text-foreground">{selectedCampaign.total_locations}</div>
-                      <div className="text-xs text-muted-foreground uppercase mt-1">Total</div>
-                    </div>
-                    <div className="bg-emerald-500/10 p-4 rounded-xl border border-emerald-500/20 text-center">
-                      <div className="text-2xl font-bold text-emerald-400">{selectedCampaign.total_published}</div>
-                      <div className="text-xs text-emerald-500/70 uppercase mt-1">Published</div>
-                    </div>
-                    <div className="bg-yellow-500/10 p-4 rounded-xl border border-yellow-500/20 text-center">
-                      <div className="text-2xl font-bold text-yellow-400">{selectedCampaign.total_pending}</div>
-                      <div className="text-xs text-yellow-500/70 uppercase mt-1">Pending</div>
-                    </div>
-                    <div className="bg-red-500/10 p-4 rounded-xl border border-red-500/20 text-center">
-                      <div className="text-2xl font-bold text-red-400">{selectedCampaign.total_failed}</div>
-                      <div className="text-xs text-red-500/70 uppercase mt-1">Failed</div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs font-bold text-muted-foreground">
-                      <span>Publishing Progress</span>
-                      <span>{Math.round((selectedCampaign.total_published / (selectedCampaign.total_locations || 1)) * 100)}%</span>
-                    </div>
-                    <div className="h-3 w-full bg-muted rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-primary transition-all duration-500" 
-                        style={{ width: `${(selectedCampaign.total_published / (selectedCampaign.total_locations || 1)) * 100}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  {selectedCampaign.jobs && selectedCampaign.jobs.filter((j: CampaignJob) => j.status === 'FAILED').length > 0 && (
-                    <div className="mt-8">
-                      <h4 className="text-sm font-bold text-red-400 uppercase mb-3 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4" /> Failed Locations
-                      </h4>
-                      <div className="bg-background border border-border rounded-xl overflow-hidden">
-                        <table className="w-full text-sm text-left">
-                          <thead className="bg-muted text-xs uppercase text-muted-foreground">
-                            <tr>
-                              <th className="px-4 py-3">Location ID</th>
-                              <th className="px-4 py-3">Error Reason</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {selectedCampaign.jobs.filter((j: CampaignJob) => j.status === 'FAILED').map((job: CampaignJob) => (
-                              <tr key={job.id} className="border-t border-border">
-                                <td className="px-4 py-3 font-medium text-foreground">{locations.find(l => l.id === job.location_id)?.location_name || job.location_id}</td>
-                                <td className="px-4 py-3 text-red-600 font-mono text-xs">{job.last_error || 'Unknown error'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedCampaign.audit_logs && selectedCampaign.audit_logs.length > 0 && (
-                    <div className="mt-8">
-                      <h4 className="text-sm font-bold text-muted-foreground uppercase mb-3 flex items-center gap-2">
-                        <FileText className="w-4 h-4" /> Audit Logs
-                      </h4>
-                      <div className="bg-background border border-border rounded-xl overflow-hidden max-h-[250px] overflow-y-auto">
-                        <table className="w-full text-sm text-left">
-                          <thead className="bg-muted text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur-md">
-                            <tr>
-                              <th className="px-4 py-3">Action</th>
-                              <th className="px-4 py-3">Status Change</th>
-                              <th className="px-4 py-3">Timestamp</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {selectedCampaign.audit_logs.map((log: CampaignAuditLog) => (
-                              <tr key={log.id} className="border-t border-border hover:bg-muted/50 transition-colors">
-                                <td className="px-4 py-3 font-medium text-foreground uppercase text-xs">{log.action}</td>
-                                <td className="px-4 py-3 text-muted-foreground">
-                                  {log.previous_status ? <span className="line-through opacity-50 mr-2">{log.previous_status}</span> : null}
-                                  <span className="text-primary font-bold">{log.new_status}</span>
-                                </td>
-                                <td className="px-4 py-3 text-muted-foreground text-xs">{new Date(log.created_at).toLocaleString()}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                </div>
-              ) : (
-                <div className="bg-card shadow-sm border border-border rounded-2xl p-12 text-center text-muted-foreground">
-                  Select a campaign to view the live monitor
-                </div>
+                  )
+                })
               )}
             </div>
           </div>
-        </main>
 
-        {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="bg-background border border-border rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col relative">
-              <div className="p-5 flex justify-between items-center border-b border-border sticky top-0 bg-background/95 backdrop-blur z-10">
-                <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-primary" /> New Multi-Location Campaign
-                </h3>
-                <button onClick={() => setIsModalOpen(false)} className="text-muted-foreground hover:text-foreground cursor-pointer">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-8 flex-1 overflow-y-auto">
-                {errorAlert && <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium rounded-lg">{errorAlert}</div>}
-                
-                <div className="space-y-4">
-                  <h4 className="text-sm font-bold text-muted-foreground uppercase border-b border-border pb-2">1. Campaign Details</h4>
-                  <input type="text" placeholder="Campaign Name (e.g. Summer Sale)" value={campaignName} onChange={e => setCampaignName(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors" />
-                  <input type="text" placeholder="Post Title (Optional)" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors" />
-                  
-                  <div className="relative">
-                    <textarea
-                      ref={textareaRef}
-                      rows={4}
-                      placeholder="Post Body... Use {{location}}, {{city}}, {{phone}}"
-                      value={summary}
-                      onChange={e => handleSummaryChange(e.target.value)}
-                      className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors"
-                    />
-                    {showSuggest && (
-                      <div className="absolute left-3 bottom-full mb-2 z-50 bg-card border border-border rounded-xl shadow-2xl p-2 w-48 space-y-1 text-sm">
-                        <div className="text-[10px] text-muted-foreground uppercase px-2 py-1 font-bold">Insert Variable</div>
-                        {['location', 'city', 'phone'].map((variable) => (
-                          <button
-                            key={variable}
-                            type="button"
-                            onClick={() => insertVariable(variable)}
-                            className="w-full text-left px-3 py-2 rounded-lg font-mono text-xs text-foreground hover:bg-muted transition-colors cursor-pointer"
-                          >
-                            {`{{${variable}}}`}
-                          </button>
-                        ))}
-                      </div>
+          {/* Monitor */}
+          <div className="lg:col-span-2 space-y-6">
+            {selectedCampaign ? (
+              <div className="bg-card shadow-sm border border-border rounded-2xl p-4 sm:p-6">
+                <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+                  <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
+                    <History className="w-5 h-5 text-primary" /> Campaign Progress
+                    {pollingActive && <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping ml-1"></span>}
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {['QUEUED', 'PROCESSING'].includes(selectedCampaign.status.toUpperCase()) && (
+                      <button onClick={() => handleCampaignAction('pause')} className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer">Pause</button>
+                    )}
+                    {selectedCampaign.status.toUpperCase() === 'PAUSED' && (
+                      <button onClick={() => handleCampaignAction('resume')} className="bg-primary hover:bg-primary/90 text-primary-foreground px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer">Resume</button>
+                    )}
+                    {selectedCampaign.total_failed > 0 && (
+                      <button onClick={handleRetryAll} disabled={retryingAll} className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer">
+                        {retryingAll ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />} Retry failed
+                      </button>
+                    )}
+                    {['QUEUED', 'PROCESSING', 'PAUSED'].includes(selectedCampaign.status.toUpperCase()) && (
+                      <button onClick={() => handleCampaignAction('cancel')} className="bg-red-500/90 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer">Cancel</button>
                     )}
                   </div>
+                </div>
 
-                  {/* CTA Selection Controls */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold uppercase text-muted-foreground">CTA Button Type</label>
-                      <select
-                        value={ctaType}
-                        onChange={e => setCtaType(e.target.value)}
-                        className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors"
-                      >
-                        <option value="NONE" className="bg-background">None (Text-only Post)</option>
-                        <option value="LEARN_MORE" className="bg-background">Learn More</option>
-                        <option value="BOOK" className="bg-background">Book</option>
-                        <option value="ORDER" className="bg-background">Order Online</option>
-                        <option value="SHOP" className="bg-background">Shop</option>
-                        <option value="SIGN_UP" className="bg-background">Sign Up</option>
-                        <option value="CALL" className="bg-background">Call Now (Uses Location Phone)</option>
-                      </select>
-                    </div>
-                    
-                    {ctaType !== 'NONE' && ctaType !== 'CALL' && (
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold uppercase text-muted-foreground">CTA Destination URL</label>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-muted/30 p-4 rounded-xl border border-border text-center">
+                    <div className="text-2xl font-bold text-foreground">{selectedCampaign.total_locations}</div>
+                    <div className="text-xs text-muted-foreground uppercase mt-1">Total</div>
+                  </div>
+                  <div className="bg-emerald-500/10 p-4 rounded-xl border border-emerald-500/20 text-center">
+                    <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{selectedCampaign.total_published}</div>
+                    <div className="text-xs text-emerald-600/70 dark:text-emerald-500/70 uppercase mt-1">Published</div>
+                  </div>
+                  <div className="bg-amber-500/10 p-4 rounded-xl border border-amber-500/20 text-center">
+                    <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{selectedCampaign.total_pending}</div>
+                    <div className="text-xs text-amber-600/70 dark:text-amber-500/70 uppercase mt-1">Pending</div>
+                  </div>
+                  <div className="bg-red-500/10 p-4 rounded-xl border border-red-500/20 text-center">
+                    <div className="text-2xl font-bold text-red-600 dark:text-red-400">{selectedCampaign.total_failed}</div>
+                    <div className="text-xs text-red-600/70 dark:text-red-500/70 uppercase mt-1">Failed</div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 mb-6">
+                  <div className="flex justify-between text-xs font-bold text-muted-foreground">
+                    <span>Publishing Progress</span>
+                    <span>{pct(selectedCampaign.total_published, selectedCampaign.total_locations)}%</span>
+                  </div>
+                  <div className="h-3 w-full bg-muted rounded-full overflow-hidden">
+                    <div className="h-full bg-primary transition-all duration-500" style={{ width: `${pct(selectedCampaign.total_published, selectedCampaign.total_locations)}%` }} />
+                  </div>
+                </div>
+
+                {/* Full per-location status table */}
+                {selectedCampaign.jobs && selectedCampaign.jobs.length > 0 && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between mb-3 gap-3">
+                      <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-muted-foreground" /> Locations ({selectedCampaign.jobs.length})
+                      </h4>
+                      <div className="relative shrink-0">
+                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
                         <input
                           type="text"
-                          placeholder="https://example.com/promo?loc={{location_id}}"
-                          value={ctaUrl}
-                          onChange={e => {
-                            setCtaUrl(e.target.value)
-                            if (e.target.value && !validateUrl(e.target.value)) {
-                              setErrorAlert('CTA URL must be a valid http or https URL.')
-                            } else {
-                              setErrorAlert('')
-                            }
-                          }}
-                          className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors"
+                          placeholder="Find location…"
+                          value={jobSearch}
+                          onChange={e => setJobSearch(e.target.value)}
+                          className="bg-background border border-input text-foreground rounded-lg pl-8 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary w-32 sm:w-44"
                         />
                       </div>
-                    )}
-                  </div>
-
-
-                  {/* Live Interpolation Preview */}
-                  <div className="bg-card shadow-sm border border-border rounded-xl p-4 space-y-3">
-                    <div className="text-xs font-bold uppercase text-muted-foreground flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-primary" /> Live Interpolation Preview
                     </div>
-                    <div className="bg-muted/10 border border-border rounded-xl p-4 space-y-3 relative overflow-hidden shadow-inner">
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-8 h-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center font-bold text-xs text-primary">
-                          G
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-foreground flex items-center gap-1">
-                            {selectedLocationIds.length > 0
-                              ? locations.find(l => l.id === selectedLocationIds[0])?.location_name
-                              : 'Your Location Name'}
-                            <span className="text-[10px] text-primary bg-primary/10 px-1 rounded">GBP Post Preview</span>
-                          </div>
-                          <div className="text-[9px] text-muted-foreground">Just now</div>
-                        </div>
-                      </div>
-                      <div className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">
-                        {getLivePreview()}
-                      </div>
-                      {ctaType !== 'NONE' && (
-                        <div className="pt-2">
-                          <span className="inline-block bg-primary text-primary-foreground font-bold text-xs px-4 py-2 rounded-lg">
-                            {ctaType === 'LEARN_MORE' ? 'Learn More' : ctaType === 'BOOK' ? 'Book' : ctaType === 'ORDER' ? 'Order' : ctaType === 'SHOP' ? 'Shop' : ctaType === 'SIGN_UP' ? 'Sign Up' : 'Call'}
+                    <div className="bg-background border border-border rounded-xl overflow-x-auto max-h-[360px] overflow-y-auto">
+                      <table className="w-full min-w-[480px] text-sm text-left">
+                        <thead className="bg-muted text-[10px] uppercase text-muted-foreground sticky top-0 backdrop-blur-md">
+                          <tr>
+                            <th className="px-4 py-3 font-bold">Location</th>
+                            <th className="px-4 py-3 font-bold">Status</th>
+                            <th className="px-4 py-3 font-bold">Detail</th>
+                            <th className="px-4 py-3 font-bold text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedCampaign.jobs
+                            .map(job => ({ job, name: locations.find(l => l.id === job.location_id)?.location_name || `Location ${job.location_id}` }))
+                            .filter(({ name }) => name.toLowerCase().includes(jobSearch.toLowerCase()))
+                            .map(({ job, name }) => {
+                              const isFailed = job.status.toUpperCase() === 'FAILED'
+                              return (
+                                <tr key={job.id} className="border-t border-border/60 hover:bg-muted/30 transition-colors">
+                                  <td className="px-4 py-3 font-medium text-foreground">{name}</td>
+                                  <td className="px-4 py-3"><JobBadge status={job.status} />{(job.retry_count ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-muted-foreground">·{job.retry_count}×</span>}</td>
+                                  <td className="px-4 py-3 text-xs">
+                                    {isFailed ? (
+                                      <span className="text-red-600 dark:text-red-400 font-mono line-clamp-1" title={job.last_error || ''}>{job.last_error || 'Unknown error'}</span>
+                                    ) : job.google_post_id ? (
+                                      <span className="text-emerald-600 dark:text-emerald-400">Live on Google</span>
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    {isFailed && (
+                                      <button onClick={() => handleRetryJob(job.id)} disabled={retryingJobId === job.id} className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 dark:text-orange-400 hover:underline disabled:opacity-50 cursor-pointer">
+                                        {retryingJobId === job.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />} Retry
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-card shadow-sm border border-border rounded-2xl p-12 text-center text-muted-foreground">
+                Select a campaign to view the live monitor
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+
+      {/* New Campaign — stepper modal with sticky live preview */}
+      {isModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setIsModalOpen(false)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setIsModalOpen(false) }}
+        >
+          <div className="bg-background border border-border rounded-t-2xl sm:rounded-2xl w-full sm:w-[calc(100%-2rem)] max-w-5xl h-[92vh] sm:h-auto sm:max-h-[90vh] overflow-hidden shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+            {/* Header + step indicator */}
+            <div className="p-4 sm:p-5 flex justify-between items-start sm:items-center gap-3 border-b border-border">
+              <div className="min-w-0">
+                <h3 className="text-base sm:text-lg font-bold text-foreground flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-primary shrink-0" /> <span className="truncate">{locationId ? 'New Post' : 'New Multi-Location Campaign'}</span>
+                </h3>
+                <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mt-2">
+                  {['Content', 'Media', ...(locationId ? [] : ['Locations'])].map((label, i) => {
+                    const n = i + 1
+                    const active = step === n
+                    const done = step > n
+                    return (
+                      <div key={label} className="flex items-center gap-2">
+                        <span className={`flex items-center gap-1.5 text-xs font-bold ${active ? 'text-primary' : done ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
+                          <span className={`flex items-center justify-center h-6 w-6 sm:h-5 sm:w-5 rounded-full text-xs sm:text-[10px] border ${active ? 'border-primary bg-primary/10' : done ? 'border-emerald-500 bg-emerald-500/10' : 'border-border'}`}>
+                            {done ? '✓' : n}
                           </span>
+                          {label}
+                        </span>
+                        {n < lastStep && <ChevronRight className="h-3 w-3 text-muted-foreground/40" />}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+              <button onClick={() => setIsModalOpen(false)} className="shrink-0 flex h-10 w-10 sm:h-auto sm:w-auto items-center justify-center -mr-2 sm:mr-0 text-muted-foreground hover:text-foreground cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-5 flex-1 overflow-hidden">
+              {/* Step body */}
+              <div className="md:col-span-3 p-4 sm:p-6 overflow-y-auto space-y-5">
+                {errorAlert && <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg">{errorAlert}</div>}
+
+                {/* STEP 1 — Content */}
+                {step === 1 && (
+                  <div className="space-y-4">
+                    <input type="text" placeholder="Campaign Name (e.g. Summer Sale)" value={campaignName} onChange={e => setCampaignName(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-base sm:text-sm focus:ring-1 focus:ring-primary outline-none" />
+                    <div>
+                      <input type="text" maxLength={TITLE_MAX} placeholder="Post Title (Optional)" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-base sm:text-sm focus:ring-1 focus:ring-primary outline-none" />
+                      <div className="text-right text-[10px] text-muted-foreground mt-1">{title.length}/{TITLE_MAX}</div>
+                    </div>
+
+                    <div>
+                      <textarea
+                        ref={textareaRef}
+                        rows={5}
+                        maxLength={SUMMARY_MAX}
+                        placeholder="Post body…"
+                        value={summary}
+                        onChange={e => setSummary(e.target.value)}
+                        className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-base sm:text-sm focus:ring-1 focus:ring-primary outline-none"
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-y-1.5 mt-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] text-muted-foreground font-semibold">Insert:</span>
+                          {['location', 'city', 'phone', 'location_id'].map(v => (
+                            <button key={v} type="button" onClick={() => insertVariable(v)} className="px-2 py-1 sm:px-1.5 sm:py-0.5 rounded bg-muted hover:bg-muted/70 text-xs sm:text-[10px] font-mono text-foreground transition-colors cursor-pointer">
+                              {`{{${v}}}`}
+                            </button>
+                          ))}
+                        </div>
+                        <span className={`text-[10px] ${summary.length > SUMMARY_MAX - 50 ? 'text-amber-600 dark:text-amber-400 font-bold' : 'text-muted-foreground'}`}>{summary.length}/{SUMMARY_MAX}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold uppercase text-muted-foreground">CTA Button</label>
+                        <select value={ctaType} onChange={e => setCtaType(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-base sm:text-sm focus:ring-1 focus:ring-primary outline-none">
+                          <option value="NONE">None (Text-only Post)</option>
+                          <option value="LEARN_MORE">Learn More</option>
+                          <option value="BOOK">Book</option>
+                          <option value="ORDER">Order Online</option>
+                          <option value="SHOP">Shop</option>
+                          <option value="SIGN_UP">Sign Up</option>
+                          <option value="CALL">Call Now (Uses Location Phone)</option>
+                        </select>
+                      </div>
+                      {ctaType !== 'NONE' && ctaType !== 'CALL' && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold uppercase text-muted-foreground">CTA URL</label>
+                          <input
+                            type="text"
+                            placeholder="https://example.com/promo?loc={{location_id}}"
+                            value={ctaUrl}
+                            onChange={e => setCtaUrl(e.target.value)}
+                            className={`w-full bg-background border text-foreground rounded-xl p-3 text-base sm:text-sm focus:ring-1 outline-none ${ctaUrl && !validateUrl(ctaUrl) ? 'border-red-400 focus:ring-red-400' : 'border-input focus:ring-primary'}`}
+                          />
+                          {ctaUrl && !validateUrl(ctaUrl) && <p className="text-[10px] text-red-500">Must be a valid http(s) URL.</p>}
                         </div>
                       )}
                     </div>
                   </div>
+                )}
 
-                </div>
-
-                <div className="space-y-4">
-                  <h4 className="text-sm font-bold text-muted-foreground uppercase border-b border-border pb-2">2. Media</h4>
-                  {mediaUrl ? (
-                    <div className="flex items-center justify-between gap-4 bg-muted/30 border border-border p-4 rounded-xl">
-                      <div className="flex items-center gap-4">
-                        <img src={mediaUrl} className="w-16 h-16 object-cover rounded-lg border border-border" />
-                        <div className="text-sm text-emerald-600 font-bold flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> Validated</div>
-                      </div>
-                      <button onClick={handleRemoveMedia} className="p-2 text-muted-foreground hover:text-red-500 transition-colors rounded-lg hover:bg-red-500/10 cursor-pointer">
-                        <XCircle className="w-5 h-5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div>
-                      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-                      <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-muted/30 border border-border hover:bg-muted/50 px-4 py-3 rounded-xl text-sm font-bold text-foreground transition-colors cursor-pointer">
-                        {uploading ? <Loader2 className="w-4 h-4 animate-spin"/> : <Upload className="w-4 h-4 text-primary"/>} Upload Validation-Ready Image
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {!locationId ? (
+                {/* STEP 2 — Media */}
+                {step === 2 && (
                   <div className="space-y-4">
-                    <h4 className="text-sm font-bold text-muted-foreground uppercase border-b border-border pb-2 flex justify-between items-center">
-                      <span>3. Target Locations</span>
-                      <div className="flex items-center gap-4">
-                        <button onClick={handleToggleSelectAll} className="text-xs text-primary hover:text-primary/80 font-bold cursor-pointer transition-colors">
-                          {selectedLocationIds.length === filteredLocations.length && filteredLocations.length > 0 ? 'Deselect All' : 'Select All'}
-                        </button>
-                        <span className="text-primary bg-primary/10 px-2 py-0.5 rounded text-xs">{selectedLocationIds.length} Selected</span>
+                    <p className="text-xs text-muted-foreground">Add a single image (JPG, PNG or WEBP). Google Business Profile posts don&apos;t support video.</p>
+                    {mediaUrl ? (
+                      <div className="flex items-center justify-between gap-4 bg-muted/30 border border-border p-4 rounded-xl">
+                        <div className="flex items-center gap-4">
+                          <img src={mediaUrl} className="w-20 h-20 object-cover rounded-lg border border-border" />
+                          <div className="text-sm">
+                            {mediaReady ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> Ready to publish</span>
+                            ) : (
+                              <span className="text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1"><Loader2 className="w-4 h-4 animate-spin" /> Optimizing for Google…</span>
+                            )}
+                            <p className="text-[11px] text-muted-foreground mt-1 max-w-[220px] truncate">{mediaPayload?.original_filename}</p>
+                          </div>
+                        </div>
+                        <button onClick={handleRemoveMedia} className="p-2 text-muted-foreground hover:text-red-500 transition-colors rounded-lg hover:bg-red-500/10 cursor-pointer"><XCircle className="w-5 h-5" /></button>
                       </div>
-                    </h4>
+                    ) : (
+                      <div>
+                        <input type="file" accept="image/png,image/jpeg,image/webp" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+                        <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="w-full flex flex-col items-center justify-center gap-2 bg-muted/20 border-2 border-dashed border-border hover:border-primary/50 hover:bg-muted/30 px-4 py-10 rounded-xl text-sm font-bold text-foreground transition-colors cursor-pointer">
+                          {uploading ? <Loader2 className="w-6 h-6 animate-spin text-primary" /> : <Upload className="w-6 h-6 text-primary" />}
+                          {uploading ? 'Uploading…' : 'Click to upload an image'}
+                          <span className="text-[11px] font-normal text-muted-foreground">Min 250px · JPG, PNG, WEBP</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* STEP 3 — Locations (multi-location only) */}
+                {step === 3 && !locationId && (
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-bold text-foreground">Target Locations</span>
+                      <div className="flex items-center gap-3">
+                        <button onClick={handleToggleSelectAll} className="text-xs text-primary hover:text-primary/80 font-bold cursor-pointer">
+                          {selectedLocationIds.length > 0 && selectedLocationIds.length >= filteredLocations.filter(l => l.billing_status !== 'pending_payment').length ? 'Deselect All' : 'Select All'}
+                        </button>
+                        <span className="text-primary bg-primary/10 px-2 py-0.5 rounded text-xs font-bold">{selectedLocationIds.length} selected</span>
+                      </div>
+                    </div>
                     <div className="relative">
                       <Search className="w-4 h-4 absolute left-3 top-3.5 text-muted-foreground" />
-                      <input type="text" placeholder="Search locations..." value={locationSearch} onChange={e => setLocationSearch(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl pl-10 p-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-colors" />
+                      <input type="text" placeholder="Search locations…" value={locationSearch} onChange={e => setLocationSearch(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl pl-10 p-3 text-base sm:text-sm focus:ring-1 focus:ring-primary outline-none" />
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[340px] overflow-y-auto pr-1">
                       {filteredLocations.map(loc => {
                         const isLocked = loc.billing_status === 'pending_payment'
+                        const checked = selectedLocationIds.includes(loc.id)
                         return (
-                        <button
-                          key={loc.id}
-                          disabled={isLocked}
-                          title={isLocked ? 'This location is locked pending payment. Unlock it to publish.' : undefined}
-                          onClick={() => {
-                            if (isLocked) return
-                            setSelectedLocationIds(p => p.includes(loc.id) ? p.filter(id => id !== loc.id) : [...p, loc.id])
-                          }}
-                          className={`flex items-start text-left p-3 rounded-xl border transition-colors ${isLocked ? 'opacity-50 cursor-not-allowed bg-muted/30 border-border' : `cursor-pointer ${selectedLocationIds.includes(loc.id) ? 'bg-primary/5 border-primary/50' : 'bg-background border-border hover:bg-muted/50'}`}`}
-                        >
-                          <input type="checkbox" checked={selectedLocationIds.includes(loc.id)} disabled={isLocked} readOnly className="mt-1 mr-3 rounded text-primary bg-background border-input cursor-pointer disabled:cursor-not-allowed" />
-                          <div>
-                            <div className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                              {loc.location_name}
-                              {isLocked && <Lock className="h-3 w-3 text-amber-500" />}
+                          <button
+                            key={loc.id}
+                            disabled={isLocked}
+                            title={isLocked ? 'Locked pending payment. Unlock it to publish.' : undefined}
+                            onClick={() => setSelectedLocationIds(p => p.includes(loc.id) ? p.filter(id => id !== loc.id) : [...p, loc.id])}
+                            className={`flex items-start text-left p-3.5 sm:p-3 rounded-xl border transition-colors ${isLocked ? 'opacity-50 cursor-not-allowed bg-muted/30 border-border' : `cursor-pointer ${checked ? 'bg-primary/5 border-primary/50' : 'bg-background border-border hover:bg-muted/50'}`}`}
+                          >
+                            <span className={`mt-0.5 mr-3 flex items-center justify-center h-5 w-5 sm:h-4 sm:w-4 rounded border shrink-0 ${checked ? 'bg-primary border-primary text-primary-foreground' : 'border-input'}`}>
+                              {checked && <CheckCircle2 className="h-3.5 w-3.5 sm:h-3 sm:w-3" />}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                                <span className="truncate">{loc.location_name}</span>
+                                {isLocked && <Lock className="h-3 w-3 text-amber-500 shrink-0" />}
+                              </div>
+                              <div className="text-xs text-muted-foreground truncate">{isLocked ? 'Locked — upgrade to publish' : loc.address}</div>
                             </div>
-                            <div className="text-xs text-muted-foreground truncate max-w-[200px]">
-                              {isLocked ? 'Locked — upgrade to publish' : loc.address}
-                            </div>
-                          </div>
-                        </button>
+                          </button>
                         )
                       })}
                     </div>
                   </div>
-                ) : (
-                    <div className="space-y-2 bg-primary/5 border border-primary/20 p-4 rounded-xl">
-                    <span className="text-xs font-bold text-primary uppercase tracking-wider block">Target Location</span>
-                    <div className="text-sm font-bold text-foreground mt-1">
-                      {locations.find(l => l.id === Number(locationId))?.location_name || `Storefront Location ID: ${locationId}`}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">Creating this post from the storefront profile scopes it strictly to this location.</p>
-                  </div>
                 )}
               </div>
 
-              <div className="p-5 border-t border-border flex justify-end gap-3 sticky bottom-0 bg-background/95 backdrop-blur z-10">
-                <button onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 rounded-lg text-sm font-bold bg-muted/50 text-foreground hover:bg-muted border border-border transition-colors cursor-pointer">Cancel</button>
-                <button onClick={handleCreateCampaign} disabled={submitting || uploading} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm cursor-pointer">
-                  {submitting ? <Loader2 className="w-4 h-4 animate-spin"/> : <Send className="w-4 h-4"/>} Launch Campaign
-                </button>
+              {/* Sticky live preview */}
+              <div className="md:col-span-2 border-l border-border bg-muted/10 p-6 overflow-y-auto hidden md:block">
+                <div className="text-xs font-bold uppercase text-muted-foreground flex items-center gap-1.5 mb-3">
+                  <Sparkles className="w-3.5 h-3.5 text-primary" /> Live Preview
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4 shadow-sm space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center font-bold text-xs text-primary">G</div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-foreground truncate">
+                        {selectedLocationIds.length > 0 ? locations.find(l => l.id === selectedLocationIds[0])?.location_name : 'Your Location'}
+                      </div>
+                      <div className="text-[9px] text-muted-foreground">Just now · GBP Post</div>
+                    </div>
+                  </div>
+                  {mediaUrl && <img src={mediaUrl} className="w-full h-36 object-cover rounded-lg border border-border" />}
+                  {title && <div className="text-sm font-bold text-foreground">{title}</div>}
+                  <div className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed min-h-[40px]">{getLivePreview()}</div>
+                  {ctaType !== 'NONE' && (
+                    <span className="inline-block bg-primary text-primary-foreground font-bold text-xs px-4 py-2 rounded-lg">{CTA_LABELS[ctaType] || 'Learn More'}</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-3 leading-relaxed">Preview uses the first selected location. Each location renders its own {`{{variables}}`}.</p>
               </div>
             </div>
+
+            {/* Footer nav */}
+            <div className="p-4 border-t border-border flex justify-between items-center gap-3 bg-background">
+              <button
+                onClick={() => step > 1 ? setStep(step - 1) : setIsModalOpen(false)}
+                className="flex items-center justify-center gap-1.5 px-4 h-11 sm:h-auto sm:py-2.5 rounded-lg text-sm font-bold bg-muted/50 text-foreground hover:bg-muted border border-border transition-colors cursor-pointer"
+              >
+                {step > 1 ? <><ChevronLeft className="w-4 h-4" /> Back</> : 'Cancel'}
+              </button>
+              {step < lastStep ? (
+                <button
+                  onClick={() => setStep(step + 1)}
+                  disabled={step === 1 && !canLeaveStep1}
+                  className="flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-5 h-11 sm:h-auto sm:py-2.5 rounded-lg text-sm font-bold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  Next <ChevronRight className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  onClick={handleCreateCampaign}
+                  disabled={submitting || uploading || !canLaunch}
+                  className="flex flex-1 sm:flex-none items-center justify-center gap-2 px-5 h-11 sm:h-auto sm:py-2.5 rounded-lg text-sm font-bold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm cursor-pointer"
+                >
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Launch
+                </button>
+              )}
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
   )
 }

@@ -11,7 +11,7 @@ import json
 
 from app.api.posts import get_redis
 
-from app.api.deps import get_db, get_current_user, staff_required
+from app.api.deps import get_db, get_current_user, staff_required, require_location_access
 from app.models.user import User
 from app.models.location import Location
 from app.models.gbp_attribute_definition import GbpAttributeDefinition
@@ -57,7 +57,7 @@ def get_category_id(category_name: str) -> str:
 
 @router.get("/{location_id}/form-schema")
 async def get_form_schema(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -220,8 +220,8 @@ async def get_form_schema(
 
 @router.post("/{location_id}/draft-attributes")
 def save_draft_attributes(
-    location_id: int,
     payload: Dict[str, Any],
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -339,7 +339,7 @@ def save_draft_attributes(
 
 @router.post("/{location_id}/publish-attributes")
 async def publish_attributes(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -350,7 +350,7 @@ async def publish_attributes(
     
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-        
+
     if not location.google_location_id:
         raise HTTPException(status_code=400, detail="Location is not linked to Google")
         
@@ -385,7 +385,7 @@ async def publish_attributes(
 
 @router.get("/{location_id}/publish-status")
 def get_publish_status(
-    location_id: int,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -395,7 +395,7 @@ def get_publish_status(
     ).first()
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-        
+
     return {
         "status": location.sync_status,
         "attention_needed": location.attention_needed,
@@ -407,8 +407,8 @@ class SuppressRejectionRequest(BaseModel):
 
 @router.post("/{location_id}/suppress-rejection")
 def suppress_rejection(
-    location_id: int,
     payload: SuppressRejectionRequest,
+    location_id: int = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -419,7 +419,7 @@ def suppress_rejection(
     
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-        
+
     rejection = db.query(GbpLocationAttributeRejection).filter(
         GbpLocationAttributeRejection.location_id == location_id,
         GbpLocationAttributeRejection.attribute_id == payload.attribute_id

@@ -4,6 +4,8 @@ import { useBuyCredits, useConfirmPayment } from '@/hooks/useBilling';
 import { useRazorpay } from '@/hooks/useRazorpay';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useState } from 'react';
+import { isPaymentVerificationError, PAYMENT_VERIFICATION_FAILED_MSG } from '@/lib/payment';
 
 interface TopUpModalProps {
   open: boolean;
@@ -15,13 +17,18 @@ export function TopUpModal({ open, onOpenChange }: TopUpModalProps) {
   const { mutateAsync: confirmPayment } = useConfirmPayment();
   const { openRazorpay } = useRazorpay();
   const queryClient = useQueryClient();
+  // Held true from the click until the Razorpay flow resolves (success/failure/dismiss),
+  // so a second click can't create a duplicate order while checkout is opening/open.
+  const [submitting, setSubmitting] = useState(false);
 
   const handleBuyCredits = async (pack: 'small' | 'large', credits: number) => {
+    if (submitting) return;
     const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY;
     if (!razorpayKey) {
       toast.error('Payments are not configured (missing key). Please contact support.');
       return;
     }
+    setSubmitting(true);
     try {
       const response = await buyCredits({ pack });
 
@@ -42,25 +49,35 @@ export function TopUpModal({ open, onOpenChange }: TopUpModalProps) {
             } else {
               toast.info('Payment received! Credits will appear shortly...');
             }
-          } catch {
-            toast.info('Payment received! Credits will appear shortly...');
+          } catch (err) {
+            if (isPaymentVerificationError(err)) {
+              toast.error(PAYMENT_VERIFICATION_FAILED_MSG);
+            } else {
+              toast.info('Payment received! Credits will appear shortly...');
+            }
           } finally {
+            setSubmitting(false);
             queryClient.invalidateQueries({ queryKey: ['billing_status'] });
             onOpenChange(false);
           }
         },
         onFailure: (err: any) => {
+          setSubmitting(false);
           toast.error(err?.description || 'Payment failed. No credits were added.');
         },
         modal: {
           ondismiss: function () {
+            setSubmitting(false);
             toast.info('Checkout closed. No payment was made.');
           },
         },
       };
 
-      openRazorpay(options as any);
+      // Awaited so a script-load failure (openRazorpay throws) is caught below and
+      // surfaced, instead of escaping as an unhandled rejection.
+      await openRazorpay(options as any);
     } catch (error: any) {
+      setSubmitting(false);
       toast.error(error.message || 'Failed to initialize top-up');
     }
   };
@@ -76,22 +93,30 @@ export function TopUpModal({ open, onOpenChange }: TopUpModalProps) {
         </DialogHeader>
 
         <div className="space-y-4 pt-4">
-          <div className="border rounded-lg p-4 flex items-center justify-between">
+          <div className="border rounded-lg p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="font-bold">500 Credits Pack</p>
               <p className="text-sm text-muted-foreground">₹499 one-time</p>
             </div>
-            <Button onClick={() => handleBuyCredits('small', 500)} disabled={isPending}>
+            <Button
+              className="w-full sm:w-auto"
+              onClick={() => handleBuyCredits('small', 500)}
+              disabled={isPending || submitting}
+            >
               Buy Now
             </Button>
           </div>
 
-          <div className="border rounded-lg p-4 flex items-center justify-between">
+          <div className="border rounded-lg p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="font-bold">2000 Credits Pack</p>
               <p className="text-sm text-muted-foreground">₹1,799 one-time</p>
             </div>
-            <Button onClick={() => handleBuyCredits('large', 2000)} disabled={isPending}>
+            <Button
+              className="w-full sm:w-auto"
+              onClick={() => handleBuyCredits('large', 2000)}
+              disabled={isPending || submitting}
+            >
               Buy Now
             </Button>
           </div>

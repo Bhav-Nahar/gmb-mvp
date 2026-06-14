@@ -4,6 +4,7 @@ from celery import shared_task
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.core.roles import ADMIN_ROLES
 from app.models.organization import Organization
 from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
@@ -366,6 +367,10 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         # Trigger attribute sync
         for loc_id in sync_jobs:
             sync_location_attributes_task.delay(loc_id)
+
+        # Trigger gallery-photo reconciliation (pulls existing Google photos in)
+        for loc_id in sync_jobs:
+            sync_location_media_task.delay(loc_id)
             
         # Log successful sync operation
         log_message = f"Synchronized {synced_count} locations successfully."
@@ -401,7 +406,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             # Find and delete oauth account securely
             oauth_account = db.query(OAuthAccount).join(User).filter(
                 User.organization_id == organization_id,
-                User.role.in_(["Owner", "Admin"]),
+                User.role.in_(ADMIN_ROLES),
                 OAuthAccount.provider.in_(["gbp", "google"])
             ).first()
             if oauth_account:
@@ -456,7 +461,7 @@ def sync_all_organizations_task() -> str:
             db.query(User.id, User.organization_id)
             .join(OAuthAccount, OAuthAccount.user_id == User.id)
             .filter(
-                User.role.in_(["Owner", "Admin"]),
+                User.role.in_(ADMIN_ROLES),
                 User.is_active == True
             )
             .order_by(OAuthAccount.expires_at.desc())
@@ -478,6 +483,28 @@ def sync_all_organizations_task() -> str:
             triggered_count += 1
 
         return f"Triggered synchronization for {triggered_count} organizations."
+    finally:
+        db.close()
+
+
+@shared_task(name="app.tasks.transition_subscriptions_task")
+def transition_subscriptions_task() -> str:
+    """
+    Lightweight, DB-only subscription lifecycle sweep
+    (trial -> past_due -> locked, and cancelled-active -> locked).
+
+    Decoupled from the heavy location sync so that sync can run on a longer
+    interval (cost reduction) WITHOUT delaying expiry/grace transitions. Makes
+    no external API calls; idempotent and Redis-lock guarded inside
+    EntitlementService, so running it on its own cadence is safe. The same call
+    remains inside sync_all_organizations_task as a harmless belt-and-suspenders.
+    """
+    from app.services.billing.entitlement_service import EntitlementService
+
+    db: Session = SessionLocal()
+    try:
+        EntitlementService.transition_expired_subscriptions(db)
+        return "Subscription lifecycle sweep completed."
     finally:
         db.close()
 
@@ -709,11 +736,15 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
     
     r = _get_redis()
     lock_key = f"lock:publish_job:{organization_id}:{job_id}"
-    lock = r.lock(lock_key, timeout=120)
-    
+    # 10-minute lease: must comfortably exceed worst-case create_post (OAuth refresh +
+    # GBP create under throttling) so the lock can't expire mid-publish and let a
+    # redelivery re-create the post. Stays well under task_time_limit (1800s) and the
+    # broker visibility_timeout (3600s).
+    lock = r.lock(lock_key, timeout=600)
+
     if not lock.acquire(blocking=False):
         return {"status": "skipped", "reason": "Job is currently being processed by another worker"}
-        
+
     db: Session = SessionLocal()
     try:
         logger.info(f"Processing PublishJob {job_id} for Organization {organization_id}")
@@ -721,12 +752,31 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
         if not job or job.status not in [PublishJobStatus.PENDING.value, PublishJobStatus.RETRYING.value]:
             return {"status": "skipped", "reason": "Job not found or not in a processable state"}
 
+        # Idempotency guard against Google: if a prior attempt already created the post
+        # (its id is persisted) we must NEVER call create_post again, even on a retry
+        # whose previous run failed *after* the Google write but before committing
+        # success. GBP exposes no idempotency key, so this persisted-id check is the
+        # backstop against duplicate posts.
+        if job.google_post_id:
+            logger.warning(
+                f"PublishJob {job_id} already has google_post_id {job.google_post_id}; "
+                f"finalizing as published without re-creating."
+            )
+            if job.status != PublishJobStatus.SUCCESS.value:
+                job.status = PublishJobStatus.SUCCESS.value
+                if not job.published_at:
+                    job.published_at = datetime.datetime.now(timezone.utc)
+                db.commit()
+            return {"status": "completed", "google_post_id": job.google_post_id, "idempotent": True}
+
         # State transition to RUNNING
         job.status = PublishJobStatus.RUNNING.value
         db.commit()
 
-        # Fetch parent post and location details
-        post = db.query(Post).filter(Post.id == job.post_id).first()
+        # Fetch parent post and location details. Eager-load media so the
+        # GBP mapper's post.media access doesn't trigger a lazy N+1 per job.
+        from sqlalchemy.orm import joinedload
+        post = db.query(Post).options(joinedload(Post.media)).filter(Post.id == job.post_id).first()
         location = db.query(Location).filter(Location.id == job.location_id).first()
         if not post or not location:
             raise Exception("Post or Location linked to PublishJob not found.")
@@ -1271,6 +1321,18 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
             try:
                 job = db.query(PublishJob).filter(PublishJob.id == job_id, PublishJob.organization_id == organization_id).first()
                 if not job or job.status not in [PublishJobStatus.PENDING.value, PublishJobStatus.RETRYING.value]:
+                    shard_paused_cancelled += 1
+                    continue
+
+                # Idempotency guard against Google (same rationale as
+                # process_publish_job_task): never re-create a post whose id is already
+                # persisted from a prior attempt — GBP has no idempotency key.
+                if job.google_post_id:
+                    if job.status != PublishJobStatus.SUCCESS.value:
+                        job.status = PublishJobStatus.SUCCESS.value
+                        if not job.published_at:
+                            job.published_at = datetime.datetime.now(datetime.timezone.utc)
+                        db.commit()
                     shard_paused_cancelled += 1
                     continue
 
@@ -1971,6 +2033,177 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
             pass
         db.close()
 
+@shared_task(bind=True, name="app.tasks.publish_location_media_task", max_retries=3)
+def publish_location_media_task(self, media_id: int, organization_id: int) -> dict:
+    """Publish a LocationMedia row's asset to the location's GBP photo gallery."""
+    import logging
+    import httpx
+    from app.db.session import SessionLocal
+    from app.models.location_media import LocationMedia, LocationMediaStatus
+    from app.models.location import Location
+    from app.providers.factory import ProviderFactory
+    from app.providers.gbp.auth import PermanentAuthError
+    from app.services.health_score_service import HealthScoreService
+
+    logger = logging.getLogger(__name__)
+
+    r = _get_redis()
+    lock = r.lock(f"lock:publish_location_media:{media_id}", timeout=120)
+    if not lock.acquire(blocking=False):
+        return {"status": "skipped", "reason": "Already being published by another worker"}
+
+    db = SessionLocal()
+    try:
+        media = db.query(LocationMedia).filter(
+            LocationMedia.id == media_id,
+            LocationMedia.organization_id == organization_id,
+        ).first()
+        if not media:
+            return {"status": "skipped", "reason": "LocationMedia not found"}
+        if media.publish_status == LocationMediaStatus.PUBLISHED or media.published_at is not None:
+            return {"status": "skipped", "reason": "Idempotency guard: already published"}
+        if media.publish_status != LocationMediaStatus.PUBLISHING:
+            return {"status": "skipped", "reason": f"Not in Publishing state: {media.publish_status}"}
+
+        location = db.query(Location).filter(Location.id == media.location_id).first()
+        if not location:
+            raise Exception("Location not found.")
+
+        media.publish_attempts += 1
+        db.commit()
+
+        provider = ProviderFactory.get_provider("gbp", organization_id, db)
+        try:
+            item = run_async(provider.create_location_media(
+                location.google_location_id,
+                media.source_url,
+                media.gbp_category,
+            ))
+            media.gbp_resource_name = item.resource_name
+            media.media_key = item.media_key
+            if item.media_format:
+                media.media_format = item.media_format
+            if item.thumbnail_url:
+                media.thumbnail_url = item.thumbnail_url
+            media.publish_status = LocationMediaStatus.PUBLISHED
+            media.published_at = datetime.datetime.now(timezone.utc)
+            media.failure_reason = None
+            media.google_error_code = None
+            db.commit()
+
+            # Confirm-by-list: re-fetch the gallery and reconcile against Google's
+            # authoritative record. Catches an accept-then-reject and refreshes the
+            # category / hosted URL / thumbnail Google actually assigned. Best-effort
+            # — propagation lag means "not yet listed" is not treated as a failure.
+            try:
+                gallery = run_async(provider.list_location_media(location.google_location_id))
+                match = next((g for g in gallery if g.media_key and g.media_key == media.media_key), None)
+                if match:
+                    media.gbp_category = match.category or media.gbp_category
+                    media.media_format = match.media_format or media.media_format
+                    if match.source_url:
+                        media.source_url = match.source_url
+                    if match.thumbnail_url:
+                        media.thumbnail_url = match.thumbnail_url
+                    db.commit()
+            except Exception as confirm_err:
+                logger.warning(f"Confirm-by-list skipped for media {media_id}: {confirm_err}")
+
+            try:
+                HealthScoreService.recalculate_health_score(db, media.location_id, reason="location_media_publish")
+                db.commit()
+            except Exception as hs_err:
+                logger.warning(f"Health score recalc failed after media publish {media_id}: {hs_err}")
+
+            return {"status": "completed"}
+
+        except Exception as e:
+            logger.error(f"PublishLocationMedia {media_id} failed: {str(e)}")
+            is_retryable = True
+            google_error_code = None
+            if isinstance(e, PermanentAuthError):
+                is_retryable = False
+                google_error_code = "AUTH_REVOKED"
+            elif isinstance(e, httpx.HTTPStatusError):
+                if e.response.status_code in [400, 401, 403, 404, 409]:
+                    is_retryable = False
+                google_error_code = str(e.response.status_code)
+            elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
+                is_retryable = False
+
+            if is_retryable and self.request.retries < self.max_retries:
+                countdown = 60 * (2 ** self.request.retries)
+                db.close()
+                raise self.retry(exc=e, countdown=countdown)
+
+            media.publish_status = LocationMediaStatus.FAILED
+            media.failure_reason = str(e)
+            media.google_error_code = google_error_code
+            db.commit()
+            return {"status": "failed", "reason": str(e)}
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
+        db.close()
+
+
+@shared_task(bind=True, name="app.tasks.delete_location_media_task", max_retries=3)
+def delete_location_media_task(self, media_id: int, organization_id: int) -> dict:
+    """Delete a gallery photo from Google, then soft-delete the local record."""
+    import logging
+    import httpx
+    from app.db.session import SessionLocal
+    from app.models.location_media import LocationMedia
+    from app.models.location import Location
+    from app.providers.factory import ProviderFactory
+    from app.providers.gbp.auth import PermanentAuthError
+    from app.services.health_score_service import HealthScoreService
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    try:
+        media = db.query(LocationMedia).filter(
+            LocationMedia.id == media_id,
+            LocationMedia.organization_id == organization_id,
+        ).first()
+        if not media or media.is_deleted:
+            return {"status": "skipped", "reason": "Not found or already deleted"}
+
+        location = db.query(Location).filter(Location.id == media.location_id).first()
+        if not location:
+            return {"status": "skipped", "reason": "Location not found"}
+
+        media_key = media.media_key
+        if media_key:
+            provider = ProviderFactory.get_provider("gbp", organization_id, db)
+            try:
+                run_async(provider.delete_location_media(location.google_location_id, media_key))
+            except Exception as e:
+                logger.error(f"DeleteLocationMedia {media_id} failed: {str(e)}")
+                is_retryable = isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError))
+                if is_retryable and self.request.retries < self.max_retries:
+                    countdown = 60 * (2 ** self.request.retries)
+                    db.close()
+                    raise self.retry(exc=e, countdown=countdown)
+                # Non-retryable (e.g. already gone on Google) — fall through to local delete.
+
+        media.is_deleted = True
+        media.deleted_at = datetime.datetime.now(timezone.utc)
+        db.commit()
+
+        try:
+            HealthScoreService.recalculate_health_score(db, media.location_id, reason="location_media_delete")
+            db.commit()
+        except Exception as hs_err:
+            logger.warning(f"Health score recalc failed after media delete {media_id}: {hs_err}")
+
+        return {"status": "deleted"}
+    finally:
+        db.close()
+
+
 @shared_task(name="app.tasks.archive_old_activity_logs_task")
 def archive_old_activity_logs_task() -> dict:
     from app.db.session import SessionLocal
@@ -2423,6 +2656,105 @@ def sync_location_attributes_task(location_id: int) -> dict:
     finally:
         db.close()
 
+@shared_task(name="app.tasks.sync_location_media_task")
+def sync_location_media_task(location_id: int) -> dict:
+    """Reconcile the location's real Google photo gallery into location_media.
+
+    Pulls every media item Google reports (including photos uploaded outside our
+    app) and upserts by media_key: inserts pre-existing photos as Published with
+    no local source file, refreshes view counts, and soft-deletes rows whose
+    photo was removed on Google's side. Leaves in-flight (Pending/Publishing)
+    rows untouched.
+    """
+    import logging
+    from app.db.session import SessionLocal
+    from app.models.location_media import LocationMedia, LocationMediaStatus
+    from app.models.location import Location
+    from app.providers.factory import ProviderFactory
+    from app.services.health_score_service import HealthScoreService
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    try:
+        location = db.query(Location).filter(Location.id == location_id).first()
+        if not location or not location.google_location_id:
+            return {"status": "skipped", "reason": "Location not found / no google id"}
+        if location.is_verified is False:
+            return {"status": "skipped", "reason": "Location not verified"}
+
+        provider = ProviderFactory.get_provider("gbp", location.organization_id, db)
+        try:
+            items = run_async(provider.list_location_media(location.google_location_id))
+        except Exception as e:
+            logger.warning(f"sync_location_media_task list failed for {location_id}: {e}")
+            return {"status": "error", "reason": str(e)}
+
+        google_keys = {it.media_key for it in items if it.media_key}
+
+        # Existing rows already known to Google (have a media_key), not in-flight.
+        existing = db.query(LocationMedia).filter(
+            LocationMedia.location_id == location_id,
+            LocationMedia.organization_id == location.organization_id,
+            LocationMedia.media_key.isnot(None),
+            LocationMedia.is_deleted == False,
+        ).all()
+        existing_by_key = {m.media_key: m for m in existing}
+
+        now = datetime.datetime.now(timezone.utc)
+        inserted = updated = removed = 0
+
+        for it in items:
+            if not it.media_key:
+                continue
+            row = existing_by_key.get(it.media_key)
+            if row:
+                row.gbp_resource_name = it.resource_name or row.gbp_resource_name
+                if it.source_url:
+                    row.source_url = it.source_url
+                if it.thumbnail_url:
+                    row.thumbnail_url = it.thumbnail_url
+                if it.media_format:
+                    row.media_format = it.media_format
+                if it.category:
+                    row.gbp_category = it.category
+                row.publish_status = LocationMediaStatus.PUBLISHED
+                updated += 1
+            else:
+                db.add(LocationMedia(
+                    organization_id=location.organization_id,
+                    location_id=location_id,
+                    source_media_id=None,
+                    gbp_category=it.category or "ADDITIONAL",
+                    media_format=it.media_format or "PHOTO",
+                    gbp_resource_name=it.resource_name,
+                    media_key=it.media_key,
+                    source_url=it.source_url or "",
+                    thumbnail_url=it.thumbnail_url,
+                    publish_status=LocationMediaStatus.PUBLISHED,
+                    published_at=now,
+                ))
+                inserted += 1
+
+        # Photos removed on Google's side → reflect locally.
+        for key, row in existing_by_key.items():
+            if key not in google_keys:
+                row.is_deleted = True
+                row.deleted_at = now
+                removed += 1
+
+        db.commit()
+
+        try:
+            HealthScoreService.recalculate_health_score(db, location_id, reason="location_media_sync")
+            db.commit()
+        except Exception as hs_err:
+            logger.warning(f"Health score recalc failed after media sync {location_id}: {hs_err}")
+
+        return {"status": "success", "inserted": inserted, "updated": updated, "removed": removed}
+    finally:
+        db.close()
+
+
 @shared_task(name="app.tasks.backfill_google_category_resource_names_task")
 def backfill_google_category_resource_names_task() -> dict:
     from app.db.session import SessionLocal
@@ -2527,7 +2859,7 @@ def publish_location_attributes_task(location_id: int) -> dict:
         # Publish to Google API
         oauth_account = db.query(OAuthAccount).join(User).filter(
             User.organization_id == location.organization_id,
-            User.role.in_(["Owner", "Admin"]),
+            User.role.in_(ADMIN_ROLES),
             OAuthAccount.provider.in_(["gbp", "google"])
         ).first()
 

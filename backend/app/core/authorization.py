@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.models.user import User
 from app.models.location import Location
+from app.core.roles import Role, ADMIN_ROLES
 
 def validate_location_access(db: Session, user: User, location_ids: list[int]) -> list[int]:
     """
@@ -11,25 +12,36 @@ def validate_location_access(db: Session, user: User, location_ids: list[int]) -
     """
     if not location_ids:
         return []
-        
+
     # Verify organization boundaries (Anti-IDOR)
     valid_locations = db.query(Location.id).filter(
         Location.organization_id == user.organization_id,
         Location.id.in_(location_ids)
     ).all()
     valid_location_ids = {loc[0] for loc in valid_locations}
-    
+
     if len(valid_location_ids) != len(set(location_ids)):
         raise HTTPException(status_code=403, detail="One or more locations do not belong to your organization.")
 
     # Verify role-based boundaries
-    if user.role not in ["Owner", "Admin"]:
+    if user.role not in ADMIN_ROLES:
         from app.api.deps import get_user_location_ids
         allowed_locs = get_user_location_ids(user, db) or []
         if any(loc_id not in allowed_locs for loc_id in location_ids):
             raise HTTPException(status_code=403, detail="You do not have access to one or more of these locations.")
-            
+
     return location_ids
+
+
+def assert_location_access(db: Session, user: User, location_id: int) -> int:
+    """Single-location convenience wrapper around validate_location_access.
+
+    Centralizes the org-boundary + per-user location-scope check so individual
+    endpoints can't accidentally enforce only one half. Returns the location_id so
+    it can be used inline.
+    """
+    validate_location_access(db, user, [location_id])
+    return location_id
 
 def assert_location_active(db: Session, location_id: int) -> None:
     """Guard paid features against locations that are locked pending payment.
@@ -73,11 +85,11 @@ def validate_user_access(db: Session, current_user: User, target_user_id: int) -
     if not target:
         raise HTTPException(status_code=404, detail="User not found.")
         
-    if current_user.role == "Admin" and target.role == "Owner":
+    if current_user.role == Role.ADMIN and target.role == Role.OWNER:
         raise HTTPException(status_code=403, detail="Admins cannot mutate the organization owner.")
-        
-    if current_user.role == "Regional Manager":
-        if target.role != "Store Manager":
+
+    if current_user.role == Role.REGIONAL_MANAGER:
+        if target.role != Role.STORE_MANAGER:
             raise HTTPException(status_code=403, detail="Regional Managers can only mutate Store Managers.")
         # Ensure target's locations are a subset of RM's locations
         from app.api.deps import get_user_location_ids
