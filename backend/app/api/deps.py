@@ -1,4 +1,7 @@
+import logging
 from typing import Generator, Optional, List
+
+logger = logging.getLogger(__name__)
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
