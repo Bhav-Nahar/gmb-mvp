@@ -36,7 +36,15 @@ celery.conf.update(
         'socket_connect_timeout': 30,
         'fanout_prefix': True,
         'fanout_patterns': True,
-        'polling_interval': 60.0, # Poll Redis every 60 seconds to save commands
+        'polling_interval': 60.0,
+    },
+    # Upstash Redis requires SSL (rediss://) — pass ssl=True so the Redis client
+    # opens a TLS connection instead of plain TCP.
+    redis_backend_use_ssl={
+        'ssl_cert_reqs': None,
+    },
+    broker_use_ssl={
+        'ssl_cert_reqs': None,
     },
     broker_pool_limit=5, # Limit concurrent connections
 )
