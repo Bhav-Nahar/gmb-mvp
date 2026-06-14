@@ -368,7 +368,9 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         redirect_url = f"{settings.FRONTEND_URL}/login/success?onboarding={'true' if is_new_user else 'false'}"
         response = RedirectResponse(url=redirect_url)
         
-        secure_cookie = settings.FRONTEND_URL.startswith("https://")
+        # Force insecure cookies for localhost development even if FRONTEND_URL is https
+        is_localhost = "localhost" in settings.FRONTEND_URL or "127.0.0.1" in settings.FRONTEND_URL
+        secure_cookie = settings.FRONTEND_URL.startswith("https://") and not is_localhost
         samesite_val = "none" if secure_cookie else "lax"
         
         # Set short-lived access cookie (15 mins)
@@ -443,8 +445,11 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
     # Generate new access token
     new_access_token = create_access_token(subject=user.email, token_version=user.token_version)
     
-    secure_cookie = settings.FRONTEND_URL.startswith("https://")
+    # Force insecure cookies for localhost development even if FRONTEND_URL is https
+    is_localhost = "localhost" in settings.FRONTEND_URL or "127.0.0.1" in settings.FRONTEND_URL
+    secure_cookie = settings.FRONTEND_URL.startswith("https://") and not is_localhost
     samesite_val = "none" if secure_cookie else "lax"
+    
     response.set_cookie(
         key="gmb_auth_token",
         value=new_access_token,

@@ -197,6 +197,8 @@ def check_csrf(request: Request):
         if not csrf_header:
             detail_msg += "Header 'X-CSRF-Token' is missing. "
         if csrf_cookie and csrf_header and csrf_cookie != csrf_header:
+            # Mask tokens in logs for security but show if they match
+            logger.warning(f"CSRF Mismatch: cookie={csrf_cookie[:4]}... header={csrf_header[:4]}...")
             detail_msg += "Cookie and Header tokens do not match. "
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

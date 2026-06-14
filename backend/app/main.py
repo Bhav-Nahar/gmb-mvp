@@ -24,22 +24,31 @@ app = FastAPI(
 # CORS configurations to support Next.js frontend
 frontend_url = settings.FRONTEND_URL.rstrip("/")
 allow_origins = [frontend_url]
+
+# Support both www and non-www in production if a custom domain is used
+if "localhost" not in frontend_url and "127.0.0.1" not in frontend_url:
+    if "://www." in frontend_url:
+        allow_origins.append(frontend_url.replace("://www.", "://"))
+    else:
+        allow_origins.append(frontend_url.replace("://", "://www."))
+
 if getattr(settings, "APP_ENV", "production") == "development":
     allow_origins += [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
 else:
-    # Additional safety: allow the current Vercel origin if not already covered
-    if "vercel.app" not in frontend_url and frontend_url:
-         logger.info(f"Production CORS origin configured as: {frontend_url}")
+    logger.info(f"Production CORS origins configured as: {allow_origins}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    # Explicitly list X-CSRF-Token to ensure compatibility with all mobile browsers
+    # and proxies that might struggle with wildcard headers when credentials=True.
+    allow_headers=["*", "X-CSRF-Token", "X-Requested-With"],
+    expose_headers=["X-CSRF-Token"],
 )
 
 
