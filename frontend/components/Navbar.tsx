@@ -30,7 +30,7 @@ export default function Navbar() {
               <RefreshCw className="h-5 w-5 text-white animate-pulse" />
             </div>
             <span className="bg-gradient-to-r from-indigo-600 to-purple-700 bg-clip-text text-lg font-bold tracking-tight text-transparent">
-              GMB Sync Engine
+              Pinzo
             </span>
           </div>
 

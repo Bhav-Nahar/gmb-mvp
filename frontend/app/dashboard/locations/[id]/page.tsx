@@ -95,8 +95,8 @@ export default function LocationProfilePage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:py-8 space-y-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
+      <main className="mx-auto max-w-7xl px-4 py-4 sm:py-8 space-y-4 sm:space-y-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3 sm:gap-4 min-w-0">
               <Link href="/dashboard" className="p-2 rounded-full hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
                 <ArrowLeft className="h-5 w-5" />
@@ -120,7 +120,7 @@ export default function LocationProfilePage() {
           </div>
 
           {isEditsError && (
-            <Alert variant="destructive" className="mb-4 bg-red-950/20 border-red-500/30 text-red-200">
+            <Alert variant="destructive" className="bg-red-950/20 border-red-500/30 text-red-200">
               <AlertTriangle className="h-4 w-4 text-red-400" />
               <AlertTitle className="text-red-400 font-semibold">Real-time Sync Connection Error</AlertTitle>
               <AlertDescription className="flex items-center justify-between text-xs mt-1">
@@ -132,7 +132,7 @@ export default function LocationProfilePage() {
             </Alert>
           )}
 
-          <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm relative overflow-hidden">
+          <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm overflow-hidden flex flex-col">
             <Tabs 
               value={activeTab} 
               onValueChange={(value) => {
@@ -145,9 +145,9 @@ export default function LocationProfilePage() {
                   setActiveTab(value)
                 }
               }} 
-              className="w-full"
+              className="w-full flex flex-col"
             >
-              <TabsList className="w-full justify-start bg-transparent border-b border-border/50 rounded-none p-0 h-auto gap-4 sm:gap-6 pb-2 mb-6 overflow-x-auto overflow-y-hidden -mx-4 px-4 sm:mx-0 sm:px-0 sticky top-14 z-20 bg-background/95 backdrop-blur sm:static sm:bg-transparent sm:backdrop-blur-none">
+              <TabsList className="w-full flex justify-start bg-transparent border-b border-border/50 rounded-none p-0 h-auto gap-4 sm:gap-6 pb-2 mb-6 overflow-x-auto overflow-y-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 <TabsTrigger value="overview" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
                   <LayoutDashboard className="w-4 h-4 mr-2" />
                   Overview

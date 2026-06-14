@@ -66,7 +66,7 @@ function LoginContent() {
             <RefreshCw className="h-6 w-6 text-white animate-pulse" />
           </div>
           <h2 className="mt-6 text-center text-2xl sm:text-3xl font-bold tracking-tight text-white font-sans">
-            GBP Manager Pro
+            Pinzo
           </h2>
           <p className="mt-2 text-center text-xs text-muted-foreground max-w-xs leading-relaxed">
             Centralize reviews, posts, analytics, and multi-location operations in one premium platform.

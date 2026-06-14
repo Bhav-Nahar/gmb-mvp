@@ -73,7 +73,7 @@ export default function InviteLandingPage() {
             <RefreshCw className="h-6 w-6 text-white" />
           </div>
           <h2 className="mt-6 text-2xl font-bold tracking-tight text-white font-sans">
-            GMB Sync Engine
+            Pinzo
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
             Workspace Invitation

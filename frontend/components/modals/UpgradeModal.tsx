@@ -71,7 +71,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
         order_id: order.id,
         amount: order.amount,
         currency: order.currency,
-        name: 'GMB MVP',
+        name: 'Pinzo',
         description: `Unlock ${ids.length} location${ids.length === 1 ? '' : 's'}`,
         handler: async function (res: any) {
           // Confirm via the ORDER path so the backend reconciles the add-on and
@@ -135,7 +135,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
       const options = {
         key: razorpayKey,
         subscription_id: response.subscription.id,
-        name: 'GMB MVP',
+        name: 'Pinzo',
         description: `Subscription for ${locationCount} Locations`,
         handler: async function (res: any) {
           // Verify the payment server-side and activate immediately, rather than

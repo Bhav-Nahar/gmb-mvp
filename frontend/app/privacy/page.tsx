@@ -3,8 +3,8 @@ import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 
 export const metadata: Metadata = {
-  title: 'Privacy Policy — GBP Manager Pro',
-  description: 'How GBP Manager Pro collects, uses, stores, and protects your data, including Google user data accessed via Google OAuth.',
+  title: 'Privacy Policy — Pinzo',
+  description: 'How Pinzo collects, uses, stores, and protects your data, including Google user data accessed via Google OAuth.',
 }
 
 // NOTE: This is a starting template. Have it reviewed by legal counsel and
@@ -29,7 +29,7 @@ export default function PrivacyPage() {
         <div className="mt-10 space-y-8 text-[15px] leading-relaxed sm:text-sm text-muted-foreground">
           <section className="space-y-3">
             <p>
-              This Privacy Policy explains how GBP Manager Pro (&ldquo;we&rdquo;, &ldquo;us&rdquo;) collects, uses, and
+              This Privacy Policy explains how Pinzo (&ldquo;we&rdquo;, &ldquo;us&rdquo;) collects, uses, and
               protects information when you use our platform to manage your Google Business Profile locations.
             </p>
           </section>
@@ -50,7 +50,7 @@ export default function PrivacyPage() {
               minimum scopes required to manage your Business Profiles. We never receive or store your Google password.
             </p>
             <p>
-              GBP Manager Pro&apos;s use of information received from Google APIs adheres to the{' '}
+              Pinzo&apos;s use of information received from Google APIs adheres to the{' '}
               <a
                 href="https://developers.google.com/terms/api-services-user-data-policy"
                 target="_blank"

@@ -110,7 +110,7 @@ export default function HomeClient() {
               <RefreshCw className="h-5 w-5 text-primary-foreground animate-pulse" />
             </div>
             <span className="text-lg font-bold tracking-tight text-foreground">
-              GBP Manager Pro
+              Pinzo
             </span>
           </div>
 
@@ -310,7 +310,7 @@ export default function HomeClient() {
               </div>
               <div className="h-4 w-px bg-border mx-2" />
               <div className="flex items-center gap-1 bg-muted/40 border border-border/80 px-2 py-0.5 rounded text-[10px] text-muted-foreground font-mono">
-                <Lock className="w-3 h-3" /> gbpmanager.pro/dashboard
+                <Lock className="w-3 h-3" /> pinzo.com/dashboard
               </div>
             </div>
             <div className="flex gap-2">
@@ -554,7 +554,7 @@ export default function HomeClient() {
             Get Started in Minutes
           </div>
           <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
-            How GBP Manager Pro Works
+            How Pinzo Works
           </h2>
           <p className="text-muted-foreground">
             No passwords shared, no manual exports. Connect once and manage every Google Business Profile from a single secure workspace.
@@ -677,7 +677,7 @@ export default function HomeClient() {
               One Edit. Synchronized Everywhere.
             </h2>
             <p className="text-muted-foreground leading-relaxed">
-              Updating holiday hours or telephone lines shouldn&apos;t mean logging in and out of multiple Google accounts. With GBP Manager Pro, push edits to your storefronts from one place — through a moderated, fully audited workflow.
+              Updating holiday hours or telephone lines shouldn&apos;t mean logging in and out of multiple Google accounts. With Pinzo, push edits to your storefronts from one place — through a moderated, fully audited workflow.
             </p>
 
             <ul className="space-y-3 font-semibold text-xs text-muted-foreground">
@@ -932,7 +932,7 @@ export default function HomeClient() {
             <div className="space-y-3">
               <h3 className="text-sm font-bold text-foreground">Local Audit Results</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Dominating your local pack requires constant consistency checks. GBP Manager Pro continuously crawls your business coordinates against multiple indexes to flag discrepancies.
+                Dominating your local pack requires constant consistency checks. Pinzo continuously crawls your business coordinates against multiple indexes to flag discrepancies.
               </p>
             </div>
 
@@ -1277,7 +1277,7 @@ export default function HomeClient() {
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
                 <RefreshCw className="h-4.5 w-4.5 text-primary-foreground" />
               </div>
-              <span className="text-md font-bold text-foreground">GBP Manager Pro</span>
+              <span className="text-md font-bold text-foreground">Pinzo</span>
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed max-w-xs">
               Synchronize, automate, and schedule locations under Google Business Profile. Dominating local maps pack made simple.
@@ -1305,13 +1305,13 @@ export default function HomeClient() {
           <div className="space-y-3 col-span-2 md:col-span-1">
             <span className="text-[10px] uppercase font-bold tracking-widest text-foreground">Google Integration</span>
             <p className="text-[10px] text-muted-foreground/80 leading-normal">
-              GBP Manager Pro is a management platform. Google and Google Business Profile are trademarks of Google LLC. We interact with official Google API channels.
+              Pinzo is a management platform. Google and Google Business Profile are trademarks of Google LLC. We interact with official Google API channels.
             </p>
           </div>
         </div>
 
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 mt-12 pt-6 border-t border-border/50 flex flex-col sm:flex-row items-center justify-between text-[10px] text-muted-foreground/60 font-semibold gap-4">
-          <span>&copy; {new Date().getFullYear()} GBP Manager Pro. All rights reserved.</span>
+          <span>&copy; {new Date().getFullYear()} Pinzo. All rights reserved.</span>
           <span>Not affiliated with or endorsed by Google LLC.</span>
         </div>
       </footer>

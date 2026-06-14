@@ -40,7 +40,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const isPublicPage = window.location.pathname === '/login' || 
                          window.location.pathname.startsWith('/invite/') ||
                          window.location.pathname === '/login/success' ||
-                         window.location.pathname === '/'
+                         window.location.pathname === '/' ||
+                         window.location.pathname === '/privacy' ||
+                         window.location.pathname === '/terms'
                          
     if (isPublicPage) {
       setLoading(false)

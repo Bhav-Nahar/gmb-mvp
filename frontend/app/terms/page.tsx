@@ -3,8 +3,8 @@ import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 
 export const metadata: Metadata = {
-  title: 'Terms of Service — GBP Manager Pro',
-  description: 'The terms governing your use of GBP Manager Pro.',
+  title: 'Terms of Service — Pinzo',
+  description: 'The terms governing your use of Pinzo.',
 }
 
 // NOTE: This is a starting template. Have it reviewed by legal counsel before launch.
@@ -27,7 +27,7 @@ export default function TermsPage() {
         <div className="mt-10 space-y-8 text-[15px] leading-relaxed sm:text-sm text-muted-foreground">
           <section className="space-y-3">
             <p>
-              These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of GBP Manager Pro (the
+              These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of Pinzo (the
               &ldquo;Service&rdquo;). By creating an account or using the Service, you agree to these Terms.
             </p>
           </section>
@@ -35,7 +35,7 @@ export default function TermsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-foreground">The service</h2>
             <p>
-              GBP Manager Pro is a platform that helps you manage Google Business Profile locations &mdash; including
+              Pinzo is a platform that helps you manage Google Business Profile locations &mdash; including
               reviews, AI-assisted replies, posts, analytics, audits, and team access. We connect to Google on your behalf
               via Google OAuth and act only within the permissions you grant.
             </p>
@@ -104,7 +104,7 @@ export default function TermsPage() {
 
           <section className="space-y-3 border-t border-border pt-6">
             <p className="text-xs">
-              GBP Manager Pro is not affiliated with or endorsed by Google LLC. Google and Google Business Profile are
+              Pinzo is not affiliated with or endorsed by Google LLC. Google and Google Business Profile are
               trademarks of Google LLC.
             </p>
           </section>
