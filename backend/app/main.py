@@ -3,6 +3,7 @@ import os
 import stat
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
@@ -45,11 +46,24 @@ app.add_middleware(
     allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
-    # Explicitly list X-CSRF-Token to ensure compatibility with all mobile browsers
-    # and proxies that might struggle with wildcard headers when credentials=True.
     allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With", "Accept"],
     expose_headers=["X-CSRF-Token"],
 )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Ensure CORS headers are present on 500 errors so the browser sees the real error."""
+    origin = request.headers.get("origin", "")
+    headers = {}
+    if origin in allow_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    logger.exception("Unhandled exception: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=headers,
+    )
 
 
 @app.middleware("http")
