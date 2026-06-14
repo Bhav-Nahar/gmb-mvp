@@ -30,14 +30,9 @@ async function refreshSession(): Promise<boolean> {
         headers
       })
       if (response.ok) {
-        // The refresh response sets a new gmb_csrf_token via Set-Cookie.
-        // Read it from the JSON body (backend returns it explicitly) so we
-        // don't race against the browser applying the Set-Cookie header.
         try {
           const data = await response.json()
-          if (data?.csrf_token && typeof document !== 'undefined') {
-            document.cookie = `gmb_csrf_token=${data.csrf_token}; path=/; SameSite=None; Secure`
-          }
+          if (data?.csrf_token) storeCsrfToken(data.csrf_token)
         } catch (_) {}
         return true
       }
@@ -50,6 +45,21 @@ async function refreshSession(): Promise<boolean> {
   })()
   
   return refreshPromise
+}
+
+const CSRF_STORAGE_KEY = 'gmb_csrf_token'
+
+function getCsrfToken(): string | null {
+  if (typeof window === 'undefined') return null
+  // localStorage is same-origin to the frontend, so it works across cross-domain deployments
+  // where document.cookie cannot read cookies set by the backend domain.
+  return localStorage.getItem(CSRF_STORAGE_KEY)
+}
+
+export function storeCsrfToken(token: string): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(CSRF_STORAGE_KEY, token)
+  }
 }
 
 function getCookie(name: string): string | null {
@@ -75,11 +85,11 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   // Inject CSRF Token on all mutating requests
   const method = options.method?.toUpperCase() || 'GET'
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-    const csrfToken = getCookie('gmb_csrf_token')
+    const csrfToken = getCsrfToken()
     if (csrfToken) {
       headers.set('X-CSRF-Token', csrfToken)
     } else {
-      console.warn(`[API] CSRF token missing for ${method} request to ${endpoint}. Available cookies: ${typeof document !== 'undefined' ? document.cookie : 'N/A'}`)
+      console.warn(`[API] CSRF token missing for ${method} request to ${endpoint}.`)
     }
   }
 
