@@ -749,8 +749,16 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
     try:
         logger.info(f"Processing PublishJob {job_id} for Organization {organization_id}")
         job = db.query(PublishJob).filter(PublishJob.id == job_id, PublishJob.organization_id == organization_id).first()
-        if not job or job.status not in [PublishJobStatus.PENDING.value, PublishJobStatus.RETRYING.value]:
+        job_status = job.status.capitalize() if job and job.status else ""
+        if not job or job_status not in ["Pending", "Retrying"]:
             return {"status": "skipped", "reason": "Job not found or not in a processable state"}
+
+        if job.campaign_id:
+            campaign_status = (r.get(f"campaign:{job.campaign_id}:status") or b"").decode("utf-8")
+            if campaign_status in ["Paused", "Cancelled"]:
+                job.status = PublishJobStatus.PAUSED.value if campaign_status == "Paused" else PublishJobStatus.CANCELLED.value
+                db.commit()
+                return {"status": "skipped", "reason": f"Campaign is {campaign_status}"}
 
         # Idempotency guard against Google: if a prior attempt already created the post
         # (its id is persisted) we must NEVER call create_post again, even on a retry
@@ -827,6 +835,13 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
                     new_status = "PartiallyCompleted"
                     
                 campaign.status = new_status
+                if campaign.primary_post:
+                    if campaign.total_failed == 0 and campaign.total_published > 0:
+                        campaign.primary_post.status = PostStatus.PUBLISHED.value
+                    elif campaign.total_published == 0:
+                        campaign.primary_post.status = PostStatus.FAILED.value
+                    else:
+                        campaign.primary_post.status = PostStatus.PARTIALLY_PUBLISHED.value
                 db.add(CampaignAuditLog(
                     organization_id=organization_id,
                     campaign_id=campaign.id,
@@ -958,6 +973,13 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
                                 new_status = "PartiallyCompleted"
                                 
                             campaign.status = new_status
+                            if campaign.primary_post:
+                                if campaign.total_failed == 0 and campaign.total_published > 0:
+                                    campaign.primary_post.status = PostStatus.PUBLISHED.value
+                                elif campaign.total_published == 0:
+                                    campaign.primary_post.status = PostStatus.FAILED.value
+                                else:
+                                    campaign.primary_post.status = PostStatus.PARTIALLY_PUBLISHED.value
                             job_db.add(CampaignAuditLog(
                                 organization_id=organization_id,
                                 campaign_id=campaign.id,
@@ -1843,7 +1865,10 @@ def check_scheduled_posts_task() -> dict:
     from app.models.post import Post
     from app.models.campaign import Campaign
     from app.models.publish_job import PublishJob
+    from app.models.post_audit_log import PostAuditLog
     from app.constants.posts import PostStatus, CampaignStatus, PublishJobStatus
+    from app.services.post_service import post_service
+    from app.services.activity_log_service import ActivityLogService
     import redis
     from app.core.config import settings
 
@@ -1851,7 +1876,6 @@ def check_scheduled_posts_task() -> dict:
     db = SessionLocal()
     r = _get_redis()
     
-    now = datetime.datetime.now(datetime.timezone.utc)
     now = datetime.datetime.now(datetime.timezone.utc)
     due_post_ids = [p.id for p in db.query(Post.id).filter(
         Post.status == PostStatus.SCHEDULED.value,
@@ -1869,64 +1893,95 @@ def check_scheduled_posts_task() -> dict:
                 
             logger.info(f"Processing scheduled post {post.id} (due at {post.scheduled_at})")
             
+            old_status = post.status
             post.status = PostStatus.APPROVED.value
-            tasks_to_dispatch = []
+            
+            audit_log = PostAuditLog(
+                organization_id=post.organization_id,
+                post_id=post.id,
+                actor_user_id=post.created_by_user_id,
+                action="STATUS_CHANGED",
+                previous_status=old_status,
+                new_status=PostStatus.APPROVED.value,
+                log_metadata={"action": "scheduled_publish_triggered"}
+            )
+            db.add(audit_log)
+            db.flush()
+
+            target_location_ids = post.target_location_ids or []
+            
+            valid_locations = []
+            for loc_id in target_location_ids:
+                try:
+                    post_service._validate_publish_eligibility(
+                        db=db,
+                        post=post,
+                        location_id=loc_id,
+                        organization_id=post.organization_id
+                    )
+                    valid_locations.append(loc_id)
+                except Exception as e:
+                    logger.warning(f"Location {loc_id} failed publish eligibility check: {e}")
+                    
+            staged_jobs = []
+            for loc_id in valid_locations:
+                job = post_service._stage_publish_job(
+                    db=db,
+                    post=post,
+                    location_id=loc_id,
+                    organization_id=post.organization_id,
+                    user_id=post.created_by_user_id or 0,
+                )
+                if getattr(job, 'id', None) is None:
+                    staged_jobs.append(job)
+                else:
+                    staged_jobs.append(job)
+            
+            db.flush()
             
             if post.campaign_id:
                 campaign = db.query(Campaign).filter(Campaign.id == post.campaign_id).first()
                 if campaign:
-                    jobs = db.query(PublishJob).filter(PublishJob.campaign_id == campaign.id).all()
-                    job_ids = [job.id for job in jobs]
+                    campaign.total_locations = len(target_location_ids)
+                    campaign.total_pending = len(valid_locations)
+                    campaign.total_published = 0
+                    campaign.total_failed = 0
+                    campaign.total_rejected = 0
+                    campaign.total_shadow_banned = 0
                     
-                    if job_ids:
+                    if len(valid_locations) == 0:
+                        from app.constants.posts import CampaignStatus
+                        campaign.status = CampaignStatus.FAILED.value
+                    else:
+                        from app.constants.posts import CampaignStatus
                         campaign.status = CampaignStatus.PROCESSING.value
                         
-                        chunk_size = 50
-                        shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
-                        
-                        r.set(f"campaign:{campaign.id}:pending_shards", len(shards))
-                        r.set(f"campaign:{campaign.id}:status", "Processing")
-                        
-                        from app.tasks import process_campaign_shard_task
-                        for shard in shards:
-                            tasks_to_dispatch.append((process_campaign_shard_task, (shard, post.organization_id, campaign.id)))
-                    else:
-                        from app.models.location import Location
-                        locs = db.query(Location).filter(Location.organization_id == post.organization_id).all()
-                        loc_ids = [l.id for l in locs]
-                        
-                        if loc_ids:
-                            campaign.status = CampaignStatus.QUEUED.value
-                            from app.tasks import orchestrate_campaign_task
-                            tasks_to_dispatch.append((orchestrate_campaign_task, (campaign.id, post.organization_id, loc_ids, post.created_by_user_id)))
-                        else:
-                            campaign.status = CampaignStatus.FAILED.value
-            else:
-                from app.models.location import Location
-                loc = db.query(Location).filter(Location.organization_id == post.organization_id).first()
-                if loc:
-                    job = PublishJob(
-                        organization_id=post.organization_id,
-                        post_id=post.id,
-                        location_id=loc.id,
-                        provider="gbp",
-                        status=PublishJobStatus.PENDING.value
-                    )
-                    db.add(job)
-                    db.flush() # Populate job.id
-                    
-                    from app.tasks import process_publish_job_task
-                    tasks_to_dispatch.append((process_publish_job_task, (job.id, post.organization_id)))
+                    db.add(campaign)
             
-            # Stage all database updates/inserts
-            db.flush()
-            
-            # Dispatch all Celery tasks. If Redis is down, this will throw an exception.
-            for task_fn, args in tasks_to_dispatch:
-                task_fn.delay(*args)
-                
-            # Celery dispatch succeeded, now commit database transaction safely
+            ActivityLogService.log(
+                db,
+                organization_id=post.organization_id,
+                entity_type="post",
+                action="publish",
+                actor_user_id=post.created_by_user_id,
+                entity_id=post.id,
+                payload={
+                    "mode": "scheduled",
+                    "locations_count": len(valid_locations)
+                }
+            )
+
             db.commit()
+            
+            from app.tasks import process_publish_job_task
+            from app.worker import celery as celery_app
+            for job in staged_jobs:
+                if job.id:
+                    celery_app.send_task(
+                        "app.tasks.process_publish_job_task",
+                        args=(job.id, post.organization_id)
+                    )
+                    
             processed_count += 1
         except Exception as post_err:
             logger.error(f"Failed to process scheduled post {post_id}: {str(post_err)}")

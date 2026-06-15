@@ -20,6 +20,7 @@ class CampaignResponse(BaseModel):
     total_failed: int
     total_rejected: int
     total_shadow_banned: int
+    scheduled_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -183,6 +184,8 @@ class PostCreateRequest(BaseModel):
     is_bulk_post: bool = False
     campaign_id: Optional[int] = None
     scheduled_at: Optional[datetime] = None
+    publish_mode: str = "now"
+    location_ids: Optional[List[int]] = None
 
 class PostUpdateRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=100)
@@ -193,6 +196,8 @@ class PostUpdateRequest(BaseModel):
     cta_type: Optional[CallToActionType] = None
     cta_url: Optional[AnyHttpUrl] = None
     scheduled_at: Optional[datetime] = None
+    publish_mode: Optional[str] = None
+    location_ids: Optional[List[int]] = None
 
 class CampaignCreateRequest(BaseModel):
     name: str = Field(..., max_length=255)

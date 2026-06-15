@@ -93,6 +93,8 @@ function CampaignBadge({ status }: { status: string }) {
       return <span className={`${base} bg-zinc-100 text-zinc-700 border-zinc-300 dark:bg-zinc-500/15 dark:text-zinc-300 dark:border-zinc-500/30`}>Draft</span>
     case 'QUEUED':
       return <span className={`${base} bg-sky-100 text-sky-700 border-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30`}>Queued</span>
+    case 'SCHEDULED':
+      return <span className={`${base} bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30`}>Scheduled</span>
     case 'PROCESSING':
     case 'RUNNING':
       return <span className={`${base} bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30 animate-pulse`}>Running</span>
@@ -146,6 +148,9 @@ export default function PostsPage(props: any) {
   const [ctaUrl, setCtaUrl] = useState('')
   const [locationSearch, setLocationSearch] = useState('')
   const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>(locationId ? [locationId] : [])
+  const [publishMode, setPublishMode] = useState<'NOW' | 'SCHEDULED'>('NOW')
+  const [scheduledDate, setScheduledDate] = useState('')
+  const [scheduledTime, setScheduledTime] = useState('')
 
   // Media
   const [uploading, setUploading] = useState(false)
@@ -255,6 +260,19 @@ export default function PostsPage(props: any) {
       setErrorAlert(err.message || 'Failed to retry location.')
     } finally {
       setRetryingJobId(null)
+    }
+  }
+
+  const handleDeleteCampaign = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this campaign?')) return
+    setErrorAlert('')
+    try {
+      await api.delete(`/posts/campaigns/${id}`)
+      setCampaigns(prev => prev.filter(c => c.id !== id))
+      if (selectedCampaignId === id) setSelectedCampaignId(null)
+      setSuccessAlert('Campaign deleted successfully.')
+    } catch (err: any) {
+      setErrorAlert(err.message || 'Failed to delete campaign.')
     }
   }
 
@@ -393,6 +411,9 @@ export default function PostsPage(props: any) {
     setMediaPayload(null)
     setLocationSearch('')
     setSelectedLocationIds(locationId ? [locationId] : [])
+    setPublishMode('NOW')
+    setScheduledDate('')
+    setScheduledTime('')
   }
 
   const openModal = () => { resetForm(); setErrorAlert(''); setIsModalOpen(true) }
@@ -406,6 +427,17 @@ export default function PostsPage(props: any) {
       setErrorAlert('CTA URL must be a valid http or https URL.')
       return
     }
+    if (publishMode === 'SCHEDULED') {
+      if (!scheduledDate || !scheduledTime) {
+        setErrorAlert('Please select both date and time for scheduled publishing.')
+        return
+      }
+      const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`)
+      if (scheduledDateTime <= new Date()) {
+        setErrorAlert('Scheduled time must be in the future.')
+        return
+      }
+    }
     setSubmitting(true)
     setErrorAlert('')
     setSuccessAlert('')
@@ -414,7 +446,8 @@ export default function PostsPage(props: any) {
         name: campaignName,
         total_locations: selectedLocationIds.length
       })
-      const post: any = await api.post('/posts/draft', {
+      
+      const postPayload: any = {
         title: title || null,
         summary,
         post_type: 'UPDATE',
@@ -422,8 +455,16 @@ export default function PostsPage(props: any) {
         // CALL CTAs use the location phone — never a URL.
         cta_url: ctaType !== 'NONE' && ctaType !== 'CALL' && ctaUrl ? ctaUrl : null,
         is_bulk_post: true,
-        campaign_id: camp.id
-      })
+        campaign_id: camp.id,
+        publish_mode: publishMode,
+        location_ids: selectedLocationIds
+      }
+      
+      if (publishMode === 'SCHEDULED') {
+        postPayload.scheduled_at = new Date(`${scheduledDate}T${scheduledTime}`).toISOString()
+      }
+      
+      const post: any = await api.post('/posts/draft', postPayload)
       if (mediaPayload) {
         await api.post(`/posts/${post.id}/media`, {
           storage_provider: mediaPayload.storage_provider,
@@ -438,8 +479,14 @@ export default function PostsPage(props: any) {
           cdn_url: mediaPayload.cdn_url
         })
       }
-      await api.post(`/posts/campaigns/${camp.id}/launch`, { location_ids: selectedLocationIds })
-      setSuccessAlert('Campaign launched successfully!')
+      
+      if (publishMode === 'NOW') {
+        await api.post(`/posts/campaigns/${camp.id}/launch`, { location_ids: selectedLocationIds })
+        setSuccessAlert('Campaign launched successfully!')
+      } else {
+        setSuccessAlert('Campaign scheduled successfully!')
+      }
+      
       setTimeout(() => {
         if (!isMounted.current) return
         setIsModalOpen(false)
@@ -569,6 +616,9 @@ export default function PostsPage(props: any) {
                     )}
                     {selectedCampaign.status.toUpperCase() === 'PAUSED' && (
                       <button onClick={() => handleCampaignAction('resume')} className="bg-primary hover:bg-primary/90 text-primary-foreground px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer">Resume</button>
+                    )}
+                    {['DRAFT', 'SCHEDULED'].includes(selectedCampaign.status.toUpperCase()) && (
+                      <button onClick={() => handleDeleteCampaign(selectedCampaign.id)} className="bg-red-500/10 text-red-600 hover:bg-red-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border border-red-500/20">Delete</button>
                     )}
                     {selectedCampaign.total_failed > 0 && (
                       <button onClick={handleRetryAll} disabled={retryingAll} className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer">
@@ -753,6 +803,27 @@ export default function PostsPage(props: any) {
                         </div>
                         <span className={`text-[10px] ${summary.length > SUMMARY_MAX - 50 ? 'text-amber-600 dark:text-amber-400 font-bold' : 'text-muted-foreground'}`}>{summary.length}/{SUMMARY_MAX}</span>
                       </div>
+                    </div>
+
+                    <div className="space-y-1.5 border border-border p-4 rounded-xl">
+                      <label className="text-xs font-bold uppercase text-muted-foreground block mb-2">Publishing Timing</label>
+                      <div className="flex flex-wrap gap-4 mb-3">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input type="radio" name="publishMode" value="NOW" checked={publishMode === 'NOW'} onChange={() => setPublishMode('NOW')} className="text-primary focus:ring-primary h-4 w-4" />
+                          Publish Now
+                        </label>
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input type="radio" name="publishMode" value="SCHEDULED" checked={publishMode === 'SCHEDULED'} onChange={() => setPublishMode('SCHEDULED')} className="text-primary focus:ring-primary h-4 w-4" />
+                          Schedule for Later
+                        </label>
+                      </div>
+                      
+                      {publishMode === 'SCHEDULED' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                          <input type="date" value={scheduledDate} onChange={e => setScheduledDate(e.target.value)} min={new Date().toISOString().split('T')[0]} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" required />
+                          <input type="time" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" required />
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

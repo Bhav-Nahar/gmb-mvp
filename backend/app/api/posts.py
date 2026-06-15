@@ -268,6 +268,21 @@ def update_post(
         user_id=current_user.id
     )
 
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_post(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Deletes a draft or scheduled post."""
+    post_service.delete_post(
+        db=db,
+        post_id=id,
+        organization_id=current_user.organization_id,
+        user_id=current_user.id
+    )
+    return None
+
 @router.post("/{id}/media", response_model=PostMediaResponse, status_code=status.HTTP_201_CREATED)
 def attach_media_to_post(
     id: int,

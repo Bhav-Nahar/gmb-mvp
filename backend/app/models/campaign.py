@@ -31,3 +31,6 @@ class Campaign(Base):
     publish_jobs = relationship("PublishJob", back_populates="campaign", cascade="all, delete-orphan")
     audit_logs = relationship("CampaignAuditLog", back_populates="campaign", cascade="all, delete-orphan")
 
+    @property
+    def scheduled_at(self):
+        return self.primary_post.scheduled_at if self.primary_post else None
