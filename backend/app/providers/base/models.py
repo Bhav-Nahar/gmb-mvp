@@ -24,7 +24,9 @@ class LocationModel(BaseModel):
     provider_metadata: Dict[str, Any] = {}
     synced_at: datetime
     google_category_resource_name: Optional[str] = None
-    
+    # Secondary/additional categories: list of {name, displayName}
+    additional_categories: List[Dict[str, Any]] = []
+
     # State tracking
     is_verified: Optional[bool] = None
     is_suspended: Optional[bool] = None

@@ -251,20 +251,22 @@ export default function ReplyTemplatesSettingsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {templatesByStar[activeStar]?.map(template => (
                   <div key={template.id} className="group relative p-5 bg-card border border-border rounded-xl hover:border-primary/30 transition-colors shadow-sm">
-                    <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
+                    <div className="absolute top-3 right-3 flex gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                      <button
                         onClick={() => openEditDialog(template)}
-                        className="p-1.5 text-muted-foreground hover:text-primary bg-background rounded border border-border shadow-sm"
+                        className="p-2 sm:p-1.5 text-muted-foreground hover:text-primary bg-background rounded border border-border shadow-sm"
                         title="Edit Template"
+                        aria-label="Edit template"
                       >
-                        <Edit2 className="h-3.5 w-3.5" />
+                        <Edit2 className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => openDeleteDialog(template)}
-                        className="p-1.5 text-muted-foreground hover:text-red-500 bg-background rounded border border-border shadow-sm"
+                        className="p-2 sm:p-1.5 text-muted-foreground hover:text-red-500 bg-background rounded border border-border shadow-sm"
                         title="Delete Template"
+                        aria-label="Delete template"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
                       </button>
                     </div>
                     
@@ -285,8 +287,8 @@ export default function ReplyTemplatesSettingsPage() {
 
       {/* Add/Edit Dialog */}
       {isDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-card w-full max-w-lg border border-border rounded-xl shadow-lg overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 sm:backdrop-blur-sm">
+          <div className="bg-card w-full sm:max-w-lg border border-border rounded-t-2xl sm:rounded-xl shadow-lg overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[90vh]">
             <div className="px-6 py-4 border-b border-border flex justify-between items-center">
               <h2 className="text-lg font-semibold">{editingTemplate ? 'Edit Template' : 'Add Template'}</h2>
               <button onClick={() => setIsDialogOpen(false)} className="text-muted-foreground hover:text-foreground">
@@ -358,17 +360,17 @@ export default function ReplyTemplatesSettingsPage() {
               </div>
             </div>
             
-            <div className="px-6 py-4 border-t border-border bg-muted/10 flex justify-end gap-3">
-              <button 
+            <div className="px-6 py-4 border-t border-border bg-muted/10 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <button
                 onClick={() => setIsDialogOpen(false)}
-                className="px-4 py-2 border border-border bg-background hover:bg-muted text-foreground text-sm font-medium rounded-md transition-colors"
+                className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 border border-border bg-background hover:bg-muted text-foreground text-sm font-medium rounded-md transition-colors"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={handleSave}
                 disabled={isSaving || !formTitle.trim() || !formBody.trim()}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                className="w-full sm:w-auto min-h-[44px] sm:min-h-0 flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
               >
                 {isSaving ? (
                   <div className="h-4 w-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin"></div>
@@ -384,25 +386,25 @@ export default function ReplyTemplatesSettingsPage() {
 
       {/* Delete Confirmation Dialog */}
       {isDeleteDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-card w-full max-w-sm border border-border rounded-xl shadow-lg p-6 space-y-6">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 sm:backdrop-blur-sm">
+          <div className="bg-card w-full sm:max-w-sm border border-border rounded-t-2xl sm:rounded-xl shadow-lg p-6 space-y-6">
             <div>
               <h3 className="text-lg font-semibold text-foreground">Delete template?</h3>
               <p className="text-sm text-muted-foreground mt-2">
                 Are you sure you want to delete &quot;{templateToDelete?.title}&quot;? This action cannot be undone.
               </p>
             </div>
-            
-            <div className="flex justify-end gap-3">
-              <button 
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <button
                 onClick={() => setIsDeleteDialogOpen(false)}
-                className="px-4 py-2 border border-border bg-background hover:bg-muted text-foreground text-sm font-medium rounded-md transition-colors"
+                className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 border border-border bg-background hover:bg-muted text-foreground text-sm font-medium rounded-md transition-colors"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={handleDelete}
-                className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700 transition-colors"
+                className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700 transition-colors"
               >
                 Delete
               </button>

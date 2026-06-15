@@ -65,6 +65,8 @@ class LocationOut(BaseModel):
     google_location_id: str
     location_name: str
     primary_category: Optional[str] = None
+    # Secondary/additional categories: list of {name, displayName}
+    additional_categories: Optional[List[Any]] = None
     address: Optional[str] = None
     phone: Optional[str] = None
     website: Optional[str] = None

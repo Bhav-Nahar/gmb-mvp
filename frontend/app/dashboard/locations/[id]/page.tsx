@@ -109,6 +109,17 @@ export default function LocationProfilePage() {
                   <span className="break-words">{formatAddress(location.address)}</span>
                   <span className="text-muted-foreground/30 hidden sm:inline">•</span>
                   <span>{location.primary_category || 'No category'}</span>
+                  {Array.isArray(location.additional_categories) && location.additional_categories.length > 0 && (
+                    <>
+                      <span className="text-muted-foreground/30 hidden sm:inline">•</span>
+                      <span className="text-muted-foreground/80">
+                        {location.additional_categories
+                          .map((c: any) => (typeof c === 'object' && c !== null ? c.displayName : c))
+                          .filter(Boolean)
+                          .join(', ')}
+                      </span>
+                    </>
+                  )}
                 </p>
               </div>
             </div>

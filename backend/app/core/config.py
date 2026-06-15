@@ -80,9 +80,24 @@ class Settings(BaseSettings):
 
     # Frontend
     FRONTEND_URL: str = "http://localhost:3000"
+    # Extra browser origins allowed to call the API, in addition to FRONTEND_URL
+    # (and its www/non-www twin). Comma-separated, e.g.
+    #   "https://www.pinzo.io,https://pinzo.io,https://app.vercel.app"
+    # Use this when the app is served from more than one domain.
+    ADDITIONAL_CORS_ORIGINS: str = ""
 
     # Backend
     BACKEND_URL: str = "http://localhost:8000"
+
+    @field_validator("FRONTEND_URL", "BACKEND_URL", mode="after")
+    @classmethod
+    def _ensure_url_scheme(cls, v: str) -> str:
+        """A URL env set without a scheme (e.g. 'www.pinzo.io') silently breaks CORS,
+        secure-cookie detection, and OAuth redirects. Default a bare host to https://."""
+        v = (v or "").strip()
+        if v and "://" not in v:
+            v = f"https://{v}"
+        return v
 
     # Task Settings
     REVIEW_SYNC_CHUNK_SIZE: int = 20

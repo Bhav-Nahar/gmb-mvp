@@ -168,6 +168,23 @@ export function FieldRenderer({
       return <span className="text-foreground font-medium leading-relaxed">{formatted}</span>;
     }
 
+    if (fieldConfig.name === "additional_categories") {
+      const list = Array.isArray(val) ? val : []
+      if (list.length === 0) return <span className="text-muted-foreground italic">None</span>
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {list.map((c: any, i: number) => {
+            const label = typeof c === "object" && c !== null ? c.displayName : c
+            return (
+              <span key={(typeof c === "object" && c?.name) || label || i} className="inline-flex items-center rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2 py-0.5 text-xs font-semibold">
+                {label}
+              </span>
+            )
+          })}
+        </div>
+      )
+    }
+
     if (fieldConfig.ui_component === "business_hours_editor" || fieldConfig.name === "business_hours") {
       const hoursMap = parseHours(val)
       return (
@@ -232,8 +249,27 @@ export function FieldRenderer({
       )
     }
 
-    const uiComponent = fieldConfig.ui_component || (fieldConfig.name === "business_hours" ? "business_hours_editor" : fieldConfig.name === "primary_category" ? "category_autocomplete" : (typeof value === "object" || fieldConfig.name.includes("description") ? "textarea" : "input"))
+    const uiComponent = fieldConfig.ui_component || (fieldConfig.name === "business_hours" ? "business_hours_editor" : fieldConfig.name === "primary_category" ? "category_autocomplete" : fieldConfig.name === "additional_categories" ? "multi_category_autocomplete" : (typeof value === "object" || fieldConfig.name.includes("description") ? "textarea" : "input"))
     switch (uiComponent) {
+      case "multi_category_autocomplete":
+        return (
+          <MultiCategoryEditor
+            initialValue={value}
+            onSave={(serialized) => {
+              if (fieldConfig.is_critical) {
+                onCriticalEdit(fieldConfig.name, serialized, fieldConfig)
+              } else {
+                onSave(fieldConfig.name, serialized, false)
+              }
+              setIsEditing(false)
+              if (onEditingChange) onEditingChange(false)
+            }}
+            onCancel={() => {
+              setIsEditing(false)
+              if (onEditingChange) onEditingChange(false)
+            }}
+          />
+        )
       case "business_hours_editor":
         return (
           <BusinessHoursEditor 
@@ -313,7 +349,7 @@ export function FieldRenderer({
         {isEditing ? (
           <div className="space-y-2">
             {renderEditor()}
-            {fieldConfig.ui_component !== "business_hours_editor" && fieldConfig.name !== "business_hours" && fieldConfig.name !== "address" && (
+            {fieldConfig.ui_component !== "business_hours_editor" && fieldConfig.name !== "business_hours" && fieldConfig.name !== "address" && fieldConfig.name !== "additional_categories" && (
               <div className="flex justify-end gap-2 mt-2">
                 <Button variant="ghost" size="sm" className="text-xs" onClick={() => {
                   setIsEditing(false)
@@ -532,6 +568,125 @@ function CategoryAutocompleteEditor({
           onClick={() => setIsOpen(false)}
         />
       )}
+    </div>
+  )
+}
+
+function MultiCategoryEditor({
+  initialValue,
+  onSave,
+  onCancel
+}: {
+  initialValue: any
+  onSave: (val: { name: string; displayName: string }[]) => void
+  onCancel: () => void
+}) {
+  const normalize = (val: any): { name: string; displayName: string }[] => {
+    if (!Array.isArray(val)) return []
+    return val
+      .map((c) => (typeof c === "object" && c !== null
+        ? { name: c.name, displayName: c.displayName }
+        : { name: c, displayName: c }))
+      .filter((c) => c.name)
+  }
+
+  const [selected, setSelected] = useState<{ name: string; displayName: string }[]>(() => normalize(initialValue))
+  const [search, setSearch] = useState("")
+  const [isOpen, setIsOpen] = useState(false)
+  const [categories, setCategories] = useState<{ name: string; displayName: string }[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+
+  // Google allows up to 9 additional categories per location.
+  const MAX_ADDITIONAL = 9
+  const atLimit = selected.length >= MAX_ADDITIONAL
+
+  useEffect(() => {
+    if (!search || search.length < 2) {
+      setCategories([])
+      return
+    }
+    const t = setTimeout(async () => {
+      setIsLoading(true)
+      try {
+        const res = await api.get<any[]>(`/locations/categories/search?query=${encodeURIComponent(search)}`)
+        setCategories(res || [])
+      } catch (e) {
+        console.error("Failed to fetch GMB categories", e)
+      } finally {
+        setIsLoading(false)
+      }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [search])
+
+  const addCategory = (cat: { name: string; displayName: string }) => {
+    if (atLimit) return
+    if (selected.some((c) => c.name === cat.name)) return
+    setSelected((prev) => [...prev, cat])
+    setSearch("")
+    setIsOpen(false)
+  }
+
+  const removeCategory = (name: string) => {
+    setSelected((prev) => prev.filter((c) => c.name !== name))
+  }
+
+  const displayCategories = (search.length >= 2
+    ? categories
+    : POPULAR_CATEGORIES.map((n) => ({ name: n, displayName: n }))
+  ).filter((cat) => !selected.some((s) => s.name === cat.name))
+
+  return (
+    <div className="space-y-3">
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map((c) => (
+            <span key={c.name} className="inline-flex items-center gap-1 rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2 py-0.5 text-xs font-semibold">
+              {c.displayName}
+              <button type="button" onClick={() => removeCategory(c.name)} className="text-indigo-300/60 hover:text-indigo-200">
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="relative">
+        <Input
+          value={search}
+          disabled={atLimit}
+          onChange={(e) => { setSearch(e.target.value); setIsOpen(true) }}
+          onFocus={() => setIsOpen(true)}
+          placeholder={atLimit ? `Limit of ${MAX_ADDITIONAL} reached` : "Add a category..."}
+          className="bg-background/50 border-border text-sm focus:border-indigo-500 focus:ring-indigo-500 pr-8"
+        />
+        {isLoading && (
+          <div className="absolute right-2.5 top-2.5">
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {isOpen && !atLimit && displayCategories.length > 0 && (
+          <div className="absolute z-50 w-full mt-1 max-h-[200px] overflow-y-auto rounded-lg border border-border bg-card shadow-2xl p-1 space-y-0.5">
+            {displayCategories.map((cat) => (
+              <div
+                key={cat.name}
+                onMouseDown={(e) => { e.preventDefault(); addCategory(cat) }}
+                className="px-3 py-2 text-xs text-foreground hover:bg-indigo-600 hover:text-white rounded-md cursor-pointer transition-colors"
+              >
+                {cat.displayName}
+              </div>
+            ))}
+          </div>
+        )}
+        {isOpen && (
+          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+        )}
+      </div>
+
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" className="text-xs" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white" onClick={() => onSave(selected)}>Save</Button>
+      </div>
     </div>
   )
 }

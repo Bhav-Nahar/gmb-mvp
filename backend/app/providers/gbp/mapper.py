@@ -36,9 +36,19 @@ class GBPLocationMapper:
 
         category = None
         google_category_resource_name = None
-        if raw.categories and "primaryCategory" in raw.categories:
-            category = raw.categories["primaryCategory"].get("displayName")
-            google_category_resource_name = raw.categories["primaryCategory"].get("name")
+        additional_categories: list = []
+        if raw.categories:
+            primary = raw.categories.get("primaryCategory")
+            if primary:
+                category = primary.get("displayName")
+                google_category_resource_name = primary.get("name")
+            # GBP returns secondary categories as additionalCategories[{name, displayName}].
+            # We keep both the resource name (for publishing) and displayName (for the UI).
+            for c in raw.categories.get("additionalCategories") or []:
+                additional_categories.append({
+                    "name": c.get("name"),
+                    "displayName": c.get("displayName"),
+                })
 
         phone = None
         if raw.phoneNumbers and "primaryPhone" in raw.phoneNumbers:
@@ -71,6 +81,7 @@ class GBPLocationMapper:
             average_rating=raw.rating,
             total_reviews=raw.reviewCount,
             google_category_resource_name=google_category_resource_name,
+            additional_categories=additional_categories,
             is_verified=is_verified,
             is_suspended=is_suspended,
             is_duplicate=is_duplicate
