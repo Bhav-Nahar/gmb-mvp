@@ -59,11 +59,14 @@ class ReplyTemplateService:
         limit = STAR_RATING_LIMITS.get(data.star_rating, 0)
 
         # Lock existing rows for this (org, star) so two concurrent creates can't
-        # both pass the limit check and exceed the cap.
-        count = db.query(ReplyTemplate.id).filter(
+        # both pass the limit check and exceed the cap. We fetch-and-count in
+        # Python because Postgres rejects FOR UPDATE inside an aggregate subquery
+        # (which is what .count() would generate).
+        locked_rows = db.query(ReplyTemplate.id).filter(
             ReplyTemplate.organization_id == organization_id,
             ReplyTemplate.star_rating == data.star_rating
-        ).with_for_update().count()
+        ).with_for_update().all()
+        count = len(locked_rows)
 
         if count >= limit:
             raise ValueError(f"Maximum {limit} templates allowed for {data.star_rating}-star rating")
