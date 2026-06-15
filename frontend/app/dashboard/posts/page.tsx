@@ -47,6 +47,15 @@ interface CampaignAuditLog {
   created_at: string
 }
 
+interface CampaignPrimaryPost {
+  id: number
+  title?: string | null
+  summary?: string | null
+  cta_type?: string | null
+  cta_url?: string | null
+  scheduled_at?: string | null
+}
+
 interface Campaign {
   id: number
   name: string
@@ -55,9 +64,11 @@ interface Campaign {
   total_pending: number
   total_published: number
   total_failed: number
+  scheduled_at?: string | null
   created_at: string
   jobs?: CampaignJob[]
   audit_logs?: CampaignAuditLog[]
+  primary_post?: CampaignPrimaryPost | null
 }
 
 const CTA_LABELS: Record<string, string> = {
@@ -72,16 +83,47 @@ const CTA_LABELS: Record<string, string> = {
 const SUMMARY_MAX = 1500
 const TITLE_MAX = 100
 
-// Relative "3h ago" / "2d ago" for campaign timestamps.
+// Relative time — handles both past ("3h ago") and future ("in 2h").
 function relativeTime(dateStr?: string | null): string {
   if (!dateStr) return ''
   const diffMs = Date.now() - new Date(dateStr).getTime()
-  const mins = Math.floor(diffMs / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
+  const absMins = Math.floor(Math.abs(diffMs) / 60000)
+  const future = diffMs < 0
+  if (absMins < 1) return 'just now'
+  if (absMins < 60) return future ? `in ${absMins}m` : `${absMins}m ago`
+  const hrs = Math.floor(absMins / 60)
+  if (hrs < 24) return future ? `in ${hrs}h` : `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return future ? `in ${days}d` : `${days}d ago`
+}
+
+// Today's date as YYYY-MM-DD in the user's *local* timezone. Using toISOString()
+// here would yield the UTC date, which can be a day off from the local date the
+// <input type="time"> comparison uses — letting through (or wrongly blocking) values.
+function localToday(): string {
+  const d = new Date()
+  const tzOffsetMs = d.getTimezoneOffset() * 60000
+  return new Date(d.getTime() - tzOffsetMs).toISOString().split('T')[0]
+}
+
+// Split an ISO datetime into local <input type="date"> / <input type="time"> values.
+function isoToLocalParts(iso?: string | null): { date: string; time: string } {
+  if (!iso) return { date: '', time: '' }
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return { date: '', time: '' }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  }
+}
+
+// Format a datetime string to a readable local date+time like "Jun 18, 2:30 PM".
+function formatScheduled(dateStr?: string | null): string {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  })
 }
 
 // Campaign-level badge — full status coverage with readable contrast on white.
@@ -160,7 +202,6 @@ export default function PostsPage(props: any) {
 
   // Guard refs
   const isMounted = useRef(true)
-  const campaignsLoadedOnce = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Submitting / feedback
@@ -175,6 +216,16 @@ export default function PostsPage(props: any) {
   const [jobSearch, setJobSearch] = useState('')
   const [retryingJobId, setRetryingJobId] = useState<number | null>(null)
   const [retryingAll, setRetryingAll] = useState(false)
+
+  // Edit / reschedule a SCHEDULED campaign before it fires
+  const [scheduleModal, setScheduleModal] = useState<null | 'edit' | 'reschedule'>(null)
+  const [schedTitle, setSchedTitle] = useState('')
+  const [schedSummary, setSchedSummary] = useState('')
+  const [schedCta, setSchedCta] = useState('NONE')
+  const [schedCtaUrl, setSchedCtaUrl] = useState('')
+  const [schedDate, setSchedDate] = useState('')
+  const [schedTime, setSchedTime] = useState('')
+  const [savingSchedule, setSavingSchedule] = useState(false)
 
   const getCityFromAddress = (address?: string, name?: string) => {
     if (!address) return name || ''
@@ -263,6 +314,73 @@ export default function PostsPage(props: any) {
     }
   }
 
+  const openScheduleModal = (mode: 'edit' | 'reschedule') => {
+    const c = campaigns.find(x => x.id === selectedCampaignId)
+    const p = c?.primary_post
+    const parts = isoToLocalParts(p?.scheduled_at || c?.scheduled_at)
+    setSchedTitle(p?.title || '')
+    setSchedSummary(p?.summary || '')
+    setSchedCta(p?.cta_type || 'NONE')
+    setSchedCtaUrl(p?.cta_url || '')
+    setSchedDate(parts.date)
+    setSchedTime(parts.time)
+    setErrorAlert('')
+    setSuccessAlert('')
+    setScheduleModal(mode)
+  }
+
+  const handleSaveSchedule = async () => {
+    if (!selectedCampaignId) return
+    if (scheduleModal === 'edit' && !schedSummary.trim()) {
+      setErrorAlert('Post summary is required.'); return
+    }
+    if (schedCta !== 'NONE' && schedCta !== 'CALL' && schedCtaUrl && !validateUrl(schedCtaUrl)) {
+      setErrorAlert('CTA URL must be a valid http or https URL.'); return
+    }
+    if (!schedDate || !schedTime) {
+      setErrorAlert('Please select both date and time.'); return
+    }
+    const when = new Date(`${schedDate}T${schedTime}`)
+    if (when <= new Date()) {
+      setErrorAlert('Scheduled time must be in the future.'); return
+    }
+
+    const payload: any = { scheduled_at: when.toISOString() }
+    if (scheduleModal === 'edit') {
+      payload.title = schedTitle || null
+      payload.summary = schedSummary
+      payload.cta_type = schedCta !== 'NONE' ? schedCta : null
+      payload.cta_url = schedCta !== 'NONE' && schedCta !== 'CALL' && schedCtaUrl ? schedCtaUrl : null
+    }
+
+    setSavingSchedule(true)
+    setErrorAlert('')
+    try {
+      const updated: Campaign = await api.patch(`/posts/campaigns/${selectedCampaignId}/schedule`, payload)
+      setCampaigns(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c))
+      setSuccessAlert(scheduleModal === 'edit' ? 'Scheduled post updated.' : 'Campaign rescheduled.')
+      setScheduleModal(null)
+      await loadCampaignProgress()
+    } catch (err: any) {
+      setErrorAlert(err.message || 'Failed to update schedule.')
+    } finally {
+      setSavingSchedule(false)
+    }
+  }
+
+  const handleCancelSchedule = async () => {
+    if (!selectedCampaignId) return
+    if (!confirm('Cancel this scheduled publish? The campaign will revert to Draft.')) return
+    setErrorAlert('')
+    try {
+      const updated: Campaign = await api.post(`/posts/campaigns/${selectedCampaignId}/cancel-schedule`)
+      setCampaigns(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c))
+      setSuccessAlert('Schedule cancelled. Campaign moved to Draft.')
+    } catch (err: any) {
+      setErrorAlert(err.message || 'Failed to cancel schedule.')
+    }
+  }
+
   const handleDeleteCampaign = async (id: number) => {
     if (!confirm('Are you sure you want to delete this campaign?')) return
     setErrorAlert('')
@@ -279,10 +397,7 @@ export default function PostsPage(props: any) {
   useEffect(() => {
     isMounted.current = true
     loadLocations()
-    if (!campaignsLoadedOnce.current) {
-      campaignsLoadedOnce.current = true
-      loadCampaigns()
-    }
+    loadCampaigns()
     return () => { isMounted.current = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -308,6 +423,8 @@ export default function PostsPage(props: any) {
     }
     setPollingActive(true)
     const interval = setInterval(async () => {
+      // Skip polling while the tab is hidden to avoid wasting API calls.
+      if (document.visibilityState === 'hidden') return
       const updated = await loadCampaignProgress()
       if (isTerminal(updated?.status)) {
         clearInterval(interval)
@@ -560,9 +677,14 @@ export default function PostsPage(props: any) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Campaign list — richer scannable cards */}
           <div className="lg:col-span-1 bg-card shadow-sm border border-border rounded-2xl p-5 h-fit">
-            <h3 className="text-sm font-bold uppercase text-muted-foreground mb-4 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-primary" /> Campaigns
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold uppercase text-muted-foreground flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" /> Campaigns
+              </h3>
+              <button onClick={loadCampaigns} title="Refresh campaigns" className="p-1 text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+                <RotateCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
             <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
               {campaigns.length === 0 ? (
                 <div className="text-center py-8">
@@ -592,7 +714,13 @@ export default function PostsPage(props: any) {
                           {failed > 0 && <span className="text-red-600 dark:text-red-400 font-semibold">{failed} failed</span>}
                           <span>· {c.total_locations} loc</span>
                         </span>
-                        <span>{relativeTime(c.created_at)}</span>
+                        {c.status.toUpperCase() === 'SCHEDULED' && c.scheduled_at ? (
+                          <span className="text-purple-600 dark:text-purple-400 font-semibold" title={formatScheduled(c.scheduled_at)}>
+                            {relativeTime(c.scheduled_at)}
+                          </span>
+                        ) : (
+                          <span>{relativeTime(c.created_at)}</span>
+                        )}
                       </div>
                     </button>
                   )
@@ -606,16 +734,30 @@ export default function PostsPage(props: any) {
             {selectedCampaign ? (
               <div className="bg-card shadow-sm border border-border rounded-2xl p-4 sm:p-6">
                 <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
-                  <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
-                    <History className="w-5 h-5 text-primary" /> Campaign Progress
-                    {pollingActive && <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping ml-1"></span>}
-                  </h3>
+                  <div>
+                    <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
+                      <History className="w-5 h-5 text-primary" /> Campaign Progress
+                      {pollingActive && <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping ml-1"></span>}
+                    </h3>
+                    {selectedCampaign.status.toUpperCase() === 'SCHEDULED' && selectedCampaign.scheduled_at && (
+                      <p className="text-xs text-purple-600 dark:text-purple-400 font-semibold mt-0.5">
+                        Scheduled for {formatScheduled(selectedCampaign.scheduled_at)}
+                      </p>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     {['QUEUED', 'PROCESSING'].includes(selectedCampaign.status.toUpperCase()) && (
                       <button onClick={() => handleCampaignAction('pause')} className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer">Pause</button>
                     )}
                     {selectedCampaign.status.toUpperCase() === 'PAUSED' && (
                       <button onClick={() => handleCampaignAction('resume')} className="bg-primary hover:bg-primary/90 text-primary-foreground px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer">Resume</button>
+                    )}
+                    {selectedCampaign.status.toUpperCase() === 'SCHEDULED' && (
+                      <>
+                        <button onClick={() => openScheduleModal('edit')} className="bg-primary/10 text-primary hover:bg-primary/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border border-primary/20">Edit</button>
+                        <button onClick={() => openScheduleModal('reschedule')} className="bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border border-purple-500/20">Reschedule</button>
+                        <button onClick={handleCancelSchedule} className="bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border border-amber-500/20">Cancel schedule</button>
+                      </>
                     )}
                     {['DRAFT', 'SCHEDULED'].includes(selectedCampaign.status.toUpperCase()) && (
                       <button onClick={() => handleDeleteCampaign(selectedCampaign.id)} className="bg-red-500/10 text-red-600 hover:bg-red-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border border-red-500/20">Delete</button>
@@ -819,9 +961,14 @@ export default function PostsPage(props: any) {
                       </div>
                       
                       {publishMode === 'SCHEDULED' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                          <input type="date" value={scheduledDate} onChange={e => setScheduledDate(e.target.value)} min={new Date().toISOString().split('T')[0]} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" required />
-                          <input type="time" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" required />
+                        <div className="mt-3 space-y-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <input type="date" value={scheduledDate} onChange={e => setScheduledDate(e.target.value)} min={localToday()} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" required />
+                            <input type="time" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" required />
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">
+                            Time is your local timezone ({Intl.DateTimeFormat().resolvedOptions().timeZone}).
+                          </p>
                         </div>
                       )}
                     </div>
@@ -985,6 +1132,57 @@ export default function PostsPage(props: any) {
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Launch
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit / Reschedule a scheduled campaign */}
+      {scheduleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !savingSchedule && setScheduleModal(null)}>
+          <div className="bg-background border border-border rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <div className="p-5 flex justify-between items-center border-b border-border">
+              <h3 className="text-base font-bold flex items-center gap-2 text-foreground">
+                <Sparkles className="w-5 h-5 text-primary" /> {scheduleModal === 'edit' ? 'Edit scheduled post' : 'Reschedule campaign'}
+              </h3>
+              <button onClick={() => !savingSchedule && setScheduleModal(null)} className="text-muted-foreground hover:text-foreground cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {errorAlert && <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg">{errorAlert}</div>}
+              {scheduleModal === 'edit' && (
+                <>
+                  <input type="text" maxLength={TITLE_MAX} placeholder="Post Title (Optional)" value={schedTitle} onChange={e => setSchedTitle(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" />
+                  <textarea rows={4} maxLength={SUMMARY_MAX} placeholder="Post body…" value={schedSummary} onChange={e => setSchedSummary(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <select value={schedCta} onChange={e => setSchedCta(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm outline-none focus:ring-1 focus:ring-primary">
+                      <option value="NONE">None (Text-only)</option>
+                      <option value="LEARN_MORE">Learn More</option>
+                      <option value="BOOK">Book</option>
+                      <option value="ORDER">Order Online</option>
+                      <option value="SHOP">Shop</option>
+                      <option value="SIGN_UP">Sign Up</option>
+                      <option value="CALL">Call Now (Uses Location Phone)</option>
+                    </select>
+                    {schedCta !== 'NONE' && schedCta !== 'CALL' && (
+                      <input type="text" placeholder="https://example.com" value={schedCtaUrl} onChange={e => setSchedCtaUrl(e.target.value)} className={`w-full bg-background border text-foreground rounded-xl p-3 text-sm outline-none focus:ring-1 ${schedCtaUrl && !validateUrl(schedCtaUrl) ? 'border-red-400 focus:ring-red-400' : 'border-input focus:ring-primary'}`} />
+                    )}
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="text-xs font-bold uppercase text-muted-foreground block mb-2">Publish at</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <input type="date" value={schedDate} min={localToday()} onChange={e => setSchedDate(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" />
+                  <input type="time" value={schedTime} onChange={e => setSchedTime(e.target.value)} className="w-full bg-background border border-input text-foreground rounded-xl p-3 text-sm focus:ring-1 focus:ring-primary outline-none" />
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1.5">Time is your local timezone ({Intl.DateTimeFormat().resolvedOptions().timeZone}).</p>
+              </div>
+            </div>
+            <div className="p-4 border-t border-border flex justify-end gap-3">
+              <button onClick={() => setScheduleModal(null)} disabled={savingSchedule} className="px-4 py-2.5 rounded-lg text-sm font-bold bg-muted/50 text-foreground hover:bg-muted border border-border transition-colors cursor-pointer disabled:opacity-50">Cancel</button>
+              <button onClick={handleSaveSchedule} disabled={savingSchedule} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors cursor-pointer">
+                {savingSchedule ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} {scheduleModal === 'edit' ? 'Save changes' : 'Reschedule'}
+              </button>
             </div>
           </div>
         </div>

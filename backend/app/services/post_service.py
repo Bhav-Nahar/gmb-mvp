@@ -128,7 +128,8 @@ class PostService:
                 continue
             setattr(post, key, value)
             
-        if update_data.publish_mode:
+        # Only apply publish_mode \u2192 status inference if no explicit status was sent by caller
+        if update_data.publish_mode and "status" not in update_dict:
             new_mode_status = PostStatus.SCHEDULED.value if update_data.publish_mode.lower() == "scheduled" else PostStatus.DRAFT.value
             if post.status != new_mode_status:
                 allowed = PostService._ALLOWED_PATCH_TRANSITIONS.get(old_status, [])
@@ -336,9 +337,8 @@ class PostService:
         Also instantiates a PostVariant record if one doesn't exist, rendering the 
         summary and CTA URL (including UTM generator) for safety.
         """
-        VALID_PRE_PUBLISH = {"Approved", "APPROVED"}
-        if post.status not in VALID_PRE_PUBLISH:
-            raise ValueError(f"Cannot publish post in status '{post.status}'. Must be Approved.")
+        if normalize_status(post.status) not in ("APPROVED", "PUBLISHING"):
+            raise ValueError(f"Cannot publish post in status '{post.status}'. Must be APPROVED.")
         post.status = "PUBLISHING"
 
         # 1. Ensure PostVariant exists and is rendered
@@ -467,20 +467,15 @@ class PostService:
         organization_id: int,
         user_id: int
     ) -> PublishJob:
-        """
-        Helper method to publish a post to a location.
-        Enforces post approval, media validation, concurrency checks, and dispatches Celery task.
-        """
+        """Single-location publish helper used in tests. Production publish goes through the API routes."""
         post = PostService._verify_ownership(db, Post, post_id, organization_id)
 
-        # 1. Post Status Check
         if post.status.upper() != "APPROVED":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Only APPROVED posts can be published. Current status: {post.status}"
             )
 
-        # 2. Media Check
         media_list = db.query(PostMedia).filter(
             PostMedia.post_id == post_id,
             PostMedia.is_deleted == False
@@ -497,26 +492,16 @@ class PostService:
                     detail="Post media must be validated and optimized."
                 )
 
-        # 3. Concurrency check (return existing job if in-flight)
         existing_job = db.query(PublishJob).filter(
             PublishJob.post_id == post_id,
             PublishJob.location_id == location_id
         ).first()
-        if existing_job:
-            if existing_job.status.upper() in ["PENDING", "RUNNING", "RETRYING"]:
-                return existing_job
+        if existing_job and existing_job.status.upper() in ["PENDING", "RUNNING", "RETRYING"]:
+            return existing_job
 
-        # 4. Standard validation check
         PostService._validate_publish_eligibility(db, post, location_id, organization_id)
-
-        # 5. Stage, commit, and dispatch
         job = PostService._stage_publish_job(db, post, location_id, organization_id, user_id)
         db.commit()
-
-        # Dispatch task
-        from app.tasks import process_publish_job_task
-        process_publish_job_task.delay(job.id, organization_id)
-
         db.refresh(job)
         return job
 

@@ -904,11 +904,15 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
             # System logic/code exceptions are non-retryable
             is_retryable = False
             
+        # Capture scalar values from the detached ORM objects BEFORE opening a new session,
+        # since accessing lazy-loaded attrs on detached objects raises DetachedInstanceError.
+        _job_post_id = getattr(job, '__dict__', {}).get('post_id') if job else None
+
         # Re-fetch job/post inside a fresh session to record the failure safely
         job_db = SessionLocal()
         try:
             job_record = job_db.query(PublishJob).filter(PublishJob.id == job_id).first()
-            post_record = job_db.query(Post).filter(Post.id == job.post_id).first() if job else None
+            post_record = job_db.query(Post).filter(Post.id == _job_post_id).first() if _job_post_id else None
             
             if job_record:
                 # Capture status details from the exception safely
@@ -1105,21 +1109,35 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
                     ))
                     db.commit()
                     return {"status": "error", "reason": "Media optimization timed out."}
-        # Delete existing variants and jobs to prevent unique constraint failures on relaunch
-        db.query(PostVariant).filter(
-            PostVariant.post_id == post.id,
-            PostVariant.location_id.in_(location_ids)
-        ).delete(synchronize_session=False)
-        db.query(PublishJob).filter(
-            PublishJob.post_id == post.id,
-            PublishJob.location_id.in_(location_ids)
-        ).delete(synchronize_session=False)
+        # Delete non-terminal variants/jobs to allow relaunch without unique constraint failures.
+        # Preserve SUCCESS/Published records so we don't re-publish already-published locations.
+        terminal_statuses = ["Success", "Published", "SUCCESS", "PUBLISHED"]
+        succeeded_location_ids = [
+            row[0] for row in db.query(PublishJob.location_id).filter(
+                PublishJob.post_id == post.id,
+                PublishJob.location_id.in_(location_ids),
+                PublishJob.status.in_(terminal_statuses)
+            ).all()
+        ]
+        non_succeeded_ids = [lid for lid in location_ids if lid not in succeeded_location_ids]
+        if non_succeeded_ids:
+            db.query(PostVariant).filter(
+                PostVariant.post_id == post.id,
+                PostVariant.location_id.in_(non_succeeded_ids)
+            ).delete(synchronize_session=False)
+            db.query(PublishJob).filter(
+                PublishJob.post_id == post.id,
+                PublishJob.location_id.in_(non_succeeded_ids),
+                PublishJob.status.notin_(terminal_statuses)
+            ).delete(synchronize_session=False)
         db.flush()
 
-        locations = db.query(Location).filter(Location.id.in_(location_ids)).all()
+        # Only process locations that weren't already successfully published
+        locations_to_process = non_succeeded_ids if non_succeeded_ids else location_ids
+        locations = db.query(Location).filter(Location.id.in_(locations_to_process)).all()
         loc_map = {l.id: l for l in locations}
-        
-        for loc_id in location_ids:
+
+        for loc_id in locations_to_process:
             loc = loc_map.get(loc_id)
             if not loc:
                 continue
@@ -1234,11 +1252,12 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
         shards_count = len(shards)
         
         r = _get_redis()
-        r.set(f"campaign:{campaign_id}:pending_shards", len(shards))
-        r.set(f"campaign:{campaign_id}:success", 0)
-        r.set(f"campaign:{campaign_id}:failed", 0)
-        r.set(f"campaign:{campaign_id}:total_locations", len(job_ids))
-        r.set(f"campaign:{campaign_id}:status", "Processing")
+        _ttl = 86400 * 7
+        r.set(f"campaign:{campaign_id}:pending_shards", len(shards), ex=_ttl)
+        r.set(f"campaign:{campaign_id}:success", 0, ex=_ttl)
+        r.set(f"campaign:{campaign_id}:failed", 0, ex=_ttl)
+        r.set(f"campaign:{campaign_id}:total_locations", len(job_ids), ex=_ttl)
+        r.set(f"campaign:{campaign_id}:status", "Processing", ex=_ttl)
         
         for shard in shards:
             process_campaign_shard_task.delay(shard, organization_id, campaign_id)
@@ -1305,20 +1324,21 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
         _decr_and_flush_terminal_state(r, campaign_id, organization_id, shard_success, shard_failed, shard_paused_cancelled)
         return {"status": "aborted", "reason": f"Campaign is {campaign_status}"}
 
+    # Single session for the entire shard — savepoints isolate per-job failures.
+    # This avoids opening/closing N connections (one per job) and eliminates the
+    # second/third "job_db" / "_retry_db" sessions that were opened on failure.
+    db = SessionLocal()
     try:
         # Loop over shard jobs sequentially
         cached_status = campaign_status
         for idx, job_id in enumerate(job_ids):
-            # 1. Double check Campaign Status periodically (every 5 jobs) 
-            # instead of every single job to save Redis requests
+            # 1. Double check Campaign Status periodically (every 5 jobs)
             if idx > 0 and idx % 5 == 0:
                 cached_status = (r.get(f"campaign:{campaign_id}:status") or b"").decode("utf-8")
 
             if cached_status in ["Paused", "Cancelled"]:
-                # Circuit breaker tripped mid-shard
                 logger.info(f"Campaign {campaign_id} transitioned to {cached_status}. Tripping circuit breaker for remaining jobs in shard.")
                 remaining_ids = job_ids[idx:]
-                db = SessionLocal()
                 try:
                     status_val = PublishJobStatus.PAUSED.value if cached_status == "Paused" else PublishJobStatus.CANCELLED.value
                     db.query(PublishJob).filter(PublishJob.id.in_(remaining_ids)).update(
@@ -1329,96 +1349,87 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
                 except Exception as ex:
                     db.rollback()
                     logger.error(f"Failed to drain remaining campaign jobs on mid-shard circuit breaker: {str(ex)}")
-                finally:
-                    db.close()
                 break
 
-            # 2. Queue Jitter & Adaptive Pacing (between sequential requests in a shard)
+            # 2. Queue Jitter & Adaptive Pacing
             if idx > 0:
                 jitter = random.uniform(0.8, 1.5)
                 time.sleep(jitter)
 
-            # 3. Process individual job
-            db = SessionLocal()
+            # 3. Process individual job inside a savepoint so a failure rolls back
+            #    only this job's writes while leaving the outer session usable.
+            job = None
+            post = None
             try:
-                job = db.query(PublishJob).filter(PublishJob.id == job_id, PublishJob.organization_id == organization_id).first()
-                if not job or job.status not in [PublishJobStatus.PENDING.value, PublishJobStatus.RETRYING.value]:
-                    shard_paused_cancelled += 1
-                    continue
+                with db.begin_nested() as sp:
+                    job = db.query(PublishJob).filter(PublishJob.id == job_id, PublishJob.organization_id == organization_id).first()
+                    if not job or job.status not in [PublishJobStatus.PENDING.value, PublishJobStatus.RETRYING.value]:
+                        shard_paused_cancelled += 1
+                        continue
 
-                # Idempotency guard against Google (same rationale as
-                # process_publish_job_task): never re-create a post whose id is already
-                # persisted from a prior attempt — GBP has no idempotency key.
-                if job.google_post_id:
-                    if job.status != PublishJobStatus.SUCCESS.value:
-                        job.status = PublishJobStatus.SUCCESS.value
-                        if not job.published_at:
-                            job.published_at = datetime.datetime.now(datetime.timezone.utc)
-                        db.commit()
-                    shard_paused_cancelled += 1
-                    continue
+                    if job.google_post_id:
+                        if job.status != PublishJobStatus.SUCCESS.value:
+                            job.status = PublishJobStatus.SUCCESS.value
+                            if not job.published_at:
+                                job.published_at = datetime.datetime.now(datetime.timezone.utc)
+                        shard_paused_cancelled += 1
+                        continue
 
-                job.status = PublishJobStatus.RUNNING.value
+                    job.status = PublishJobStatus.RUNNING.value
+                    # Flush RUNNING status inside the savepoint so the next savepoint
+                    # (success write) builds on it.
+                    db.flush()
+
+                    post = db.query(Post).filter(Post.id == job.post_id).first()
+                    location = db.query(Location).filter(Location.id == job.location_id).first()
+                    if not post or not location:
+                        raise Exception("Post or Location linked to PublishJob not found.")
+
+                    variant = db.query(PostVariant).filter(
+                        PostVariant.post_id == post.id,
+                        PostVariant.location_id == location.id
+                    ).first()
+
+                    payload = GBPPostMapper.to_gbp_payload(post, variant)
+                    provider = ProviderFactory.get_provider("gbp", organization_id, db)
+
+                    res = run_async(provider.create_post(location.google_location_id, payload))
+
+                    job.status = PublishJobStatus.SUCCESS.value
+                    job.google_post_id = res.id
+                    job.provider_response = getattr(res, "provider_metadata", {}) or {}
+                    job.published_at = datetime.datetime.now(datetime.timezone.utc)
+
+                    db.add(PostAuditLog(
+                        organization_id=organization_id,
+                        post_id=post.id,
+                        action="PUBLISHED",
+                        previous_status="PUBLISHING",
+                        new_status=PostStatus.PUBLISHED.value,
+                        log_metadata={
+                            "google_post_id": res.id,
+                            "location_id": location.id,
+                            "publish_job_id": job.id
+                        }
+                    ))
+                # savepoint committed — flush to DB
                 db.commit()
-
-                post = db.query(Post).filter(Post.id == job.post_id).first()
-                location = db.query(Location).filter(Location.id == job.location_id).first()
-                if not post or not location:
-                    raise Exception("Post or Location linked to PublishJob not found.")
-
-                variant = db.query(PostVariant).filter(
-                    PostVariant.post_id == post.id,
-                    PostVariant.location_id == location.id
-                ).first()
-
-                payload = GBPPostMapper.to_gbp_payload(post, variant)
-                provider = ProviderFactory.get_provider("gbp", organization_id, db)
-
-                # Invoke provider.create_post
-                res = run_async(provider.create_post(location.google_location_id, payload))
-
-                # Job Success
-                job.status = PublishJobStatus.SUCCESS.value
-                job.google_post_id = res.id
-                job.provider_response = getattr(res, "provider_metadata", {}) or {}
-                job.published_at = datetime.datetime.now(datetime.timezone.utc)
-
-                # Save PostAuditLog
-                audit_log = PostAuditLog(
-                    organization_id=organization_id,
-                    post_id=post.id,
-                    action="PUBLISHED",
-                    previous_status="PUBLISHING",
-                    new_status=PostStatus.PUBLISHED.value,
-                    log_metadata={
-                        "google_post_id": res.id,
-                        "location_id": location.id,
-                        "publish_job_id": job.id
-                    }
-                )
-                db.add(audit_log)
-                db.commit()
-
-                # Increment success counters
                 r.incr(f"campaign:{campaign_id}:success")
                 shard_success += 1
 
             except Exception as e:
-                db.rollback()
+                # Savepoint auto-rolled back; outer session is still valid.
                 logger.error(f"Job {job_id} in shard failed: {str(e)}")
-                
-                # Transient vs Permanent Error Classification
+
                 is_retryable = True
                 if isinstance(e, PermanentAuthError):
                     is_retryable = False
                 elif isinstance(e, httpx.HTTPStatusError):
-                    # 429, 502, 503, timeouts are Transient. Others are Permanent.
                     if e.response.status_code in [400, 401, 403, 404, 409]:
                         is_retryable = False
                 elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
                     is_retryable = False
 
-                # Capture details safely
                 err_data = {}
                 if isinstance(e, httpx.HTTPStatusError):
                     try:
@@ -1426,39 +1437,41 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
                     except Exception:
                         err_data = {"raw_response": e.response.text}
 
-                job_db = SessionLocal()
                 try:
-                    job_record = job_db.query(PublishJob).filter(PublishJob.id == job_id).first()
-                    post_record = job_db.query(Post).filter(Post.id == post.id).first() if post else None
-                    
+                    # Re-fetch via the still-valid session (savepoint rolled back, session ok).
+                    job_record = db.query(PublishJob).filter(PublishJob.id == job_id).first()
+                    post_id_val = job_record.post_id if job_record else None
+                    post_record = db.query(Post).filter(Post.id == post_id_val).first() if post_id_val else None
+
                     if job_record:
                         current_retries = job_record.retry_count
                         if is_retryable and current_retries < 3:
-                            # Schedule individual job retry with exponential backoff pacing
                             job_record.status = PublishJobStatus.RETRYING.value
                             job_record.last_error = str(e)
                             job_record.retry_count = current_retries + 1
                             job_record.provider_response = err_data
-                            job_db.commit()
-                            
+                            db.commit()
+
                             countdown = 60 * (2 ** current_retries)
-                            # Re-enqueue this single job in its own single-element shard
-                            # Idempotent retry locking to prevent double registering retry or double-incrementing pending_shards (Bug 3 & 4 refinement)
                             retry_key = f"campaign:{campaign_id}:retry_registered:{job_id}:{current_retries + 1}"
                             if r.set(retry_key, "1", ex=86400, nx=True):
                                 r.incr(f"campaign:{campaign_id}:pending_shards")
+                                db.query(Campaign).filter(Campaign.id == campaign_id).update(
+                                    {Campaign.total_pending: Campaign.total_pending + 1},
+                                    synchronize_session=False
+                                )
+                                db.commit()
                                 process_campaign_shard_task.apply_async(
                                     args=([job_id], organization_id, campaign_id),
                                     countdown=countdown
                                 )
                         else:
-                            # Permanent failure
                             job_record.status = PublishJobStatus.FAILED.value
                             job_record.last_error = str(e)
                             job_record.provider_response = err_data
-                            
+
                             if post_record:
-                                audit_log = PostAuditLog(
+                                db.add(PostAuditLog(
                                     organization_id=organization_id,
                                     post_id=post_record.id,
                                     action="PUBLISH_FAILED",
@@ -1468,19 +1481,22 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
                                         "error": str(e),
                                         "publish_job_id": job_record.id
                                     }
-                                )
-                                job_db.add(audit_log)
-                            
-                            job_db.commit()
+                                ))
+
+                            db.commit()
                             r.incr(f"campaign:{campaign_id}:failed")
                             shard_failed += 1
                 except Exception as retry_err:
+                    db.rollback()
                     logger.error(f"Failed to record job failure state: {str(retry_err)}")
-                finally:
-                    job_db.close()
-            finally:
-                db.close()
     finally:
+        # Close the per-shard session opened for the job loop before doing the
+        # terminal bookkeeping below (which uses its own short-lived sessions).
+        try:
+            db.close()
+        except Exception:
+            pass
+
         # 4. Flush aggregated shard counters to PostgreSQL (using greatest to prevent negative total_pending)
         if shard_success > 0 or shard_failed > 0 or shard_paused_cancelled > 0:
             db = SessionLocal()
@@ -1517,13 +1533,16 @@ def _decr_and_flush_terminal_state(r, campaign_id: int, organization_id: int, sh
     
     logger = logging.getLogger(__name__)
     remaining_shards = r.decr(f"campaign:{campaign_id}:pending_shards")
-    
-    if remaining_shards == 0:
+
+    if remaining_shards <= 0:
+        # NX guard: only one shard may execute the terminal transition even if Redis
+        # counter races to negative due to concurrent retries re-incrementing shards.
+        acquired = r.set(f"campaign:{campaign_id}:terminal_lock", "1", ex=3600, nx=True)
+        if not acquired:
+            return
+
         db = SessionLocal()
         try:
-            # HIGH-7 Fix: Use with_for_update() to lock the row and ensure we read the 
-            # most up-to-date committed values, preventing race conditions with other 
-            # concurrent API requests or workers.
             campaign = db.query(Campaign).filter(
                 Campaign.id == campaign_id, 
                 Campaign.organization_id == organization_id
@@ -1854,6 +1873,95 @@ def cleanup_deleted_media_task() -> dict:
     return run_async(_cleanup_deleted_media_async())
 
 
+def _reconcile_orphaned_publish_jobs(db, r, logger, now, idle_minutes: int = 15, limit: int = 200) -> int:
+    """Re-dispatch publish jobs stuck in PENDING.
+
+    Covers the dual-write gap: a worker can commit a job as PENDING and then die
+    (or be killed by task_time_limit) before the Celery task is dispatched. Such
+    a job would never be picked up again — its parent post is already PUBLISHING,
+    so check_scheduled_posts_task's SCHEDULED query never re-selects it.
+
+    Only jobs untouched for `idle_minutes` are eligible, so freshly-staged jobs
+    awaiting their already-dispatched task are not disturbed. Re-dispatch is safe:
+    process_publish_job_task / process_campaign_shard_task both take a per-job
+    Redis lock and short-circuit on a persisted google_post_id, so a job can
+    never be double-published.
+    """
+    from app.models.publish_job import PublishJob
+    from app.constants.posts import PublishJobStatus
+    from app.worker import celery as celery_app
+
+    cutoff = now - datetime.timedelta(minutes=idle_minutes)
+    stuck = db.query(PublishJob).filter(
+        PublishJob.status == PublishJobStatus.PENDING.value,
+        PublishJob.updated_at < cutoff,
+    ).order_by(PublishJob.id.asc()).limit(limit).all()
+
+    redispatched = 0
+    for job in stuck:
+        try:
+            if job.campaign_id:
+                celery_app.send_task(
+                    "app.tasks.process_campaign_shard_task",
+                    args=([job.id], job.organization_id, job.campaign_id),
+                )
+            else:
+                celery_app.send_task(
+                    "app.tasks.process_publish_job_task",
+                    args=(job.id, job.organization_id),
+                )
+            redispatched += 1
+        except Exception as e:
+            logger.error(f"Failed to re-dispatch orphaned PublishJob {job.id}: {e}")
+
+    if redispatched:
+        logger.warning(f"Reconciliation re-dispatched {redispatched} orphaned PENDING publish job(s).")
+    return redispatched
+
+
+def _fail_scheduled_post(db, post, reason: str, logger) -> None:
+    """Mark a due scheduled post (and its campaign, if any) FAILED + audited, then commit.
+
+    Keeps the post and campaign status in lock-step on the failure path, mirroring
+    the success path which moves the campaign to PROCESSING. Without this, a failed
+    scheduled campaign post would leave the campaign stuck displaying 'Scheduled'.
+    """
+    from app.models.campaign import Campaign
+    from app.models.campaign_audit_log import CampaignAuditLog
+    from app.models.post_audit_log import PostAuditLog
+    from app.constants.posts import PostStatus, CampaignStatus
+
+    prev_status = post.status
+    post.status = PostStatus.FAILED.value
+    db.add(PostAuditLog(
+        organization_id=post.organization_id,
+        post_id=post.id,
+        actor_user_id=post.created_by_user_id,
+        action="STATUS_CHANGED",
+        previous_status=prev_status,
+        new_status=PostStatus.FAILED.value,
+        log_metadata={"action": "scheduled_publish_failed", "reason": reason},
+    ))
+
+    if post.campaign_id:
+        campaign = db.query(Campaign).filter(Campaign.id == post.campaign_id).first()
+        if campaign and campaign.status != CampaignStatus.FAILED.value:
+            camp_prev = campaign.status
+            campaign.status = CampaignStatus.FAILED.value
+            db.add(CampaignAuditLog(
+                organization_id=post.organization_id,
+                campaign_id=campaign.id,
+                actor_user_id=post.created_by_user_id,
+                action="failed",
+                previous_status=camp_prev,
+                new_status=CampaignStatus.FAILED.value,
+                log_metadata={"error": f"scheduled_publish_failed: {reason}"},
+            ))
+
+    db.commit()
+    logger.warning(f"Scheduled post {post.id} failed: {reason}.")
+
+
 @shared_task(name="app.tasks.check_scheduled_posts_task")
 def check_scheduled_posts_task() -> dict:
     """
@@ -1864,130 +1972,303 @@ def check_scheduled_posts_task() -> dict:
     from app.db.session import SessionLocal
     from app.models.post import Post
     from app.models.campaign import Campaign
+    from app.models.location import Location
+    from app.models.organization import Organization
     from app.models.publish_job import PublishJob
     from app.models.post_audit_log import PostAuditLog
     from app.constants.posts import PostStatus, CampaignStatus, PublishJobStatus
     from app.services.post_service import post_service
     from app.services.activity_log_service import ActivityLogService
+    from app.services.billing.entitlement_service import EntitlementService
     import redis
     from app.core.config import settings
 
     logger = logging.getLogger(__name__)
     db = SessionLocal()
     r = _get_redis()
-    
+
+    # Single-flight guard: a beat run that overruns the 60s interval must not
+    # overlap with the next tick. Per-row skip_locked already prevents
+    # double-publish, but this avoids redundant scans and reconcile churn.
+    # Lease must comfortably exceed the worst-case run so the lock can't expire
+    # mid-tick and let the next beat overlap. Kept >= task_time_limit (1800s).
+    sched_lock = r.lock("lock:check_scheduled_posts", timeout=1800)
+    if not sched_lock.acquire(blocking=False):
+        db.close()
+        return {"status": "skipped", "reason": "another scheduler run in progress"}
+
+    # How long a scheduled post may wait for its media to finish optimizing
+    # before we give up and fail it (mirrors orchestrate_campaign_task's 5-min
+    # in-task wait, but measured from the scheduled time since beat is stateless).
+    MEDIA_WAIT_MINUTES = getattr(settings, "SCHEDULED_MEDIA_WAIT_MINUTES", 15)
+
+    # Max posts processed per tick. Bounds wall-clock so a large backlog can't
+    # overrun the beat interval; the remainder is drained on subsequent ticks
+    # (oldest-due first, so nothing starves).
+    BATCH_LIMIT = getattr(settings, "SCHEDULED_BATCH_LIMIT", 100)
+
     now = datetime.datetime.now(datetime.timezone.utc)
+
+    # ── Safety net for the dual-write gap ────────────────────────────────────
+    # If a worker died after committing post→PUBLISHING + jobs→PENDING but
+    # before dispatching the Celery tasks, those jobs would sit PENDING forever
+    # (the post is no longer SCHEDULED, so the query below never re-picks it).
+    # Re-dispatch any long-idle PENDING jobs; the publish tasks are idempotent
+    # (Redis lock + persisted google_post_id check), so re-dispatch is safe.
+    try:
+        _reconcile_orphaned_publish_jobs(db, r, logger, now)
+    except Exception as recon_err:
+        logger.error(f"Orphaned-job reconciliation failed: {recon_err}")
+        db.rollback()
+
     due_post_ids = [p.id for p in db.query(Post.id).filter(
         Post.status == PostStatus.SCHEDULED.value,
         Post.scheduled_at <= now
-    ).all()]
-    
-    processed_count = 0
-    
-    for post_id in due_post_ids:
-        try:
-            post = db.query(Post).filter(Post.id == post_id).with_for_update(skip_locked=True).first()
-            if not post or post.status != PostStatus.SCHEDULED.value:
-                db.rollback()
-                continue
-                
-            logger.info(f"Processing scheduled post {post.id} (due at {post.scheduled_at})")
-            
-            old_status = post.status
-            post.status = PostStatus.APPROVED.value
-            
-            audit_log = PostAuditLog(
-                organization_id=post.organization_id,
-                post_id=post.id,
-                actor_user_id=post.created_by_user_id,
-                action="STATUS_CHANGED",
-                previous_status=old_status,
-                new_status=PostStatus.APPROVED.value,
-                log_metadata={"action": "scheduled_publish_triggered"}
-            )
-            db.add(audit_log)
-            db.flush()
+    ).order_by(Post.scheduled_at.asc()).limit(BATCH_LIMIT).all()]
 
-            target_location_ids = post.target_location_ids or []
-            
-            valid_locations = []
-            for loc_id in target_location_ids:
-                try:
-                    post_service._validate_publish_eligibility(
+    processed_count = 0
+
+    try:
+        for post_id in due_post_ids:
+            try:
+                post = db.query(Post).filter(Post.id == post_id).with_for_update(skip_locked=True).first()
+                if not post or post.status != PostStatus.SCHEDULED.value:
+                    db.rollback()
+                    continue
+
+                logger.info(f"Processing scheduled post {post.id} (due at {post.scheduled_at})")
+
+                # ── Entitlement gate ─────────────────────────────────────────
+                # Scheduled publishing is a paid feature. If the org locked
+                # (subscription lapsed, trial expired) between scheduling and
+                # firing, leave the post SCHEDULED so it fires automatically
+                # once the org reactivates — never silently publish for a
+                # non-entitled org.
+                org = db.query(Organization).filter(
+                    Organization.id == post.organization_id
+                ).first()
+                if org and EntitlementService.is_org_locked(org):
+                    db.rollback()
+                    logger.info(
+                        f"Scheduled post {post_id} skipped: organization "
+                        f"{post.organization_id} is locked; left as SCHEDULED."
+                    )
+                    continue
+
+                # ── Media-readiness gate ─────────────────────────────────────
+                # The campaign/single-publish workers do NOT wait for media
+                # optimization, so we must gate here or risk publishing a post
+                # with broken/unoptimized media.
+                attached_media = [m for m in post.media if not m.is_deleted]
+                invalid_media = [
+                    m for m in attached_media
+                    if m.validation_status == "Invalid" or m.upload_status == "Failed"
+                ]
+                if invalid_media:
+                    # Permanently broken media — fail the post (don't retry forever).
+                    _fail_scheduled_post(db, post, "invalid_or_failed_media", logger)
+                    continue
+
+                unready_media = [
+                    m for m in attached_media
+                    if not m.optimized_url
+                    or m.validation_status == "Pending"
+                    or m.upload_status == "Pending"
+                ]
+                if unready_media:
+                    # Still optimizing. Leave SCHEDULED so the next beat retries —
+                    # unless we've waited past the deadline, then fail.
+                    deadline = (
+                        post.scheduled_at + datetime.timedelta(minutes=MEDIA_WAIT_MINUTES)
+                        if post.scheduled_at else None
+                    )
+                    if deadline and now > deadline:
+                        _fail_scheduled_post(db, post, "media_optimization_timeout", logger)
+                    else:
+                        db.rollback()
+                        logger.info(
+                            f"Scheduled post {post_id} waiting on media optimization; "
+                            f"left as SCHEDULED."
+                        )
+                    continue
+
+                target_location_ids = post.target_location_ids or []
+
+                # ── Per-location entitlement gate ────────────────────────────
+                # Drop any location that locked (billing_status != active) since
+                # scheduling. Mirrors assert_locations_active on the API paths.
+                active_location_ids = set()
+                if target_location_ids:
+                    active_location_ids = {
+                        row[0] for row in db.query(Location.id).filter(
+                            Location.id.in_(target_location_ids),
+                            Location.organization_id == post.organization_id,
+                            Location.billing_status == "active",
+                        ).all()
+                    }
+                locked_out = [lid for lid in target_location_ids if lid not in active_location_ids]
+                if locked_out:
+                    logger.info(
+                        f"Scheduled post {post_id}: skipping locked location(s) {locked_out}."
+                    )
+
+                old_status = post.status
+                post.status = PostStatus.APPROVED.value
+
+                audit_log = PostAuditLog(
+                    organization_id=post.organization_id,
+                    post_id=post.id,
+                    actor_user_id=post.created_by_user_id,
+                    action="STATUS_CHANGED",
+                    previous_status=old_status,
+                    new_status=PostStatus.APPROVED.value,
+                    log_metadata={"action": "scheduled_publish_triggered"}
+                )
+                db.add(audit_log)
+                db.flush()
+
+                valid_locations = []
+                for loc_id in target_location_ids:
+                    if loc_id not in active_location_ids:
+                        continue
+                    try:
+                        post_service._validate_publish_eligibility(
+                            db=db,
+                            post=post,
+                            location_id=loc_id,
+                            organization_id=post.organization_id
+                        )
+                        valid_locations.append(loc_id)
+                    except Exception as e:
+                        logger.warning(f"Location {loc_id} failed publish eligibility check: {e}")
+
+                if not valid_locations:
+                    # No valid locations — revert so the post isn't permanently orphaned as APPROVED.
+                    # (If locations were locked, it stays SCHEDULED and fires once they unlock.)
+                    post.status = PostStatus.SCHEDULED.value
+                    db.commit()
+                    logger.warning(f"Scheduled post {post_id} has no valid locations; left as SCHEDULED.")
+                    continue
+
+                staged_jobs = []
+                for loc_id in valid_locations:
+                    job = post_service._stage_publish_job(
                         db=db,
                         post=post,
                         location_id=loc_id,
-                        organization_id=post.organization_id
+                        organization_id=post.organization_id,
+                        user_id=post.created_by_user_id or 0,
                     )
-                    valid_locations.append(loc_id)
-                except Exception as e:
-                    logger.warning(f"Location {loc_id} failed publish eligibility check: {e}")
-                    
-            staged_jobs = []
-            for loc_id in valid_locations:
-                job = post_service._stage_publish_job(
-                    db=db,
-                    post=post,
-                    location_id=loc_id,
-                    organization_id=post.organization_id,
-                    user_id=post.created_by_user_id or 0,
-                )
-                if getattr(job, 'id', None) is None:
                     staged_jobs.append(job)
-                else:
-                    staged_jobs.append(job)
-            
-            db.flush()
-            
-            if post.campaign_id:
-                campaign = db.query(Campaign).filter(Campaign.id == post.campaign_id).first()
-                if campaign:
-                    campaign.total_locations = len(target_location_ids)
-                    campaign.total_pending = len(valid_locations)
-                    campaign.total_published = 0
-                    campaign.total_failed = 0
-                    campaign.total_rejected = 0
-                    campaign.total_shadow_banned = 0
-                    
-                    if len(valid_locations) == 0:
-                        from app.constants.posts import CampaignStatus
-                        campaign.status = CampaignStatus.FAILED.value
-                    else:
-                        from app.constants.posts import CampaignStatus
-                        campaign.status = CampaignStatus.PROCESSING.value
-                        
-                    db.add(campaign)
-            
-            ActivityLogService.log(
-                db,
-                organization_id=post.organization_id,
-                entity_type="post",
-                action="publish",
-                actor_user_id=post.created_by_user_id,
-                entity_id=post.id,
-                payload={
-                    "mode": "scheduled",
-                    "locations_count": len(valid_locations)
-                }
-            )
 
-            db.commit()
-            
-            from app.tasks import process_publish_job_task
-            from app.worker import celery as celery_app
-            for job in staged_jobs:
-                if job.id:
-                    celery_app.send_task(
-                        "app.tasks.process_publish_job_task",
-                        args=(job.id, post.organization_id)
-                    )
-                    
-            processed_count += 1
-        except Exception as post_err:
-            logger.error(f"Failed to process scheduled post {post_id}: {str(post_err)}")
-            db.rollback()
-            
-    db.close()
+                db.flush()
+
+                if post.campaign_id:
+                    campaign = db.query(Campaign).filter(Campaign.id == post.campaign_id).first()
+                    if campaign:
+                        campaign.total_locations = len(target_location_ids)
+                        campaign.total_pending = len(valid_locations)
+                        campaign.total_published = 0
+                        campaign.total_failed = 0
+                        campaign.total_rejected = 0
+                        campaign.total_shadow_banned = 0
+                        campaign.status = CampaignStatus.PROCESSING.value
+                        db.add(campaign)
+
+                ActivityLogService.log(
+                    db,
+                    organization_id=post.organization_id,
+                    entity_type="post",
+                    action="publish",
+                    actor_user_id=post.created_by_user_id,
+                    entity_id=post.id,
+                    payload={
+                        "mode": "scheduled",
+                        "locations_count": len(valid_locations)
+                    }
+                )
+
+                db.commit()
+
+                from app.worker import celery as celery_app
+                campaign_job_ids = [j.id for j in staged_jobs if j.id]
+
+                if post.campaign_id and campaign_job_ids:
+                    # Batch into shards of 50 (matches orchestrate_campaign_task behaviour).
+                    _chunk_size = 50
+                    _shards = [campaign_job_ids[i:i + _chunk_size] for i in range(0, len(campaign_job_ids), _chunk_size)]
+                    _ttl = 86400 * 7
+                    # pending_shards must equal the number of shards dispatched, not the
+                    # number of jobs — _decr_and_flush_terminal_state decrements once per shard.
+                    r.set(f"campaign:{post.campaign_id}:pending_shards", len(_shards), ex=_ttl)
+                    r.set(f"campaign:{post.campaign_id}:success", 0, ex=_ttl)
+                    r.set(f"campaign:{post.campaign_id}:failed", 0, ex=_ttl)
+                    r.set(f"campaign:{post.campaign_id}:total_locations", len(valid_locations), ex=_ttl)
+                    r.set(f"campaign:{post.campaign_id}:status", "Processing", ex=_ttl)
+
+                    dispatch_errors = []
+                    for shard in _shards:
+                        try:
+                            celery_app.send_task(
+                                "app.tasks.process_campaign_shard_task",
+                                args=(shard, post.organization_id, post.campaign_id)
+                            )
+                        except Exception as dispatch_err:
+                            dispatch_errors.append((shard, dispatch_err))
+
+                    if dispatch_errors:
+                        logger.error(
+                            f"Post {post_id}: {len(dispatch_errors)} shard dispatch(es) failed; "
+                            f"re-enqueueing with 30s delay. Errors: {dispatch_errors}"
+                        )
+                        for failed_shard, _ in dispatch_errors:
+                            try:
+                                celery_app.send_task(
+                                    "app.tasks.process_campaign_shard_task",
+                                    args=(failed_shard, post.organization_id, post.campaign_id),
+                                    countdown=30,
+                                )
+                            except Exception:
+                                logger.exception(f"Re-enqueue also failed for shard {failed_shard}")
+                else:
+                    # Non-campaign posts: one task per job (single location).
+                    dispatch_errors = []
+                    for job in staged_jobs:
+                        if job.id:
+                            try:
+                                celery_app.send_task(
+                                    "app.tasks.process_publish_job_task",
+                                    args=(job.id, post.organization_id)
+                                )
+                            except Exception as dispatch_err:
+                                dispatch_errors.append((job.id, dispatch_err))
+
+                    if dispatch_errors:
+                        logger.error(
+                            f"Post {post_id}: {len(dispatch_errors)} dispatch(es) failed; "
+                            f"re-enqueueing with 30s delay."
+                        )
+                        for job_id_failed, _ in dispatch_errors:
+                            try:
+                                celery_app.send_task(
+                                    "app.tasks.process_publish_job_task",
+                                    args=(job_id_failed, post.organization_id),
+                                    countdown=30,
+                                )
+                            except Exception:
+                                logger.exception(f"Re-enqueue also failed for job {job_id_failed}")
+
+                processed_count += 1
+            except Exception as post_err:
+                logger.error(f"Failed to process scheduled post {post_id}: {str(post_err)}")
+                db.rollback()
+    finally:
+        db.close()
+        try:
+            sched_lock.release()
+        except Exception:
+            pass
+
     return {"status": "success", "processed_count": processed_count}
 
 @shared_task(bind=True, name="app.tasks.publish_listing_edit_task", max_retries=3)
