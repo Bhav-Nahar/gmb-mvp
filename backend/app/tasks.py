@@ -284,6 +284,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 existing_loc.google_account_id = p_loc.google_account_id
                 existing_loc.location_name = p_loc.name
                 existing_loc.primary_category = p_loc.category
+                existing_loc.additional_categories = p_loc.additional_categories or []
                 existing_loc.address = p_loc.address
                 existing_loc.phone = p_loc.phone
                 existing_loc.website = p_loc.website
@@ -319,6 +320,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                     google_location_id=p_loc.provider_location_id,
                     location_name=p_loc.name,
                     primary_category=p_loc.category,
+                    additional_categories=p_loc.additional_categories or [],
                     address=p_loc.address,
                     phone=p_loc.phone,
                     website=p_loc.website,
@@ -2320,7 +2322,7 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
         edit.publish_attempts += 1
         db.commit()
         
-        gbp_payload = PayloadTransformer.to_gbp_payload(edit.field_name, edit.new_value)
+        gbp_payload = PayloadTransformer.to_gbp_payload(edit.field_name, edit.new_value, location)
         update_mask = FIELD_MAP[edit.field_name].gbp_field_mask
         
         provider = ProviderFactory.get_provider("gbp", organization_id, db)

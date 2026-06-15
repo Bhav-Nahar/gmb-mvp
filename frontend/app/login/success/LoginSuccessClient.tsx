@@ -34,15 +34,12 @@ function LoginSuccessContent() {
         }
         await refresh()
 
-        setStatusMessage('Onboarding workspace...')
-        // Short delay for sleek feel
+        const isOnboarding = onboarding === 'true'
+        setStatusMessage(isOnboarding ? 'Onboarding workspace...' : 'Loading your dashboard...')
+        // Brief delay only for new-user onboarding; existing users redirect immediately
         setTimeout(() => {
-          if (onboarding === 'true') {
-            router.replace('/dashboard?onboarding=true')
-          } else {
-            router.replace('/dashboard')
-          }
-        }, 1000)
+          router.replace(isOnboarding ? '/dashboard?onboarding=true' : '/dashboard')
+        }, isOnboarding ? 1000 : 0)
       } catch (e: any) {
         console.error('LoginSuccessClient error during fetchAndRedirect:', e)
         const errorMsg = e instanceof Error ? e.message : String(e)

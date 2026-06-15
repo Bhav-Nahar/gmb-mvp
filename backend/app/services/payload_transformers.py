@@ -1,7 +1,13 @@
-from typing import Any, Dict, Callable
+from typing import Any, Dict, Callable, List, Optional
 from app.core.listing_fields import FIELD_MAP
 
-def transform_identity(field_name: str, value: Any) -> Dict[str, Any]:
+# NOTE: every transformer accepts an optional `location` argument so that
+# transformers whose GBP field mask is *atomic* (e.g. "categories", which
+# replaces primaryCategory AND additionalCategories in a single PATCH) can
+# merge the edited value with the location's current persisted state. Most
+# transformers ignore it.
+
+def transform_identity(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     config = FIELD_MAP.get(field_name)
     if config is None:
         raise ValueError(f"Unknown field '{field_name}': not found in FIELD_MAP")
@@ -9,32 +15,61 @@ def transform_identity(field_name: str, value: Any) -> Dict[str, Any]:
         raise ValueError(f"Field '{field_name}' has no gbp_field_mask defined")
     return {config.gbp_field_mask: value}
 
-def transform_location_name(field_name: str, value: Any) -> Dict[str, Any]:
+def transform_location_name(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     return {"title": str(value)}
 
-def transform_phone(field_name: str, value: Any) -> Dict[str, Any]:
+def transform_phone(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     return {"phoneNumbers": {"primaryPhone": str(value)}}
 
-def transform_url(field_name: str, value: Any) -> Dict[str, Any]:
+def transform_url(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     return {"websiteUri": str(value)}
 
-def transform_description(field_name: str, value: Any) -> Dict[str, Any]:
+def transform_description(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     return {"profile": {"description": str(value)}}
 
-def transform_primary_category(field_name: str, value: Any) -> Dict[str, Any]:
-    category_name = value
-    if isinstance(value, dict):
-        if "name" in value:
-            category_name = value["name"]
-        else:
-            raise ValueError(f"Category value is a dict but missing 'name' key: {value!r}")
-    if not isinstance(category_name, str):
-        raise ValueError(
-            f"Expected category_name to be a string, got {type(category_name).__name__}: {category_name!r}"
-        )
-    return {"categories": {"primaryCategory": {"name": str(category_name)}}}
+def _category_name(value: Any) -> str:
+    """Extract a 'categories/gcid:...' resource name from a string or {name,...} dict."""
+    name = value.get("name") if isinstance(value, dict) else value
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"Expected a category resource name string, got: {value!r}")
+    return name
 
-def transform_address(field_name: str, value: Any) -> Dict[str, Any]:
+def _existing_additional_payload(location: Any) -> List[Dict[str, str]]:
+    """Build additionalCategories payload from the location's currently stored secondaries."""
+    raw = getattr(location, "additional_categories", None) or [] if location is not None else []
+    out: List[Dict[str, str]] = []
+    for c in raw:
+        name = c.get("name") if isinstance(c, dict) else c
+        if isinstance(name, str) and name:
+            out.append({"name": name})
+    return out
+
+def transform_primary_category(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
+    # The "categories" mask is atomic — preserve existing additionalCategories so
+    # changing the primary doesn't wipe the secondaries on Google.
+    categories: Dict[str, Any] = {"primaryCategory": {"name": _category_name(value)}}
+    additional = _existing_additional_payload(location)
+    if additional:
+        categories["additionalCategories"] = additional
+    return {"categories": categories}
+
+def transform_additional_categories(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
+    # value is the new full set of secondaries: list of strings or {name, displayName} dicts.
+    if value is None:
+        value = []
+    if not isinstance(value, list):
+        raise ValueError(
+            f"additional_categories expects a list, got {type(value).__name__}: {value!r}"
+        )
+    additional = [{"name": _category_name(c)} for c in value]
+    categories: Dict[str, Any] = {"additionalCategories": additional}
+    # Preserve the primary so the atomic "categories" PATCH doesn't clear it.
+    primary_name = getattr(location, "google_category_resource_name", None) if location else None
+    if primary_name:
+        categories["primaryCategory"] = {"name": primary_name}
+    return {"categories": categories}
+
+def transform_address(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     return {"storefrontAddress": value}
 
 def _parse_time_string(time_str: str) -> Dict[str, int]:
@@ -53,7 +88,7 @@ def _parse_time_string(time_str: str) -> Dict[str, int]:
         raise ValueError(f"Minute out of range [0-59] in time string: {time_str!r}")
     return {"hours": h, "minutes": m}
 
-def transform_business_hours(field_name: str, value: Any) -> Dict[str, Any]:
+def transform_business_hours(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     if value is None:
         return {"regularHours": {"periods": []}}
     if not hasattr(value, "__iter__"):
@@ -86,26 +121,27 @@ TRANSFORMER_REGISTRY: Dict[str, Callable[[str, Any], Dict[str, Any]]] = {
     "url": transform_url,
     "description": transform_description,
     "primary_category": transform_primary_category,
+    "additional_categories": transform_additional_categories,
     "address": transform_address,
     "business_hours": transform_business_hours,
 }
 
-def transform(field_name: str, value: Any) -> Dict[str, Any]:
+def transform(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     """Top-level dispatch: validate field_name exists in FIELD_MAP, then route to the correct transformer."""
     config = FIELD_MAP.get(field_name)
     if config is None:
         raise ValueError(f"Unknown field '{field_name}': not found in FIELD_MAP")
     transformer_key = getattr(config, "transformer", None)
     transformer_fn = TRANSFORMER_REGISTRY.get(transformer_key, transform_identity)
-    return transformer_fn(field_name, value)
+    return transformer_fn(field_name, value, location)
 
 class PayloadTransformer:
     @staticmethod
-    def to_gbp_payload(field_name: str, new_value: Any) -> Dict[str, Any]:
+    def to_gbp_payload(field_name: str, new_value: Any, location: Any = None) -> Dict[str, Any]:
         config = FIELD_MAP.get(field_name)
         if not config or not config.gbp_field_mask:
             raise ValueError(f"No GBP field mask defined for field '{field_name}'")
-            
+
         transformer_key = config.transformer
         transformer_fn = TRANSFORMER_REGISTRY.get(transformer_key, transform_identity)
-        return transformer_fn(field_name, new_value)
+        return transformer_fn(field_name, new_value, location)

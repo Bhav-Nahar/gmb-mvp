@@ -76,6 +76,19 @@ LISTING_FIELDS: list[ListingFieldConfig] = [
     ),
     # ── Standard fields (no warning) ─────────────────────────────────────────
     ListingFieldConfig(
+        name="additional_categories",
+        label="Additional categories",
+        is_staff_editable=False,
+        is_admin_editable=True,
+        is_critical=False,
+        is_read_only=False,
+        gbp_field_mask="categories",
+        field_type="json",
+        transformer="additional_categories",
+        ui_component="multi_category_autocomplete",
+        supports_bulk_edit=False,
+    ),
+    ListingFieldConfig(
         name="phone",
         label="Phone number",
         is_staff_editable=True,

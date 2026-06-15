@@ -35,6 +35,8 @@ class Location(Base):
     draft_attributes = Column(JSONB, default=list, server_default='[]', nullable=False)
     last_google_sync = Column(DateTime(timezone=True), nullable=True)
     google_category_resource_name = Column(String, nullable=True) # Example: "categories/gcid:jewelry_store"
+    # Secondary/additional categories: list of {"name": "categories/gcid:x", "displayName": "X"}
+    additional_categories = Column(JSONB, default=list, server_default='[]', nullable=False)
     google_attributes_stale = Column(Boolean, default=False, nullable=False)
     last_publish_hash = Column(String(64), nullable=True)
     last_published_at = Column(DateTime(timezone=True), nullable=True)

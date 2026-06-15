@@ -33,13 +33,27 @@ if "localhost" not in frontend_url and "127.0.0.1" not in frontend_url:
     else:
         allow_origins.append(frontend_url.replace("://", "://www."))
 
+# Allow additional domains (e.g. a custom domain alongside the Vercel URL) via env.
+# Each entry is also expanded to its www/non-www twin so callers don't have to list both.
+for extra in (settings.ADDITIONAL_CORS_ORIGINS or "").split(","):
+    origin = extra.strip().rstrip("/")
+    if not origin:
+        continue
+    allow_origins.append(origin)
+    if "://www." in origin:
+        allow_origins.append(origin.replace("://www.", "://"))
+    else:
+        allow_origins.append(origin.replace("://", "://www."))
+
 if getattr(settings, "APP_ENV", "production") == "development":
     allow_origins += [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
-else:
-    logger.info(f"Production CORS origins configured as: {allow_origins}")
+
+# De-duplicate while preserving order.
+allow_origins = list(dict.fromkeys(allow_origins))
+logger.info(f"CORS origins configured as: {allow_origins}")
 
 app.add_middleware(
     CORSMiddleware,
