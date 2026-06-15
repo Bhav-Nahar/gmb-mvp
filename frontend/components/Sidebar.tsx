@@ -45,6 +45,9 @@ export default function Sidebar({
     ...(userRole && ['Owner', 'Admin'].includes(userRole)
       ? [{ label: 'Billing', href: '/dashboard/settings/billing', icon: CreditCard }]
       : []),
+    ...(userRole && ['Owner', 'Admin'].includes(userRole)
+      ? [{ label: 'Reply Templates', href: '/dashboard/settings/reply-templates', icon: MessageSquare }]
+      : []),
     { label: 'Activity Logs', href: '/dashboard/settings/logs', icon: FileClock },
   ]
 
