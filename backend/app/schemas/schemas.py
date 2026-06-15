@@ -67,6 +67,17 @@ class LocationOut(BaseModel):
     primary_category: Optional[str] = None
     # Secondary/additional categories: list of {name, displayName}
     additional_categories: Optional[List[Any]] = None
+    # Rich GBP fields captured for full parity
+    additional_phones: Optional[List[Any]] = None
+    special_hours: Optional[Any] = None
+    more_hours: Optional[Any] = None
+    service_area: Optional[Any] = None
+    service_items: Optional[Any] = None
+    labels: Optional[List[Any]] = None
+    open_info: Optional[Any] = None
+    latlng: Optional[Any] = None
+    store_code: Optional[str] = None
+    language_code: Optional[str] = None
     address: Optional[str] = None
     phone: Optional[str] = None
     website: Optional[str] = None

@@ -211,7 +211,12 @@ class GBPProvider(BaseProvider):
                 while True:
                     locations_url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_name}/locations"
                     params = {
-                        "readMask": "name,title,categories,storefrontAddress,phoneNumbers,websiteUri,regularHours,profile,metadata",
+                        "readMask": (
+                            "name,languageCode,storeCode,title,categories,storefrontAddress,"
+                            "phoneNumbers,websiteUri,regularHours,specialHours,moreHours,"
+                            "serviceArea,serviceItems,labels,openInfo,latlng,"
+                            "adWordsLocationExtensions,relationshipData,profile,metadata"
+                        ),
                         "pageSize": 100
                     }
                     if next_page_token:
