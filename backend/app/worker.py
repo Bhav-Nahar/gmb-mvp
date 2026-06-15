@@ -38,16 +38,14 @@ celery.conf.update(
         'fanout_patterns': True,
         'polling_interval': 60.0,
     },
-    # Upstash Redis requires SSL (rediss://) — pass ssl=True so the Redis client
-    # opens a TLS connection instead of plain TCP.
-    redis_backend_use_ssl={
-        'ssl_cert_reqs': None,
-    },
-    broker_use_ssl={
-        'ssl_cert_reqs': None,
-    },
     broker_pool_limit=5, # Limit concurrent connections
 )
+
+if settings.REDIS_URL.startswith("rediss://"):
+    celery.conf.update(
+        redis_backend_use_ssl={'ssl_cert_reqs': None},
+        broker_use_ssl={'ssl_cert_reqs': None}
+    )
 
 # Auto-discover tasks in app.tasks
 celery.autodiscover_tasks(["app"])
@@ -69,7 +67,7 @@ celery.conf.beat_schedule = {
     },
     "check-scheduled-posts-every-minute": {
         "task": "app.tasks.check_scheduled_posts_task",
-        "schedule": 900.0, # Every 15 minutes (900 seconds)
+        "schedule": 60.0, # Every 60 seconds
     },
     "archive-activity-logs-daily": {
         "task": "app.tasks.archive_old_activity_logs_task",

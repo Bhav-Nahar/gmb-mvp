@@ -27,7 +27,8 @@ from app.schemas.posts import (
     BatchPublishJobCreateResponse,
     CampaignListResponse,
     CampaignProgressResponse,
-    CampaignDetailResponse
+    CampaignDetailResponse,
+    CampaignScheduleUpdateRequest
 )
 from app.services.post_service import post_service
 from app.core.config import settings
@@ -160,7 +161,7 @@ def launch_campaign(
 
     campaign = post_service._verify_ownership(db, Campaign, id, current_user.organization_id)
     
-    if campaign.status.upper() not in ["DRAFT", "FAILED", "PAUSED", "COMPLETED"]:
+    if campaign.status.upper() not in ["DRAFT", "FAILED", "PAUSED", "COMPLETED", "PARTIALLYCOMPLETED"]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Campaign is in {campaign.status} state and cannot be launched."
@@ -191,7 +192,10 @@ def launch_campaign(
     )
     db.add(audit)
 
-    # Dispatch orchestrator task BEFORE committing so we can roll back if dispatch fails
+    # Commit first so the worker sees the updated campaign state immediately.
+    db.commit()
+    db.refresh(campaign)
+
     from app.worker import celery as celery_app
     try:
         celery_app.send_task(
@@ -199,14 +203,30 @@ def launch_campaign(
             args=(campaign.id, current_user.organization_id, payload.location_ids, current_user.id)
         )
     except Exception as e:
-        db.rollback()
         logger.error(f"Failed to dispatch orchestrate_campaign_task: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Task dispatch failed: {str(e)}")
 
-    db.commit()
-    db.refresh(campaign)
-
     return {"message": "Campaign launch queued successfully."}
+@router.delete("/campaigns/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_campaign(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Deletes a draft or scheduled campaign and its associated posts."""
+    campaign = post_service._verify_ownership(db, Campaign, id, current_user.organization_id)
+
+    if campaign.status.upper() not in ["DRAFT", "SCHEDULED"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete campaign in status '{campaign.status}'. Only Draft or Scheduled campaigns can be deleted."
+        )
+
+    db.delete(campaign)
+    db.commit()
+    return None
+
+
 @router.get("/campaigns/{id}/progress", response_model=CampaignDetailResponse)
 def get_campaign_progress(
     id: int,
@@ -228,11 +248,19 @@ def get_campaign_progress(
         
     jobs = query.order_by(PublishJob.created_at.desc()).all()
     audit_logs = db.query(CampaignAuditLog).filter(CampaignAuditLog.campaign_id == campaign.id).order_by(CampaignAuditLog.created_at.desc()).all()
-    
-    # Safe response mapping (Finding 2 Fix)
+
+    # Surface the primary post's editable content so the UI can pre-fill the
+    # edit/reschedule dialog for a scheduled campaign.
+    primary_post = None
+    if campaign.primary_post_id:
+        primary_post = db.query(Post).filter(Post.id == campaign.primary_post_id).first()
+
     return CampaignDetailResponse(
         id=campaign.id,
+        name=campaign.name,
         status=campaign.status,
+        scheduled_at=campaign.scheduled_at,
+        primary_post=primary_post,
         total_locations=campaign.total_locations,
         total_pending=campaign.total_pending,
         total_published=campaign.total_published,
@@ -242,6 +270,114 @@ def get_campaign_progress(
         jobs=jobs,
         audit_logs=audit_logs
     )
+
+@router.patch("/campaigns/{id}/schedule", response_model=CampaignResponse)
+def update_campaign_schedule(
+    id: int,
+    payload: CampaignScheduleUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Edit and/or reschedule a SCHEDULED campaign's primary post before it fires.
+
+    Only valid while the campaign is still SCHEDULED (not yet picked up by the
+    beat). Send content fields to edit, `scheduled_at` to reschedule, or both.
+    """
+    from app.models.post_audit_log import PostAuditLog
+
+    campaign = post_service._verify_ownership(db, Campaign, id, current_user.organization_id)
+
+    if campaign.status.upper() != "SCHEDULED":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Campaign is in {campaign.status} state; only SCHEDULED campaigns can be edited or rescheduled."
+        )
+
+    post = db.query(Post).filter(Post.id == campaign.primary_post_id).first() if campaign.primary_post_id else None
+    if not post or post.status != PostStatus.SCHEDULED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No editable scheduled post is attached to this campaign."
+        )
+
+    update_dict = payload.model_dump(exclude_unset=True)
+    changed = []
+    if "title" in update_dict:
+        post.title = update_dict["title"]; changed.append("title")
+    if "summary" in update_dict:
+        post.summary = update_dict["summary"]; changed.append("summary")
+    if "cta_type" in update_dict:
+        raw = payload.cta_type
+        post.cta_type = raw.value if raw is not None else None
+        changed.append("cta_type")
+    if "cta_url" in update_dict:
+        post.cta_url = str(payload.cta_url) if payload.cta_url else None
+        changed.append("cta_url")
+    if "scheduled_at" in update_dict:
+        post.scheduled_at = update_dict["scheduled_at"]; changed.append("scheduled_at")
+
+    db.add(PostAuditLog(
+        organization_id=current_user.organization_id,
+        post_id=post.id,
+        actor_user_id=current_user.id,
+        action="SCHEDULE_UPDATED",
+        previous_status=PostStatus.SCHEDULED.value,
+        new_status=PostStatus.SCHEDULED.value,
+        log_metadata={"action": "schedule_updated", "fields": changed}
+    ))
+    db.commit()
+    db.refresh(campaign)
+    return campaign
+
+
+@router.post("/campaigns/{id}/cancel-schedule", response_model=CampaignResponse)
+def cancel_campaign_schedule(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Cancel a scheduled publish before it fires: revert the campaign and its
+    primary post to DRAFT so the beat skips it and the user can edit/relaunch."""
+    from app.models.post_audit_log import PostAuditLog
+    from app.models.campaign_audit_log import CampaignAuditLog
+
+    campaign = post_service._verify_ownership(db, Campaign, id, current_user.organization_id)
+
+    if campaign.status.upper() != "SCHEDULED":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Campaign is in {campaign.status} state; only SCHEDULED campaigns can be cancelled."
+        )
+
+    old_campaign_status = campaign.status
+    campaign.status = CampaignStatus.DRAFT.value
+
+    post = db.query(Post).filter(Post.id == campaign.primary_post_id).first() if campaign.primary_post_id else None
+    if post and post.status == PostStatus.SCHEDULED.value:
+        post.status = PostStatus.DRAFT.value
+        db.add(PostAuditLog(
+            organization_id=current_user.organization_id,
+            post_id=post.id,
+            actor_user_id=current_user.id,
+            action="STATUS_CHANGED",
+            previous_status=PostStatus.SCHEDULED.value,
+            new_status=PostStatus.DRAFT.value,
+            log_metadata={"action": "schedule_cancelled"}
+        ))
+
+    db.add(CampaignAuditLog(
+        organization_id=current_user.organization_id,
+        campaign_id=campaign.id,
+        actor_user_id=current_user.id,
+        action="schedule_cancelled",
+        previous_status=old_campaign_status,
+        new_status=CampaignStatus.DRAFT.value,
+        log_metadata={}
+    ))
+    db.commit()
+    db.refresh(campaign)
+    return campaign
+
 
 @router.get("/{id}", response_model=PostResponse)
 def get_post(
@@ -267,6 +403,21 @@ def update_post(
         organization_id=current_user.organization_id,
         user_id=current_user.id
     )
+
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_post(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Deletes a draft or scheduled post."""
+    post_service.delete_post(
+        db=db,
+        post_id=id,
+        organization_id=current_user.organization_id,
+        user_id=current_user.id
+    )
+    return None
 
 @router.post("/{id}/media", response_model=PostMediaResponse, status_code=status.HTTP_201_CREATED)
 def attach_media_to_post(
@@ -462,7 +613,7 @@ def pause_campaign(
 
     # Update Redis flag instantly so active worker loops check and abort/drain gracefully
     r = get_redis()
-    r.set(f"campaign:{campaign.id}:status", "Paused")
+    r.set(f"campaign:{campaign.id}:status", "Paused", ex=86400 * 7)
     
     audit = CampaignAuditLog(
         organization_id=current_user.organization_id,
@@ -547,8 +698,13 @@ def resume_campaign(
         chunk_size = 50
         shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
         
-        # Initialize campaign Redis keys
-        r.set(f"campaign:{campaign.id}:pending_shards", len(shards))
+        # Initialize all campaign Redis keys (matching retry-failed endpoint)
+        _ttl = 86400 * 7
+        r.set(f"campaign:{campaign.id}:pending_shards", len(shards), ex=_ttl)
+        r.set(f"campaign:{campaign.id}:success", campaign.total_published, ex=_ttl)
+        r.set(f"campaign:{campaign.id}:failed", campaign.total_failed, ex=_ttl)
+        r.set(f"campaign:{campaign.id}:total_locations", campaign.total_locations, ex=_ttl)
+        r.set(f"campaign:{campaign.id}:status", "Processing", ex=_ttl)
         
         # Dispatch Celery tasks
         from app.worker import celery as celery_app
@@ -596,7 +752,7 @@ def cancel_campaign(
 
     # Set Redis flag instantly
     r = get_redis()
-    r.set(f"campaign:{campaign.id}:status", "Cancelled")
+    r.set(f"campaign:{campaign.id}:status", "Cancelled", ex=86400 * 7)
     
     # Fetch pending/paused/running jobs for the campaign
     pending_jobs = db.query(PublishJob).filter(
@@ -679,14 +835,14 @@ def retry_failed_campaign_jobs(
             detail="Cannot retry failed jobs while there are active jobs running in the campaign."
         )
 
-    # Transition campaign and failed jobs
+    # Transition campaign and failed jobs atomically in SQL to avoid read-modify-write races.
     old_status = campaign.status
-    campaign.status = CampaignStatus.PROCESSING.value
-    
-    # Recalculate Postgres counters
     jobs_count = len(failed_jobs)
-    campaign.total_failed = func.greatest(0, campaign.total_failed - jobs_count)
-    campaign.total_pending = campaign.total_pending + jobs_count
+    db.query(Campaign).filter(Campaign.id == campaign.id).update({
+        Campaign.status: CampaignStatus.PROCESSING.value,
+        Campaign.total_failed: func.greatest(0, Campaign.total_failed - jobs_count),
+        Campaign.total_pending: Campaign.total_pending + jobs_count,
+    }, synchronize_session="fetch")
 
     # Audit log
     audit = CampaignAuditLog(
@@ -718,11 +874,12 @@ def retry_failed_campaign_jobs(
         shards = [job_ids[i:i + chunk_size] for i in range(0, len(job_ids), chunk_size)]
         
         r = get_redis()
-        r.set(f"campaign:{campaign.id}:pending_shards", len(shards))
-        r.set(f"campaign:{campaign.id}:success", campaign.total_published)
-        r.set(f"campaign:{campaign.id}:failed", campaign.total_failed)
-        r.set(f"campaign:{campaign.id}:total_locations", campaign.total_locations)
-        r.set(f"campaign:{campaign.id}:status", "Processing")
+        _ttl = 86400 * 7
+        r.set(f"campaign:{campaign.id}:pending_shards", len(shards), ex=_ttl)
+        r.set(f"campaign:{campaign.id}:success", campaign.total_published, ex=_ttl)
+        r.set(f"campaign:{campaign.id}:failed", campaign.total_failed, ex=_ttl)
+        r.set(f"campaign:{campaign.id}:total_locations", campaign.total_locations, ex=_ttl)
+        r.set(f"campaign:{campaign.id}:status", "Processing", ex=_ttl)
 
         from app.worker import celery as celery_app
         for shard in shards:

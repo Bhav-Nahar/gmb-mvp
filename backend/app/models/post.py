@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func, Index
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func, Index, JSON
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from app.constants.posts import PostStatus, PostType
@@ -20,6 +20,7 @@ class Post(Base):
     cta_url = Column(String, nullable=True)
     is_bulk_post = Column(Boolean, default=False, nullable=False)
     scheduled_at = Column(DateTime(timezone=True), nullable=True)
+    target_location_ids = Column(JSON, nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

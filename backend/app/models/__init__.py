@@ -30,6 +30,7 @@ from app.models.location_health_score import LocationHealthScore
 from app.models.keyword_monthly_metrics import KeywordMonthlyMetric
 from app.models.organization_brand_terms import OrganizationBrandTerm
 from app.models.location_media import LocationMedia
+from app.models.reply_template import ReplyTemplate
 
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location", 
@@ -39,6 +40,6 @@ __all__ = [
     "LocationDailyInsight", "OrganizationSyncState", "GbpAttributeMetadata", "GbpAttributeDefinition",
     "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction",
     "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm",
-    "LocationMedia"
+    "LocationMedia", "ReplyTemplate"
 ]
 

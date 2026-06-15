@@ -40,7 +40,9 @@ def get_reviews(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
-    query = db.query(Review).filter(
+    from sqlalchemy.orm import joinedload
+    from app.services.reply_template_service import ReplyTemplateService
+    query = db.query(Review).options(joinedload(Review.location)).filter(
         Review.organization_id == current_user.organization_id,
         Review.is_deleted == False
     )
@@ -105,6 +107,10 @@ def get_reviews(
     pages = math.ceil(total / size) if total > 0 else 1
 
     reviews = query.order_by(Review.review_created_at.desc()).offset((page - 1) * size).limit(size).all()
+
+    templates_by_star = ReplyTemplateService.fetch_all_grouped(db, current_user.organization_id)
+    for r in reviews:
+        r.suggested_templates = templates_by_star.get(r.rating, [])
 
     return ReviewListResponse(
         reviews=reviews,
@@ -195,6 +201,16 @@ async def reply_to_review(
     review.is_replied = True
     review.reply_text = payload.reply_text
     review.review_updated_at = datetime.now(timezone.utc)
+    
+    if getattr(payload, 'template_id', None) is not None:
+        from app.models.reply_template import ReplyTemplate
+        db.query(ReplyTemplate).filter(
+            ReplyTemplate.id == payload.template_id,
+            ReplyTemplate.organization_id == current_user.organization_id
+        ).update(
+            {ReplyTemplate.usage_count: ReplyTemplate.usage_count + 1},
+            synchronize_session=False
+        )
     
     from app.services.activity_log_service import ActivityLogService
     try:

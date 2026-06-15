@@ -14,6 +14,14 @@ import {
   User as UserIcon,
 } from 'lucide-react'
 
+import { resolveTemplateVariables } from '@/lib/utils/template-utils'
+
+interface ReplyTemplate {
+  id: number;
+  title: string;
+  body: string;
+}
+
 interface Location {
   id: number
   location_name: string
@@ -33,6 +41,8 @@ interface Review {
   sentiment?: string | null
   issue_category?: string | null
   sentiment_tagged_at?: string | null
+  location_name: string
+  suggested_templates?: ReplyTemplate[]
 }
 
 interface SLAMetrics {
@@ -80,7 +90,10 @@ export default function ReviewsPage(props: any) {
   // Reply state
   const [replyingTo, setReplyingTo] = useState<number | null>(null)
   const [replyText, setReplyText] = useState('')
+  const [replyingTemplateId, setReplyingTemplateId] = useState<number | null>(null)
   const [replying, setReplying] = useState(false)
+  // Pending template selection awaiting overwrite confirmation
+  const [pendingTemplate, setPendingTemplate] = useState<{ id: number; text: string } | null>(null)
 
   // AI Generation state
   const [generatingFor, setGeneratingFor] = useState<number | null>(null)
@@ -242,14 +255,15 @@ export default function ReviewsPage(props: any) {
     setReplying(true)
     setErrorAlert('')
     try {
-      const updatedReview = await api.post<Review>(`/reviews/${reviewId}/reply`, {
-        reply_text: replyText
+      await api.post(`/reviews/${reviewId}/reply`, {
+        reply_text: replyText,
+        template_id: replyingTemplateId || undefined
       })
-      
-      setReviews(reviews.map(r => r.id === reviewId ? updatedReview : r))
-      setSuccessAlert('Reply posted successfully!')
+      setSuccessAlert('Reply posted successfully.')
       setReplyingTo(null)
       setReplyText('')
+      setReplyingTemplateId(null)
+      loadReviews()
     } catch (err: any) {
       setErrorAlert(err.message || 'Failed to post reply.')
     } finally {
@@ -648,15 +662,46 @@ export default function ReviewsPage(props: any) {
                       </div>
                     ) : replyingTo === review.id ? (
                       <div className="space-y-3 mt-4">
+                        {review.suggested_templates && review.suggested_templates.length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Quick Templates</p>
+                            <div className="flex flex-wrap gap-2">
+                              {review.suggested_templates.map(template => (
+                                <button
+                                  key={template.id}
+                                  onClick={() => {
+                                    const text = resolveTemplateVariables(template.body, review.reviewer_name, review.location_name)
+                                    if (replyText.trim()) {
+                                      setPendingTemplate({ id: template.id, text })
+                                      return
+                                    }
+                                    setReplyText(text)
+                                    setReplyingTemplateId(template.id)
+                                  }}
+                                  className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium transition-colors ${
+                                    replyingTemplateId === template.id
+                                      ? 'border-primary bg-primary text-primary-foreground ring-2 ring-primary/30'
+                                      : 'border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary'
+                                  }`}
+                                >
+                                  {template.title}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <textarea
                           value={replyText}
-                          onChange={(e) => setReplyText(e.target.value)}
+                          onChange={(e) => {
+                            setReplyText(e.target.value)
+                            if (replyingTemplateId) setReplyingTemplateId(null) // Unlink template if they edit it manually
+                          }}
                           placeholder="Write your response..."
                           className="w-full bg-background border border-input rounded-lg p-3 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary min-h-[100px]"
                         />
                         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-3 sm:justify-end">
                           <button
-                            onClick={() => { setReplyingTo(null); setReplyText(''); }}
+                            onClick={() => { setReplyingTo(null); setReplyText(''); setReplyingTemplateId(null); }}
                             className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors border border-border sm:border-0 rounded-lg"
                           >
                             Cancel
@@ -676,9 +721,14 @@ export default function ReviewsPage(props: any) {
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                           <button
                             onClick={() => { setReplyingTo(review.id); setReplyText(''); }}
-                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 flex items-center justify-center px-4 py-2 sm:p-0 rounded-lg sm:rounded-none text-sm font-semibold text-primary-foreground sm:text-primary bg-primary sm:bg-transparent hover:bg-primary/90 sm:hover:bg-transparent sm:hover:text-primary/80 transition-colors"
+                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 flex items-center justify-center gap-2 px-4 py-2 sm:p-0 rounded-lg sm:rounded-none text-sm font-semibold text-primary-foreground sm:text-primary bg-primary sm:bg-transparent hover:bg-primary/90 sm:hover:bg-transparent sm:hover:text-primary/80 transition-colors"
                           >
                             Reply to Review
+                            {review.suggested_templates && review.suggested_templates.length > 0 && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-semibold leading-none">
+                                {review.suggested_templates.length} template{review.suggested_templates.length > 1 ? 's' : ''}
+                              </span>
+                            )}
                           </button>
                           <button
                             onClick={() => handleGenerateReply(review.id)}
@@ -751,6 +801,35 @@ export default function ReviewsPage(props: any) {
                     className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition-colors"
                   >
                     {enablingSla ? 'Enabling...' : 'Enable from Today'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {pendingTemplate && (
+            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 sm:backdrop-blur-sm">
+              <div className="bg-card border border-border w-full sm:max-w-md max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-xl p-6 shadow-2xl">
+                <h3 className="text-xl font-bold text-foreground mb-2">Replace your reply?</h3>
+                <p className="text-sm text-muted-foreground mb-6">
+                  Applying this template will replace the reply you&apos;ve already written. This can&apos;t be undone.
+                </p>
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                  <button
+                    onClick={() => setPendingTemplate(null)}
+                    className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors border border-border sm:border-0"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      setReplyText(pendingTemplate.text)
+                      setReplyingTemplateId(pendingTemplate.id)
+                      setPendingTemplate(null)
+                    }}
+                    className="w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/90 transition-colors"
+                  >
+                    Replace
                   </button>
                 </div>
               </div>

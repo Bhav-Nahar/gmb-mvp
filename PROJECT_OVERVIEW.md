@@ -1,15 +1,15 @@
-Last Updated: 2026-06-12T17:18:00Z
-Based On Commit: f0ed7ac
-Documentation Version: 1.1
+Last Updated: 2026-06-14T23:08:00Z
+Based On Commit: ab8573e
+Documentation Version: 1.2
 
 # Project Overview
 
-* **Project Name:** GMB MVP (Google Business Profile MVP)
-* **Purpose:** A unified dashboard to manage Google Business Profile (GBP) locations, synchronize location data, track performance metrics, manage custom attributes, view/reply to reviews, and manage billing plans.
-* **Business Goals:** Allow organizations to easily connect their Google accounts, manage their GBP presence, respond to reviews with AI assistance, track SLA commitments, monitor analytics, update business profiles, publish localized updates, and scale their organization with flexible location-based billing subscription plans.
-* **Problem Being Solved:** The difficulty of managing multiple Google Business Profile locations, reviews, attributes, insights, and posts natively at scale while enforcing fair usage limits and tiered pricing.
+* **Project Name:** Pinzo (formerly GMB MVP)
+* **Purpose:** A unified dashboard to manage Google Business Profile (GBP) locations, synchronize location data, track performance metrics, manage custom attributes, view/reply to reviews, manage location media/galleries, analyze search intelligence metrics, and manage billing plans.
+* **Business Goals:** Allow organizations to easily connect their Google accounts, manage their GBP presence, respond to reviews with AI assistance, track SLA commitments, monitor analytics, update business profiles, publish localized updates, upload and sync gallery media, monitor local search keywords/brand performance, and scale their organization with flexible location-based billing subscription plans.
+* **Problem Being Solved:** The difficulty of managing multiple Google Business Profile locations, reviews, attributes, insights, media galleries, local SEO keywords, and posts natively at scale while enforcing fair usage limits and tiered pricing.
 * **Target Users:** Organizations and businesses managing one or more physical locations.
-* **Current Status:** MVP phase with location sync, AI replies, sentiment tagging, SLA tracking, post scheduling, analytics tracking, business attributes, listing moderation, and a fully integrated Razorpay-based billing & subscription system.
+* **Current Status:** Production MVP phase with location sync, AI replies, sentiment tagging, SLA tracking, post scheduling, analytics tracking, business attributes, listing moderation, media gallery sync, search intelligence/brand term metrics, profile health scoring, and a fully integrated Razorpay-based billing & subscription system.
 * **Key Features:**
   * **Multi-tenant & RBAC Isolation:** Multi-tenant organization support and explicit user-level location access control (RBAC scoping).
   * **Google OAuth Onboarding:** Seamless Google account connection and secure token persistence.
@@ -20,7 +20,10 @@ Documentation Version: 1.1
   * **Daily Performance Insights:** Automatic extraction and tracking of GBP business performance analytics (e.g. search views, maps views, website clicks).
   * **Dynamic Business Attributes:** Dynamic synchronization of platform-specific categories, amenities, attributes, metadata, and rejections.
   * **Listing Profile Moderation:** Granular field-level updates to location profiles utilizing a moderation state machine.
-  * **Subscription Billing & Location Quota Enforcement:** Tiered, graduated pricing integrated with Razorpay. Includes location quota limits, automatic grandfathering of pre-existing locations, mid-cycle proration calculations, immediate AI credit adjustments, and secure webhook event parsing with idempotency tracking.
+  * **Location Media & Gallery Management:** Standardized management, uploading, formatting, and synchronizing of photo/video media assets directly to location-specific Google Business Profile galleries.
+  * **Search Intelligence & Brand Terms:** Automated harvesting of keyword monthly metrics and optimization tools for organization-level brand terms to track local SEO search visibility.
+  * **Location Health Score:** System that calculates a location profile's data completeness and optimization level based on categories, photos, description, attributes, and reviews, providing actionable recommendations.
+  * **Subscription Billing & Location Quota Enforcement:** Tiered, graduated pricing integrated with Razorpay. Includes location quota limits, automatic grandfathering of pre-existing locations, mid-cycle proration calculations, immediate AI credit adjustments, UPI remandate billing fields, status banner warnings, and secure webhook event parsing with idempotency tracking.
 
 ---
 
@@ -32,7 +35,7 @@ The system follows a standard Client-Server architecture with a background worke
   * **Provider Abstraction Layer:** Third-party integrations (like Google Business Profile) inherit from an abstract `BaseProvider`, standardizing data models (`LocationModel`, `ReviewModel`).
   * **LLM Provider Factory:** AI engines (e.g., Groq/OpenAI) use a swappable factory pattern (`BaseLLMProvider`).
   * **Billing Service Layer:** Encapsulates Razorpay API client logic, subscription billing cycles, prorated calculations for location quota adjustments, credit balance refills, and webhook ingestion using Postgres transaction locks.
-  * **Background Processing:** Celery tasks handle long-running operations like API synchronization, insight harvesting, AI tagging, and billing/credit balance checks.
+  * **Background Processing:** Celery tasks handle long-running operations like API synchronization, insight harvesting, AI tagging, media uploads, keyword performance syncing, and billing/credit balance checks.
 
 * **Application Lifecycle:**
   * 1. Frontend sends requests to the FastAPI backend.
@@ -41,7 +44,7 @@ The system follows a standard Client-Server architecture with a background worke
   * 4. Celery workers communicate with external APIs (Google, Groq, Razorpay) using rate-limited, jitter-paced HTTP clients.
 
 * **Event Flow (Async Processing):**
-  * 1. User triggers a sync, schedules a post, or requests an attribute edit.
+  * 1. User triggers a sync, schedules a post, uploads location media, or requests an attribute edit.
   * 2. Celery task is enqueued.
   * 3. Redis distributed locks prevent concurrent overlaps.
   * 4. Progress is tracked in `sync_logs` or `publish_jobs`.
@@ -77,7 +80,7 @@ The system follows a standard Client-Server architecture with a background worke
 
 ## Third-Party Integrations
 * **Google OAuth 2.0:** Used for onboarding and obtaining offline refresh tokens.
-* **Google Business Profile (GBP):** Fetching reviews, locations, performance metrics, business attributes, and publishing posts.
+* **Google Business Profile (GBP):** Fetching reviews, locations, performance metrics, business attributes, local media/photos, and publishing posts.
 * **Razorpay:** Processing user payments, managing subscription plans, checking active subscriptions, and ingesting secure webhooks.
 
 ---
@@ -113,7 +116,8 @@ project/
   * `locations.py`: Location management
   * `reviews.py`: Review listing, replies, and sentiment retagging
   * `posts.py`: GBP campaigns, variants, and scheduling
-  * `insights.py`: Performance insights retrieval
+  * `insights.py`: Performance insights and search intelligence metrics
+  * `location_media.py`: Location media gallery upload, sync, and deletion
   * `dynamic_attributes.py`: Business attribute retrieval and management
   * `listing_edits.py`: Location details modification and moderation
   * `media.py`: Photo/video assets validation and upload
@@ -135,6 +139,8 @@ project/
 * **Purpose:** Business logic execution.
 * **Responsibilities:**
   * `insight_sync_service.py`: Fetches and processes GBP metrics.
+  * `keyword_sync_service.py`: Syncs monthly search metrics for brand and local keywords.
+  * `health_score_service.py`: Computes and caches location profile health scores.
   * `attribute_sync_service.py`: Syncs categories and business attributes.
   * `listing_edit_service.py`: Manages profile edits and state transitions.
   * `review_sync_service.py`: Handles review pagination, rate-limiting, and upserts.
@@ -152,6 +158,8 @@ project/
 3. **AI Reply Flow:** User clicks "Generate Reply" -> Entitlement service checks location status and credit balance -> `ai_reply_service.py` crafts prompt -> LLM returns draft -> User approves -> Backend updates GBP API -> DB updated.
 4. **Insights Harvest Flow:** Celery beat schedules metrics retrieval -> `insight_sync_service.py` filters by `billing_status == 'active'` and fetches analytics -> Stored in `location_daily_insights`.
 5. **Subscription Upgrade / Addon Flow:** User chooses to unlock locked location -> Pricing service computes prorated charge for the remaining cycle days -> Frontend creates Razorpay order/addon -> Razorpay webhook captures payment -> Organization quota increases -> Locations set to `active`.
+6. **Search Intelligence Flow:** User sets organization brand terms -> Celery sync triggers keyword performance harvesting -> Syncs data to `keyword_monthly_metrics` -> Frontend displays dashboard analytics filtered by brand vs non-brand search impressions.
+7. **Location Media Upload Flow:** User uploads photo/video to location gallery -> Saved locally, queued for asynchronous sync to GBP via Celery (`location_media`) -> Google updates state (resource names, status) -> Synced back to the dashboard database gallery.
 
 ---
 
@@ -172,6 +180,10 @@ PostgreSQL 15
 * `location_daily_insights`: Daily metric counts for search, maps, calls, etc.
 * `location_edit`: State machine records for profile updates.
 * `gbp_attribute_definition`, `gbp_attribute_metadata`, `gbp_location_attribute_rejection`: Storage for dynamic attributes.
+* `location_media`: Gallery media items published to GBP (photos, videos, resource names, formats, thumbnails, and sync status).
+* `location_health_scores`: Storage for location health calculations, scores, labels, breakdowns, and recommendations.
+* `keyword_monthly_metrics`: Storage for monthly keyword performance metrics (impressions, period, keywords) tied to locations.
+* `organization_brand_terms`: Storage for organization-level brand terms used to filter search intelligence metrics.
 * `activity_log`, `activity_log_archive`: Persistent operational audit logs.
 * `razorpay_plans`: Available billing plans and pricing templates.
 * `billing_transaction`: Log of all processed payment transactions and subscription operations.
@@ -181,9 +193,10 @@ PostgreSQL 15
 * Users belong to Organizations.
 * Locations belong to Organizations.
 * `user_location_access` maps Users to specific Locations.
-* Reviews, insights, and attributes belong to Locations.
+* Reviews, insights, attributes, media items, health scores, and keyword metrics belong to Locations.
 * Posts generate PostVariants that belong to Locations.
 * Transactions and webhook logs reference Organizations.
+* Brand terms belong to Organizations.
 
 ## Migrations
 Managed by Alembic. Run `alembic upgrade head` before starting workers to prevent schema mismatch.
@@ -221,6 +234,7 @@ Docker Compose builds the backend from `backend/Dockerfile` and the frontend fro
 `pytest` is available for backend testing.
 Command: `pytest` inside the backend container.
 Billing tests can be run via: `pytest backend/tests/test_billing_fixes.py`
+Health score tests can be run via: `pytest backend/app/tests/services/test_health_score_service.py`
 
 ---
 
@@ -300,6 +314,9 @@ Billing tests can be run via: `pytest backend/tests/test_billing_fixes.py`
 * Database Schema
 * Agent Context & Known Quirks
 * Razorpay Billing System
+* Location Media
+* Search Intelligence
+* Location Health Score
 
 ## Partially Analyzed
 * Testing Strategy (Extrapolated from `.pytest_cache` and billing tests)

@@ -47,6 +47,8 @@ class PostService:
         if post_data.campaign_id:
             campaign = PostService._verify_ownership(db, Campaign, post_data.campaign_id, organization_id)
             
+        status_val = PostStatus.SCHEDULED.value if (post_data.publish_mode and post_data.publish_mode.lower() == "scheduled") else PostStatus.DRAFT.value
+
         post = Post(
             organization_id=organization_id,
             campaign_id=post_data.campaign_id,
@@ -55,11 +57,12 @@ class PostService:
             summary=post_data.summary,
             language_code=post_data.language_code,
             post_type=post_data.post_type.value,
-            status=PostStatus.DRAFT.value,
+            status=status_val,
             cta_type=post_data.cta_type.value if post_data.cta_type else None,
             cta_url=str(post_data.cta_url) if post_data.cta_url else None,
             is_bulk_post=post_data.is_bulk_post,
-            scheduled_at=post_data.scheduled_at
+            scheduled_at=post_data.scheduled_at,
+            target_location_ids=post_data.location_ids
         )
         db.add(post)
         db.flush()
@@ -67,6 +70,9 @@ class PostService:
         # Link explicit primary_post_id on campaign
         if campaign and not campaign.primary_post_id:
             campaign.primary_post_id = post.id
+            if status_val == PostStatus.SCHEDULED.value:
+                from app.constants.posts import CampaignStatus
+                campaign.status = CampaignStatus.SCHEDULED.value
             db.add(campaign)
         
         audit_log = PostAuditLog(
@@ -74,8 +80,8 @@ class PostService:
             post_id=post.id,
             actor_user_id=user_id,
             action="CREATED",
-            new_status=PostStatus.DRAFT.value,
-            log_metadata={"action": "draft_created"}
+            new_status=status_val,
+            log_metadata={"action": "draft_created", "publish_mode": post_data.publish_mode}
         )
         db.add(audit_log)
         db.commit()
@@ -115,7 +121,28 @@ class PostService:
                 )
 
         for key, value in update_dict.items():
+            if key == "publish_mode":
+                continue
+            if key == "location_ids":
+                post.target_location_ids = value
+                continue
             setattr(post, key, value)
+            
+        # Only apply publish_mode \u2192 status inference if no explicit status was sent by caller
+        if update_data.publish_mode and "status" not in update_dict:
+            new_mode_status = PostStatus.SCHEDULED.value if update_data.publish_mode.lower() == "scheduled" else PostStatus.DRAFT.value
+            if post.status != new_mode_status:
+                allowed = PostService._ALLOWED_PATCH_TRANSITIONS.get(old_status, [])
+                if new_mode_status not in allowed:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            f"Invalid status transition '{old_status}' \u2192 '{new_mode_status}' via PATCH. "
+                            f"Allowed: {allowed or 'none (terminal state)'}."
+                        )
+                    )
+                post.status = new_mode_status
+                update_dict["status"] = new_mode_status
 
         if "status" in update_dict and old_status != update_dict["status"]:
             audit_log = PostAuditLog(
@@ -132,6 +159,20 @@ class PostService:
         db.commit()
         db.refresh(post)
         return post
+
+    @staticmethod
+    def delete_post(db: Session, post_id: int, organization_id: int, user_id: int) -> None:
+        post = PostService._verify_ownership(db, Post, post_id, organization_id)
+        
+        # Only allow deleting Draft or Scheduled posts
+        if post.status not in [PostStatus.DRAFT.value, PostStatus.SCHEDULED.value]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot delete post in status '{post.status}'. Only Draft or Scheduled posts can be deleted."
+            )
+            
+        db.delete(post)
+        db.commit()
 
     @staticmethod
     def create_campaign(db: Session, campaign_data: CampaignCreateRequest, organization_id: int, user_id: int) -> Campaign:
@@ -296,9 +337,8 @@ class PostService:
         Also instantiates a PostVariant record if one doesn't exist, rendering the 
         summary and CTA URL (including UTM generator) for safety.
         """
-        VALID_PRE_PUBLISH = {"Approved", "APPROVED"}
-        if post.status not in VALID_PRE_PUBLISH:
-            raise ValueError(f"Cannot publish post in status '{post.status}'. Must be Approved.")
+        if normalize_status(post.status) not in ("APPROVED", "PUBLISHING"):
+            raise ValueError(f"Cannot publish post in status '{post.status}'. Must be APPROVED.")
         post.status = "PUBLISHING"
 
         # 1. Ensure PostVariant exists and is rendered
@@ -395,7 +435,7 @@ class PostService:
                         campaign_id=post.campaign_id,
                         post_id=post.id,
                         location_id=location_id,
-                        status="PENDING",
+                        status=PublishJobStatus.PENDING.value,
                         idempotency_key=idempotency_key,
                     )
                     db.add(job)
@@ -427,20 +467,15 @@ class PostService:
         organization_id: int,
         user_id: int
     ) -> PublishJob:
-        """
-        Helper method to publish a post to a location.
-        Enforces post approval, media validation, concurrency checks, and dispatches Celery task.
-        """
+        """Single-location publish helper used in tests. Production publish goes through the API routes."""
         post = PostService._verify_ownership(db, Post, post_id, organization_id)
 
-        # 1. Post Status Check
         if post.status.upper() != "APPROVED":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Only APPROVED posts can be published. Current status: {post.status}"
             )
 
-        # 2. Media Check
         media_list = db.query(PostMedia).filter(
             PostMedia.post_id == post_id,
             PostMedia.is_deleted == False
@@ -457,26 +492,16 @@ class PostService:
                     detail="Post media must be validated and optimized."
                 )
 
-        # 3. Concurrency check (return existing job if in-flight)
         existing_job = db.query(PublishJob).filter(
             PublishJob.post_id == post_id,
             PublishJob.location_id == location_id
         ).first()
-        if existing_job:
-            if existing_job.status.upper() in ["PENDING", "RUNNING", "RETRYING"]:
-                return existing_job
+        if existing_job and existing_job.status.upper() in ["PENDING", "RUNNING", "RETRYING"]:
+            return existing_job
 
-        # 4. Standard validation check
         PostService._validate_publish_eligibility(db, post, location_id, organization_id)
-
-        # 5. Stage, commit, and dispatch
         job = PostService._stage_publish_job(db, post, location_id, organization_id, user_id)
         db.commit()
-
-        # Dispatch task
-        from app.tasks import process_publish_job_task
-        process_publish_job_task.delay(job.id, organization_id)
-
         db.refresh(job)
         return job
 

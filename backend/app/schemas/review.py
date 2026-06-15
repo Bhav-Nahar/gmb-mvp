@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
+from app.schemas.reply_template import ReplyTemplateResponse
+
 class ReviewResponse(BaseModel):
     id: int
     organization_id: int
@@ -24,6 +26,8 @@ class ReviewResponse(BaseModel):
     sentiment: Optional[str] = None
     issue_category: Optional[str] = None
     sentiment_tagged_at: Optional[datetime] = None
+    location_name: str
+    suggested_templates: List[ReplyTemplateResponse] = []
 
     class Config:
         from_attributes = True
@@ -36,6 +40,7 @@ class ReviewListResponse(BaseModel):
 
 class ReviewReplyRequest(BaseModel):
     reply_text: str = Field(..., min_length=1, max_length=4000)
+    template_id: Optional[int] = None
 
 class GenerateReplyResponse(BaseModel):
     review_id: int

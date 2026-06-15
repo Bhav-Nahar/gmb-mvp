@@ -2,6 +2,7 @@ from enum import Enum
 
 class CampaignStatus(str, Enum):
     DRAFT = "Draft"
+    SCHEDULED = "Scheduled"
     QUEUED = "Queued"
     PROCESSING = "Processing"
     COMPLETED = "Completed"

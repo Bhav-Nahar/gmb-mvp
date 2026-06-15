@@ -40,6 +40,10 @@ class Review(Base):
     organization = relationship("Organization", back_populates="reviews")
     location = relationship("Location", back_populates="reviews")
 
+    @property
+    def location_name(self) -> str:
+        return self.location.location_name if self.location else ""
+
     __table_args__ = (
         UniqueConstraint("location_id", "provider", "provider_review_id", name="uq_review_provider_id"),
         Index("idx_reviews_location_created_at_desc", "location_id", review_created_at.desc()),
