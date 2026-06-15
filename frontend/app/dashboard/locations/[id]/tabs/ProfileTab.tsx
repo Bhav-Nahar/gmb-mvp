@@ -7,7 +7,6 @@ import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
 import { useAuth } from "@/hooks/useAuth"
 import { SkeletonLoader } from "../components/SkeletonLoader"
 import { DynamicFormEngine } from "../components/DynamicFormEngine"
-import { GoogleDataPanel } from "../components/GoogleDataPanel"
 
 interface ProfileTabProps {
   locationId: number
@@ -121,10 +120,6 @@ export function ProfileTab({ locationId, setHasUnsavedChanges }: ProfileTabProps
     <div className="space-y-8 animate-in fade-in duration-500">
       {renderSection("Critical Fields", criticalFields)}
       {renderSection("Standard Fields", standardFields)}
-
-      <div className="space-y-4 pt-6 border-t border-border/50">
-        <GoogleDataPanel location={location} />
-      </div>
 
       <div className="space-y-4 pt-6 border-t border-border/50">
         <DynamicFormEngine locationId={locationId} />

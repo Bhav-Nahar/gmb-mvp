@@ -18,8 +18,54 @@ def transform_identity(field_name: str, value: Any, location: Any = None) -> Dic
 def transform_location_name(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     return {"title": str(value)}
 
+def _existing_additional_phones(location: Any) -> List[str]:
+    raw = getattr(location, "additional_phones", None) or [] if location is not None else []
+    return [str(p) for p in raw if p]
+
 def transform_phone(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
-    return {"phoneNumbers": {"primaryPhone": str(value)}}
+    # "phoneNumbers" mask is atomic — preserve additionalPhones so editing the
+    # primary number doesn't wipe the secondaries.
+    phones: Dict[str, Any] = {"primaryPhone": str(value)}
+    extra = _existing_additional_phones(location)
+    if extra:
+        phones["additionalPhones"] = extra
+    return {"phoneNumbers": phones}
+
+def transform_additional_phones(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
+    if value is None:
+        value = []
+    if not isinstance(value, list):
+        raise ValueError(f"additional_phones expects a list, got {type(value).__name__}")
+    phones: Dict[str, Any] = {"additionalPhones": [str(p) for p in value if p]}
+    # Preserve the primary so the atomic "phoneNumbers" PATCH doesn't clear it.
+    primary = getattr(location, "phone", None) if location else None
+    if primary:
+        phones["primaryPhone"] = str(primary)
+    return {"phoneNumbers": phones}
+
+def transform_special_hours(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
+    # value is already in GBP shape: {"specialHourPeriods": [...]}
+    if not value:
+        return {"specialHours": {"specialHourPeriods": []}}
+    if isinstance(value, list):
+        value = {"specialHourPeriods": value}
+    return {"specialHours": value}
+
+def transform_service_items(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
+    if value is None:
+        value = []
+    if not isinstance(value, list):
+        raise ValueError(f"service_items expects a list, got {type(value).__name__}")
+    return {"serviceItems": value}
+
+def transform_open_info(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {"status": value.get("status")}
+        if value.get("openingDate"):
+            out["openingDate"] = value["openingDate"]
+    else:
+        out = {"status": str(value)}
+    return {"openInfo": out}
 
 def transform_url(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
     return {"websiteUri": str(value)}
@@ -122,6 +168,10 @@ TRANSFORMER_REGISTRY: Dict[str, Callable[[str, Any], Dict[str, Any]]] = {
     "description": transform_description,
     "primary_category": transform_primary_category,
     "additional_categories": transform_additional_categories,
+    "additional_phones": transform_additional_phones,
+    "special_hours": transform_special_hours,
+    "service_items": transform_service_items,
+    "open_info": transform_open_info,
     "address": transform_address,
     "business_hours": transform_business_hours,
 }

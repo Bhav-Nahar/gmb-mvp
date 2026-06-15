@@ -185,6 +185,69 @@ export function FieldRenderer({
       )
     }
 
+    if (fieldConfig.name === "additional_phones") {
+      const list = Array.isArray(val) ? val.filter(Boolean) : []
+      if (list.length === 0) return <span className="text-muted-foreground italic">None</span>
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {list.map((p: any, i: number) => (
+            <span key={i} className="inline-flex items-center rounded-md bg-muted/40 text-foreground/80 border border-border/50 px-2 py-0.5 text-xs font-medium">{String(p)}</span>
+          ))}
+        </div>
+      )
+    }
+
+    if (fieldConfig.name === "special_hours") {
+      const periods = (val && val.specialHourPeriods) || []
+      if (periods.length === 0) return <span className="text-muted-foreground italic">None</span>
+      return (
+        <div className="space-y-1">
+          {periods.map((p: any, i: number) => (
+            <div key={i} className="flex items-center gap-2 text-xs">
+              <span className="font-mono text-foreground/80">{fmtGDate(p.startDate)}</span>
+              {p.closed ? <span className="text-red-400 font-semibold">Closed</span>
+                : <span className="text-indigo-300 font-mono">{fmtGTime(p.openTime)}–{fmtGTime(p.closeTime)}</span>}
+            </div>
+          ))}
+        </div>
+      )
+    }
+
+    if (fieldConfig.name === "service_items") {
+      const items = Array.isArray(val) ? val : []
+      if (items.length === 0) return <span className="text-muted-foreground italic">None</span>
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {items.map((it: any, i: number) => {
+            const free = it.freeFormServiceItem
+            const title = free?.label?.displayName || it.structuredServiceItem?.serviceTypeId || "Service"
+            const desc = free?.label?.description
+            const price = it.price?.units != null ? `${it.price.currencyCode || ''} ${it.price.units}`.trim() : null
+            return (
+              <div key={i} className="rounded-lg border border-border/50 bg-muted/10 p-2.5 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-xs font-semibold text-foreground">{title}</span>
+                  {price && <span className="text-[11px] font-bold text-emerald-500 shrink-0">{price}</span>}
+                </div>
+                {desc && <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{desc}</p>}
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+
+    if (fieldConfig.name === "open_info") {
+      const status = (val && val.status) || (typeof val === "string" ? val : null)
+      if (!status) return <span className="text-muted-foreground italic">Not set</span>
+      return (
+        <span className="text-foreground font-medium">
+          {String(status).replace(/_/g, " ")}
+          {val?.openingDate && <span className="text-muted-foreground"> · opened {fmtGDate(val.openingDate)}</span>}
+        </span>
+      )
+    }
+
     if (fieldConfig.ui_component === "business_hours_editor" || fieldConfig.name === "business_hours") {
       const hoursMap = parseHours(val)
       return (
@@ -249,8 +312,36 @@ export function FieldRenderer({
       )
     }
 
-    const uiComponent = fieldConfig.ui_component || (fieldConfig.name === "business_hours" ? "business_hours_editor" : fieldConfig.name === "primary_category" ? "category_autocomplete" : fieldConfig.name === "additional_categories" ? "multi_category_autocomplete" : (typeof value === "object" || fieldConfig.name.includes("description") ? "textarea" : "input"))
+    const NAME_TO_UI: Record<string, string> = {
+      business_hours: "business_hours_editor",
+      primary_category: "category_autocomplete",
+      additional_categories: "multi_category_autocomplete",
+      additional_phones: "phones_editor",
+      special_hours: "special_hours_editor",
+      service_items: "service_items_editor",
+      open_info: "open_status_editor",
+    }
+    const uiComponent = fieldConfig.ui_component || NAME_TO_UI[fieldConfig.name] || (typeof value === "object" || fieldConfig.name.includes("description") ? "textarea" : "input")
+
+    const selfManaged = (serialized: any) => {
+      onSave(fieldConfig.name, serialized, false)
+      setIsEditing(false)
+      if (onEditingChange) onEditingChange(false)
+    }
+    const cancelEdit = () => {
+      setIsEditing(false)
+      if (onEditingChange) onEditingChange(false)
+    }
+
     switch (uiComponent) {
+      case "phones_editor":
+        return <PhonesEditor initialValue={value} onSave={selfManaged} onCancel={cancelEdit} />
+      case "special_hours_editor":
+        return <SpecialHoursEditor initialValue={value} onSave={selfManaged} onCancel={cancelEdit} />
+      case "service_items_editor":
+        return <ServiceItemsEditor initialValue={value} onSave={selfManaged} onCancel={cancelEdit} />
+      case "open_status_editor":
+        return <OpenStatusEditor initialValue={value} onSave={selfManaged} onCancel={cancelEdit} />
       case "multi_category_autocomplete":
         return (
           <MultiCategoryEditor
@@ -349,7 +440,7 @@ export function FieldRenderer({
         {isEditing ? (
           <div className="space-y-2">
             {renderEditor()}
-            {fieldConfig.ui_component !== "business_hours_editor" && fieldConfig.name !== "business_hours" && fieldConfig.name !== "address" && fieldConfig.name !== "additional_categories" && (
+            {fieldConfig.ui_component !== "business_hours_editor" && !["business_hours", "address", "additional_categories", "additional_phones", "special_hours", "service_items", "open_info"].includes(fieldConfig.name) && (
               <div className="flex justify-end gap-2 mt-2">
                 <Button variant="ghost" size="sm" className="text-xs" onClick={() => {
                   setIsEditing(false)
@@ -902,5 +993,185 @@ function AddressEditor({
         </Button>
       </div>
     </form>
+  )
+}
+
+// ── Helpers for GBP date/time shapes ────────────────────────────────────────
+function fmtGTime(t: any): string {
+  if (!t) return "00:00"
+  if (typeof t === "string") return t
+  return `${String(t.hours ?? 0).padStart(2, "0")}:${String(t.minutes ?? 0).padStart(2, "0")}`
+}
+function parseGTime(s: string): { hours: number; minutes: number } {
+  const [h, m] = (s || "00:00").split(":")
+  return { hours: Number(h) || 0, minutes: Number(m) || 0 }
+}
+function fmtGDate(d: any): string {
+  if (!d) return ""
+  return `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`
+}
+function parseGDate(s: string): { year: number; month: number; day: number } | null {
+  if (!s) return null
+  const [y, m, d] = s.split("-")
+  if (!y || !m || !d) return null
+  return { year: Number(y), month: Number(m), day: Number(d) }
+}
+
+// ── Additional phones editor ────────────────────────────────────────────────
+function PhonesEditor({ initialValue, onSave, onCancel }: { initialValue: any; onSave: (v: string[]) => void; onCancel: () => void }) {
+  const [phones, setPhones] = useState<string[]>(() => (Array.isArray(initialValue) ? initialValue.map(String) : []))
+  const update = (i: number, v: string) => setPhones(prev => prev.map((p, idx) => (idx === i ? v : p)))
+  const remove = (i: number) => setPhones(prev => prev.filter((_, idx) => idx !== i))
+  return (
+    <div className="space-y-2">
+      {phones.map((p, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <Input value={p} onChange={e => update(i, e.target.value)} placeholder="+91 …" className="bg-background/50 border-border text-sm" />
+          <button type="button" onClick={() => remove(i)} className="text-muted-foreground hover:text-red-400 text-lg px-1">×</button>
+        </div>
+      ))}
+      <Button variant="ghost" size="sm" className="text-xs" onClick={() => setPhones(prev => [...prev, ""])}>+ Add phone</Button>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" className="text-xs" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white" onClick={() => onSave(phones.map(p => p.trim()).filter(Boolean))}>Save</Button>
+      </div>
+    </div>
+  )
+}
+
+// ── Special hours editor ────────────────────────────────────────────────────
+interface SpecialRow { date: string; closed: boolean; open: string; close: string }
+function SpecialHoursEditor({ initialValue, onSave, onCancel }: { initialValue: any; onSave: (v: any) => void; onCancel: () => void }) {
+  const parse = (val: any): SpecialRow[] => {
+    const periods = (val && val.specialHourPeriods) || []
+    return periods.map((p: any) => ({
+      date: fmtGDate(p.startDate),
+      closed: !!p.closed,
+      open: fmtGTime(p.openTime),
+      close: fmtGTime(p.closeTime),
+    }))
+  }
+  const [rows, setRows] = useState<SpecialRow[]>(() => parse(initialValue))
+  const update = (i: number, patch: Partial<SpecialRow>) => setRows(prev => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+  const remove = (i: number) => setRows(prev => prev.filter((_, idx) => idx !== i))
+  const save = () => {
+    const specialHourPeriods = rows.filter(r => r.date).map(r => {
+      const startDate = parseGDate(r.date)
+      if (r.closed) return { startDate, endDate: startDate, closed: true }
+      return { startDate, endDate: startDate, openTime: parseGTime(r.open), closeTime: parseGTime(r.close) }
+    })
+    onSave({ specialHourPeriods })
+  }
+  return (
+    <div className="space-y-2">
+      {rows.map((r, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-background/50 border border-border/30">
+          <input type="date" value={r.date} onChange={e => update(i, { date: e.target.value })} className="rounded border border-border bg-background/50 px-2 py-1 text-xs text-foreground" />
+          <label className="flex items-center gap-1.5 text-xs">
+            <input type="checkbox" checked={r.closed} onChange={e => update(i, { closed: e.target.checked })} className="h-3.5 w-3.5" />
+            Closed
+          </label>
+          {!r.closed && (
+            <>
+              <input type="text" value={r.open} onChange={e => update(i, { open: e.target.value })} placeholder="09:00" className="w-16 rounded border border-border bg-background/50 px-2 py-1 text-center text-xs font-mono" />
+              <span className="text-xs text-muted-foreground">–</span>
+              <input type="text" value={r.close} onChange={e => update(i, { close: e.target.value })} placeholder="17:00" className="w-16 rounded border border-border bg-background/50 px-2 py-1 text-center text-xs font-mono" />
+            </>
+          )}
+          <button type="button" onClick={() => remove(i)} className="text-muted-foreground hover:text-red-400 text-lg px-1 ml-auto">×</button>
+        </div>
+      ))}
+      <Button variant="ghost" size="sm" className="text-xs" onClick={() => setRows(prev => [...prev, { date: "", closed: true, open: "09:00", close: "17:00" }])}>+ Add date</Button>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" className="text-xs" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white" onClick={save}>Save</Button>
+      </div>
+    </div>
+  )
+}
+
+// ── Services (free-form service items) editor ───────────────────────────────
+interface SvcRow { displayName: string; description: string; price: string; _original?: any }
+function ServiceItemsEditor({ initialValue, onSave, onCancel }: { initialValue: any; onSave: (v: any[]) => void; onCancel: () => void }) {
+  const items: any[] = Array.isArray(initialValue) ? initialValue : []
+  // Preserve non-free-form (structured) items untouched; only edit free-form ones.
+  const preserved = items.filter(it => !it.freeFormServiceItem)
+  const parse = (): SvcRow[] => items.filter(it => it.freeFormServiceItem).map(it => ({
+    displayName: it.freeFormServiceItem?.label?.displayName || "",
+    description: it.freeFormServiceItem?.label?.description || "",
+    price: it.price?.units != null ? String(it.price.units) : "",
+    _original: it,
+  }))
+  const [rows, setRows] = useState<SvcRow[]>(parse)
+  const update = (i: number, patch: Partial<SvcRow>) => setRows(prev => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+  const remove = (i: number) => setRows(prev => prev.filter((_, idx) => idx !== i))
+  const save = () => {
+    const edited = rows.filter(r => r.displayName.trim()).map(r => {
+      const orig = r._original || {}
+      const item: any = {
+        ...orig,
+        freeFormServiceItem: {
+          ...(orig.freeFormServiceItem || {}),
+          label: { displayName: r.displayName.trim(), ...(r.description.trim() ? { description: r.description.trim() } : {}) },
+        },
+      }
+      if (r.price.trim()) {
+        item.price = { currencyCode: orig.price?.currencyCode || "INR", units: r.price.trim() }
+      } else {
+        delete item.price
+      }
+      return item
+    })
+    onSave([...preserved, ...edited])
+  }
+  return (
+    <div className="space-y-3">
+      {rows.map((r, i) => (
+        <div key={i} className="rounded-lg border border-border/50 bg-muted/10 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Input value={r.displayName} onChange={e => update(i, { displayName: e.target.value })} placeholder="Service name" className="bg-background/50 border-border text-sm font-semibold" />
+            <Input value={r.price} onChange={e => update(i, { price: e.target.value })} placeholder="Price" className="bg-background/50 border-border text-sm w-24" />
+            <button type="button" onClick={() => remove(i)} className="text-muted-foreground hover:text-red-400 text-lg px-1">×</button>
+          </div>
+          <Textarea value={r.description} onChange={e => update(i, { description: e.target.value })} placeholder="Description (optional)" className="bg-background/50 border-border text-xs min-h-[60px]" />
+        </div>
+      ))}
+      <Button variant="ghost" size="sm" className="text-xs" onClick={() => setRows(prev => [...prev, { displayName: "", description: "", price: "" }])}>+ Add service</Button>
+      {preserved.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">{preserved.length} structured service(s) from Google are preserved and not shown here.</p>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" className="text-xs" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white" onClick={save}>Save</Button>
+      </div>
+    </div>
+  )
+}
+
+// ── Open status editor ──────────────────────────────────────────────────────
+const OPEN_STATUSES = ["OPEN", "CLOSED_TEMPORARILY", "CLOSED_PERMANENTLY"]
+function OpenStatusEditor({ initialValue, onSave, onCancel }: { initialValue: any; onSave: (v: any) => void; onCancel: () => void }) {
+  const [status, setStatus] = useState<string>(() => (initialValue?.status || (typeof initialValue === "string" ? initialValue : "OPEN")))
+  const [openingDate, setOpeningDate] = useState<string>(() => fmtGDate(initialValue?.openingDate))
+  const save = () => {
+    const out: any = { status }
+    const d = parseGDate(openingDate)
+    if (d) out.openingDate = d
+    onSave(out)
+  }
+  return (
+    <div className="space-y-2">
+      <select value={status} onChange={e => setStatus(e.target.value)} className="w-full rounded-md border border-border bg-background/50 px-3 py-2 text-sm text-foreground">
+        {OPEN_STATUSES.map(s => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
+      </select>
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-muted-foreground">Opening date (optional):</span>
+        <input type="date" value={openingDate} onChange={e => setOpeningDate(e.target.value)} className="rounded border border-border bg-background/50 px-2 py-1 text-foreground" />
+      </div>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" className="text-xs" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white" onClick={save}>Save</Button>
+      </div>
+    </div>
   )
 }
