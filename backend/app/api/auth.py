@@ -292,6 +292,11 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             OrganizationSyncState.organization_id == user.organization_id
         ).first()
 
+        # Only show the "Syncing Workspace..." onboarding preloader when we actually
+        # kick off the org's FIRST-EVER onboarding sync. A returning user (or anyone
+        # whose org already has a sync state) has onboarded before and must not see it.
+        triggered_onboarding = False
+
         if not sync_state:
             # First-time onboarding sync: create the state record and immediately trigger.
             # Guard against a rare race condition (two simultaneous first-logins for the
@@ -305,6 +310,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                 )
                 db.add(sync_state)
                 db.commit()
+                triggered_onboarding = True
                 celery.send_task(
                     "app.tasks.sync_locations_task",
                     args=[user.organization_id, user.id, "Onboarding"]
@@ -365,7 +371,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         session_csrf = secrets.token_urlsafe(32)
         
         # Redirect to frontend success page
-        redirect_url = f"{settings.FRONTEND_URL}/login/success?onboarding={'true' if is_new_user else 'false'}"
+        redirect_url = f"{settings.FRONTEND_URL}/login/success?onboarding={'true' if triggered_onboarding else 'false'}"
         response = RedirectResponse(url=redirect_url)
         
         # Force insecure cookies for localhost development even if FRONTEND_URL is https

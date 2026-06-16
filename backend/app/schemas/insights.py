@@ -33,6 +33,13 @@ class DailyMetricPoint(BaseModel):
     direction_conversion_rate: Optional[float] = None
     avg_sentiment_score: Optional[float] = None
 
+class PlatformDeviceBreakdown(BaseModel):
+    # Impressions split across platform (search/maps) and device (desktop/mobile).
+    desktop_search: int = 0
+    mobile_search: int = 0
+    desktop_maps: int = 0
+    mobile_maps: int = 0
+
 class LeaderboardLocation(BaseModel):
     location_id: int
     location_name: str
@@ -60,6 +67,16 @@ class SLAMetricsSummary(BaseModel):
     response_rate: float
     avg_response_time_hours: Optional[float] = None
 
+class ReputationVelocity(BaseModel):
+    # avg_rating is the standing rating (simple mean of each location's current
+    # average_rating), so it is not range-dependent and carries no delta.
+    avg_rating: Optional[float] = None
+    rated_location_count: int = 0
+    # Reviews received per day over the selected range, with a vs-prior delta.
+    review_velocity_per_day: InsightsMetricDelta = Field(
+        default_factory=lambda: InsightsMetricDelta(current=0, prior=0)
+    )
+
 class InsightsOverviewResponse(BaseModel):
     kpis: OverviewKPIs
     trends: List[DailyMetricPoint]
@@ -69,6 +86,8 @@ class InsightsOverviewResponse(BaseModel):
     sentiment: Optional[SentimentBreakdown] = None
     sla: Optional[SLAMetricsSummary] = None
     top_issue_categories: List[IssueCategorySummary] = Field(default_factory=list)
+    platform_device: PlatformDeviceBreakdown = Field(default_factory=PlatformDeviceBreakdown)
+    reputation: ReputationVelocity = Field(default_factory=ReputationVelocity)
 
 class LocationInsightsResponse(BaseModel):
     location_id: int
@@ -81,6 +100,21 @@ class LocationInsightsResponse(BaseModel):
     sentiment: SentimentBreakdown
     sla: SLAMetricsSummary
     top_issue_categories: List[IssueCategorySummary]
+    platform_device: PlatformDeviceBreakdown = Field(default_factory=PlatformDeviceBreakdown)
+    reputation: ReputationVelocity = Field(default_factory=ReputationVelocity)
+
+class InsightsSummaryResponse(BaseModel):
+    # Lightweight reputation snapshot for the dashboard + reviews KPI cards.
+    avg_rating: Optional[float] = None
+    rated_location_count: int = 0
+    total_reviews: int = 0  # reviews received in the last 30 days (window metric)
+    # All-time review count — sum of each location's standing total_reviews.
+    total_reviews_all_time: int = 0
+    review_velocity_per_day: InsightsMetricDelta = Field(
+        default_factory=lambda: InsightsMetricDelta(current=0, prior=0)
+    )
+    # All-time review response rate (%): replied ÷ total; None when no reviews.
+    response_rate: Optional[float] = None
 
 class InsightsSyncPostResponse(BaseModel):
     task_id: str

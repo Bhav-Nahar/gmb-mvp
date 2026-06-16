@@ -503,19 +503,29 @@ class GBPProvider(BaseProvider):
                 search_queries_direct = int(search_views * random.uniform(0.25, 0.35))
                 search_queries_indirect = int(search_views * random.uniform(0.50, 0.60))
                 search_queries_chain = search_views - search_queries_direct - search_queries_indirect
+                # Split each platform across desktop/mobile (mobile-skewed, as is typical).
+                desktop_search = int(search_views * random.uniform(0.25, 0.45))
+                mobile_search = search_views - desktop_search
+                desktop_maps = int(map_views * random.uniform(0.20, 0.40))
+                mobile_maps = map_views - desktop_maps
                 insights.append(DailyInsightMetric(
                     date=dt, search_views=search_views, map_views=map_views,
+                    desktop_search_impressions=desktop_search, mobile_search_impressions=mobile_search,
+                    desktop_maps_impressions=desktop_maps, mobile_maps_impressions=mobile_maps,
                     website_clicks=website_clicks, phone_calls=phone_calls,
                     direction_requests=direction_requests, search_queries_direct=search_queries_direct,
                     search_queries_indirect=search_queries_indirect, search_queries_chain=search_queries_chain
                 ))
             return insights
 
+        # Map each Google metric to its own granular column so the platform
+        # (search/maps) × device (desktop/mobile) breakdown is preserved.
+        # search_views / map_views are derived as sums after parsing.
         METRIC_COLUMN_MAP = {
-            "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH": "search_views",
-            "BUSINESS_IMPRESSIONS_MOBILE_SEARCH": "search_views",
-            "BUSINESS_IMPRESSIONS_DESKTOP_MAPS": "map_views",
-            "BUSINESS_IMPRESSIONS_MOBILE_MAPS": "map_views",
+            "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH": "desktop_search_impressions",
+            "BUSINESS_IMPRESSIONS_MOBILE_SEARCH": "mobile_search_impressions",
+            "BUSINESS_IMPRESSIONS_DESKTOP_MAPS": "desktop_maps_impressions",
+            "BUSINESS_IMPRESSIONS_MOBILE_MAPS": "mobile_maps_impressions",
             "WEBSITE_CLICKS": "website_clicks",
             "CALL_CLICKS": "phone_calls",
             "BUSINESS_DIRECTION_REQUESTS": "direction_requests",
@@ -616,7 +626,12 @@ class GBPProvider(BaseProvider):
                     except Exception as ex:
                         logger.error(f"Error parsing dated value {dv} for metric {metric_name}: {str(ex)}")
                         continue
-                        
+
+        # Derive the platform totals from their device components.
+        for metric in day_data.values():
+            metric.search_views = metric.desktop_search_impressions + metric.mobile_search_impressions
+            metric.map_views = metric.desktop_maps_impressions + metric.mobile_maps_impressions
+
         return sorted(day_data.values(), key=lambda x: x.date)
 
     async def get_search_keyword_insights(self, location_id: str, start_date: datetime.date, end_date: datetime.date, account_id: Optional[str] = None) -> List[KeywordInsightMetric]:

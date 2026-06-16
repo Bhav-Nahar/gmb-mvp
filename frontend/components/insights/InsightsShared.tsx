@@ -70,6 +70,19 @@ export interface IssueCategorySummary {
   count: number
 }
 
+export interface PlatformDeviceBreakdown {
+  desktop_search: number
+  mobile_search: number
+  desktop_maps: number
+  mobile_maps: number
+}
+
+export interface ReputationVelocity {
+  avg_rating: number | null
+  rated_location_count: number
+  review_velocity_per_day: InsightsMetricDelta
+}
+
 // Static Tailwind classes — dynamic `text-${color}-400` strings get purged in
 // production builds, so the KPI icon tints must be spelled out literally.
 const KPI_ICON_CLASSES: Record<string, string> = {
@@ -79,6 +92,10 @@ const KPI_ICON_CLASSES: Record<string, string> = {
   emerald: 'text-emerald-400',
   purple: 'text-purple-400',
   amber: 'text-amber-400',
+  yellow: 'text-yellow-400',
+  pink: 'text-pink-400',
+  // Golden filled star — `fill` is inherited by the SVG, so the Star renders solid gold.
+  gold: 'text-amber-400 fill-amber-400',
 }
 
 // Plottable daily metrics. `color` is a hex value because it feeds SVG strokes
@@ -109,12 +126,25 @@ export function KpiCard({
   icon: Icon,
   metric,
   color,
+  formatValue,
+  valueSuffix,
+  subtitle,
+  hideDelta = false,
 }: {
   title: string
   icon: any
   metric: InsightsMetricDelta
   color: string
+  // Optional formatter for the displayed value (defaults to integer locale string).
+  formatValue?: (n: number) => string
+  // Small unit rendered after the value, e.g. "/day".
+  valueSuffix?: string
+  // Overrides the "vs prior period (...)" footer.
+  subtitle?: string
+  // Hide the delta badge + footer entirely (for standing metrics like rating).
+  hideDelta?: boolean
 }) {
+  const fmt = formatValue ?? ((n: number) => n.toLocaleString())
   const isPositive = metric.percentage_change !== null && metric.percentage_change > 0
   const isNegative = metric.percentage_change !== null && metric.percentage_change < 0
   const isFlat = metric.percentage_change === 0
@@ -132,36 +162,39 @@ export function KpiCard({
       </div>
       <div className="mt-4 flex items-baseline justify-between">
         <span className="text-3xl font-extrabold text-foreground">
-          {metric.current.toLocaleString()}
+          {fmt(metric.current)}
+          {valueSuffix && <span className="text-base font-bold text-muted-foreground ml-0.5">{valueSuffix}</span>}
         </span>
-        <div className="flex items-center gap-1">
-          {metric.percentage_change !== null ? (
-            <span
-              className={`flex items-center text-xs font-bold ${
-                isPositive ? 'text-emerald-600 dark:text-emerald-400' : isNegative ? 'text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400'
-              }`}
-            >
-              {isFlat ? (
-                <Minus className="h-3 w-3 mr-0.5" />
-              ) : isPositive ? (
+        {!hideDelta && (
+          <div className="flex items-center gap-1">
+            {metric.percentage_change !== null ? (
+              <span
+                className={`flex items-center text-xs font-bold ${
+                  isPositive ? 'text-emerald-600 dark:text-emerald-400' : isNegative ? 'text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400'
+                }`}
+              >
+                {isFlat ? (
+                  <Minus className="h-3 w-3 mr-0.5" />
+                ) : isPositive ? (
+                  <TrendingUp className="h-3 w-3 mr-0.5" />
+                ) : (
+                  <TrendingDown className="h-3 w-3 mr-0.5" />
+                )}
+                {Math.abs(metric.percentage_change).toFixed(1)}%
+              </span>
+            ) : isNew ? (
+              <span className="flex items-center text-xs font-bold text-emerald-600 dark:text-emerald-400">
                 <TrendingUp className="h-3 w-3 mr-0.5" />
-              ) : (
-                <TrendingDown className="h-3 w-3 mr-0.5" />
-              )}
-              {Math.abs(metric.percentage_change).toFixed(1)}%
-            </span>
-          ) : isNew ? (
-            <span className="flex items-center text-xs font-bold text-emerald-600 dark:text-emerald-400">
-              <TrendingUp className="h-3 w-3 mr-0.5" />
-              New
-            </span>
-          ) : (
-            <span className="text-xs text-gray-500">—</span>
-          )}
-        </div>
+                New
+              </span>
+            ) : (
+              <span className="text-xs text-gray-500">—</span>
+            )}
+          </div>
+        )}
       </div>
       <div className="mt-2 text-xs text-muted-foreground">
-        vs prior period ({metric.prior.toLocaleString()})
+        {subtitle ?? (hideDelta ? ' ' : `vs prior period (${fmt(metric.prior)}${valueSuffix ?? ''})`)}
       </div>
     </div>
   )
@@ -615,6 +648,162 @@ export function PeriodComparison({ kpis }: { kpis: OverviewKPIs }) {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+// ---- Platform & Device impressions (donut chart, custom SVG) ----------------
+
+const PLATFORM_DEVICE_SLICES: { key: keyof PlatformDeviceBreakdown; label: string; color: string }[] = [
+  { key: 'mobile_search', label: 'Mobile Search', color: '#38bdf8' },
+  { key: 'desktop_search', label: 'Desktop Search', color: '#6366f1' },
+  { key: 'mobile_maps', label: 'Mobile Maps', color: '#fb7185' },
+  { key: 'desktop_maps', label: 'Desktop Maps', color: '#f59e0b' },
+]
+
+// Polar → cartesian on a unit circle, with 0° at 12 o'clock going clockwise.
+function polar(cx: number, cy: number, r: number, fraction: number) {
+  const angle = fraction * 2 * Math.PI - Math.PI / 2
+  return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) }
+}
+
+export function PlatformDeviceImpressions({ data }: { data: PlatformDeviceBreakdown }) {
+  const [active, setActive] = useState<keyof PlatformDeviceBreakdown | null>(null)
+
+  const slices = PLATFORM_DEVICE_SLICES.map((s) => ({ ...s, value: Math.max(0, data[s.key] || 0) }))
+  const total = slices.reduce((sum, s) => sum + s.value, 0)
+
+  // ViewBox geometry — keep R + STROKE/2 comfortably inside the box so the ring
+  // is never clipped (the previous version drew outside the viewBox).
+  const SIZE = 180
+  const C = SIZE / 2
+  const R = 66
+  const STROKE = 24
+  const GAP = 0.012 // fractional gap between slices for visual separation
+
+  const drawn = slices.filter((s) => s.value > 0)
+  let cursor = 0
+  const arcs = drawn.map((s) => {
+    const frac = s.value / total
+    const start = cursor
+    const end = cursor + frac
+    cursor = end
+    // Inset each slice slightly so neighbours don't touch (skip when only one slice).
+    const gap = drawn.length > 1 ? GAP / 2 : 0
+    const a = polar(C, C, R, start + gap)
+    const b = polar(C, C, R, end - gap)
+    const largeArc = end - start - 2 * gap > 0.5 ? 1 : 0
+    const d =
+      frac >= 0.999
+        ? `M ${C - R} ${C} A ${R} ${R} 0 1 1 ${C - R - 0.01} ${C}`
+        : `M ${a.x} ${a.y} A ${R} ${R} 0 ${largeArc} 1 ${b.x} ${b.y}`
+    return { ...s, d, frac }
+  })
+
+  const activeSlice = active ? slices.find((s) => s.key === active) : null
+
+  return (
+    <div className="glass-panel p-4 sm:p-5">
+      <div className="flex items-center gap-2 mb-1">
+        <Compass className="h-4 w-4 text-indigo-400 shrink-0" />
+        <h3 className="text-sm font-bold text-foreground">Platform &amp; Device Impressions</h3>
+      </div>
+      <p className="text-[11px] text-muted-foreground mb-4">
+        How customers found this profile, split by Search vs Maps and Desktop vs Mobile.
+      </p>
+
+      {total === 0 ? (
+        <div className="flex items-center justify-center h-[160px] text-xs text-muted-foreground">
+          No impression data for this period yet.
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:gap-7">
+          {/* Donut — fixed, centered, never stretched */}
+          <div
+            className="relative mx-auto shrink-0"
+            style={{ width: SIZE, height: SIZE, maxWidth: '70vw' }}
+          >
+            <svg
+              viewBox={`0 0 ${SIZE} ${SIZE}`}
+              className="w-full h-full -rotate-0"
+              onMouseLeave={() => setActive(null)}
+            >
+              {/* Track ring */}
+              <circle cx={C} cy={C} r={R} fill="none" strokeWidth={STROKE} className="stroke-muted/25" />
+              {arcs.map((arc) => {
+                const isActive = active === arc.key
+                const dim = active !== null && !isActive
+                return (
+                  <path
+                    key={arc.key}
+                    d={arc.d}
+                    fill="none"
+                    stroke={arc.color}
+                    strokeWidth={isActive ? STROKE + 6 : STROKE}
+                    strokeLinecap="round"
+                    className="cursor-pointer transition-all duration-200"
+                    style={{ opacity: dim ? 0.3 : 1 }}
+                    onMouseEnter={() => setActive(arc.key)}
+                    onClick={() => setActive((prev) => (prev === arc.key ? null : arc.key))}
+                  />
+                )
+              })}
+            </svg>
+
+            {/* Center label — reflects the hovered/selected slice, else the total */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-6 text-center">
+              {activeSlice ? (
+                <>
+                  <span className="text-base sm:text-lg font-extrabold text-foreground leading-none tabular-nums">
+                    {((activeSlice.value / total) * 100).toFixed(1)}%
+                  </span>
+                  <span className="text-[10px] font-medium mt-1" style={{ color: activeSlice.color }}>
+                    {activeSlice.label}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    {activeSlice.value.toLocaleString()}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-lg sm:text-xl font-extrabold text-foreground leading-none tabular-nums">
+                    {total.toLocaleString()}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">total impressions</span>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Legend — interactive rows, full width on mobile */}
+          <ul className="w-full flex-1 space-y-1">
+            {slices.map((s) => {
+              const pct = total ? (s.value / total) * 100 : 0
+              const isActive = active === s.key
+              const dim = active !== null && !isActive
+              return (
+                <li key={s.key}>
+                  <button
+                    type="button"
+                    onMouseEnter={() => setActive(s.key)}
+                    onMouseLeave={() => setActive(null)}
+                    onClick={() => setActive((prev) => (prev === s.key ? null : s.key))}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs transition-colors ${
+                      isActive ? 'bg-muted/50' : 'hover:bg-muted/30'
+                    }`}
+                    style={{ opacity: dim ? 0.5 : 1 }}
+                  >
+                    <span className="h-3 w-3 rounded-full shrink-0 ring-2 ring-transparent" style={{ backgroundColor: s.color }} />
+                    <span className="text-foreground/90 flex-1 text-left font-medium">{s.label}</span>
+                    <span className="font-semibold text-foreground tabular-nums">{s.value.toLocaleString()}</span>
+                    <span className="text-muted-foreground/70 tabular-nums w-12 text-right">{pct.toFixed(1)}%</span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

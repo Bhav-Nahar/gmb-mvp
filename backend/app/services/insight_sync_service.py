@@ -110,6 +110,10 @@ class InsightSyncService:
             if isinstance(perf, DailyInsightMetric):
                 search_impressions = perf.search_views
                 maps_views = perf.map_views
+                desktop_search_impressions = perf.desktop_search_impressions
+                mobile_search_impressions = perf.mobile_search_impressions
+                desktop_maps_impressions = perf.desktop_maps_impressions
+                mobile_maps_impressions = perf.mobile_maps_impressions
                 profile_views = search_impressions + maps_views
                 phone_calls = perf.phone_calls
                 website_clicks = perf.website_clicks
@@ -120,6 +124,8 @@ class InsightSyncService:
             else:
                 profile_views = search_impressions = maps_views = phone_calls = website_clicks = direction_requests = 0
                 searches_direct = searches_indirect = searches_chain = 0
+                desktop_search_impressions = mobile_search_impressions = 0
+                desktop_maps_impressions = mobile_maps_impressions = 0
 
             # Calculations with safety guards
             click_through_rate = (website_clicks / float(profile_views)) * 100.0 if profile_views > 0 else None
@@ -136,7 +142,11 @@ class InsightSyncService:
                 "profile_views": profile_views,
                 "search_impressions": search_impressions,
                 "maps_views": maps_views,
-                
+                "desktop_search_impressions": desktop_search_impressions,
+                "mobile_search_impressions": mobile_search_impressions,
+                "desktop_maps_impressions": desktop_maps_impressions,
+                "mobile_maps_impressions": mobile_maps_impressions,
+
                 # Engagement Metrics
                 "phone_calls": phone_calls,
                 "website_clicks": website_clicks,
@@ -176,6 +186,10 @@ class InsightSyncService:
                     "profile_views": stmt.excluded.profile_views,
                     "search_impressions": stmt.excluded.search_impressions,
                     "maps_views": stmt.excluded.maps_views,
+                    "desktop_search_impressions": stmt.excluded.desktop_search_impressions,
+                    "mobile_search_impressions": stmt.excluded.mobile_search_impressions,
+                    "desktop_maps_impressions": stmt.excluded.desktop_maps_impressions,
+                    "mobile_maps_impressions": stmt.excluded.mobile_maps_impressions,
                     "phone_calls": stmt.excluded.phone_calls,
                     "website_clicks": stmt.excluded.website_clicks,
                     "direction_requests": stmt.excluded.direction_requests,

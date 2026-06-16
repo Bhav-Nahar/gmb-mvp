@@ -22,7 +22,15 @@ import {
   Lock,
   LayoutGrid,
   Table as TableIcon,
-  Star
+  Star,
+  Zap,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Search,
+  ArrowRight,
+  MessageSquare,
+  MessageCircle
 } from 'lucide-react'
 import Link from 'next/link'
 import { UpgradeModal } from '@/components/modals/UpgradeModal'
@@ -91,6 +99,27 @@ interface OrganizationHealthSummaryOut {
   critical_count: number
 }
 
+interface ReputationSummary {
+  avg_rating: number | null
+  rated_location_count: number
+  total_reviews: number
+  total_reviews_all_time: number
+  review_velocity_per_day: {
+    current: number
+    prior: number
+    percentage_change: number | null
+  }
+  response_rate: number | null
+}
+
+interface TopKeyword {
+  keyword: string
+  impressions: number
+  impressions_prior: number
+  mom_growth: number | null
+  is_brand_term: boolean
+}
+
 // Locations store the GBP storefrontAddress as a JSON string
 // ({addressLines, locality, administrativeArea, postalCode, regionCode}).
 // Flatten it into a single readable line; fall back to the raw value if it
@@ -132,6 +161,8 @@ function DashboardContent() {
   const [pollingLocationIds, setPollingLocationIds] = useState<number[]>([])
   const [slaSummaries, setSlaSummaries] = useState<Record<number, LocationSLASummary>>({})
   const [healthSummary, setHealthSummary] = useState<OrganizationHealthSummaryOut | null>(null)
+  const [reputationSummary, setReputationSummary] = useState<ReputationSummary | null>(null)
+  const [topKeywords, setTopKeywords] = useState<TopKeyword[] | null>(null)
   
   // Loaders
   const [loadingLocations, setLoadingLocations] = useState(true)
@@ -166,6 +197,8 @@ function DashboardContent() {
   const onboardingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const locationPollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Parse URL params (onboarding flag, success/error alerts). Cheap & idempotent,
+  // so it's fine for this to re-run when the query string changes.
   useEffect(() => {
     const onboardingParam = searchParams.get('onboarding')
     const successParam = searchParams.get('success')
@@ -181,10 +214,15 @@ function DashboardContent() {
     } else if (errorParam) {
       setErrorAlert(`Google authentication failed: ${detailParam || errorParam}`)
     }
-
-    // Load initial data
-    loadDashboardData()
   }, [searchParams])
+
+  // Load dashboard data exactly once on mount. Kept separate from the param
+  // effect above so a URL change (e.g. onboarding's router.replace('/dashboard'))
+  // doesn't refire all ~7 dashboard requests.
+  useEffect(() => {
+    loadDashboardData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Polling logic when onboarding is active to check for Celery task completion
   useEffect(() => {
@@ -417,7 +455,29 @@ function DashboardContent() {
       loadSyncLogs(),
       loadSlaSummary(),
       loadHealthSummary(),
+      loadReputationSummary(),
+      loadTopKeywords(),
     ])
+  }
+
+  const loadReputationSummary = async () => {
+    try {
+      const data = await api.get<ReputationSummary>('/insights/summary')
+      setReputationSummary(data)
+    } catch (e: any) {
+      console.error('Failed to load reputation summary:', e)
+    }
+  }
+
+  const loadTopKeywords = async () => {
+    try {
+      const data = await api.get<{ items: TopKeyword[] }>(
+        '/insights/keywords?page_size=5&sort_by=impressions&sort_desc=true'
+      )
+      setTopKeywords(data.items)
+    } catch (e: any) {
+      console.error('Failed to load top search queries:', e)
+    }
   }
 
   const loadHealthSummary = async () => {
@@ -751,7 +811,7 @@ function DashboardContent() {
             )
           )}
 
-          {/* Summary KPI Cards — clickable to filter the storefront grid below */}
+          {/* Health Score + storefront status — top section, clickable to filter the grid */}
           <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
             <div className="text-left bg-card border border-border rounded-xl p-5 shadow-sm">
               <div className="text-sm font-medium text-muted-foreground mb-1">Avg Health Score</div>
@@ -790,6 +850,147 @@ function DashboardContent() {
               <div className={`text-2xl font-bold ${slaNeedsResponseCount === 0 ? 'text-muted-foreground' : 'text-indigo-600'}`}>{slaNeedsResponseCount}</div>
             </button>
           </section>
+
+          {/* Reputation at-a-glance — org avg rating + review velocity */}
+          {reputationSummary && totalLocations > 0 && (() => {
+            const vel = reputationSummary.review_velocity_per_day
+            const pct = vel.percentage_change
+            const up = pct !== null && pct > 0
+            const down = pct !== null && pct < 0
+            const rating = reputationSummary.avg_rating
+            const n = reputationSummary.rated_location_count
+            const respRate = reputationSummary.response_rate
+            return (
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                <div className="glass-panel p-5 flex items-center gap-4">
+                  <div className="p-2.5 rounded-xl bg-amber-400/10 text-amber-400 shrink-0">
+                    <Star className="h-5 w-5 fill-amber-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-2xl font-extrabold text-foreground leading-none">
+                      {rating && rating > 0 ? rating.toFixed(1) : '—'}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 truncate">
+                      Avg rating across {n} location{n === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="glass-panel p-5 flex items-center gap-4">
+                  <div className="p-2.5 rounded-xl bg-sky-400/10 text-sky-400 shrink-0">
+                    <MessageCircle className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-2xl font-extrabold text-foreground leading-none tabular-nums">
+                      {reputationSummary.total_reviews_all_time.toLocaleString()}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 truncate">
+                      Total reviews
+                    </div>
+                  </div>
+                </div>
+
+                <div className="glass-panel p-5 flex items-center gap-4">
+                  <div className="p-2.5 rounded-xl bg-pink-400/10 text-pink-400 shrink-0">
+                    <Zap className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-extrabold text-foreground leading-none">
+                        {vel.current.toFixed(1)}<span className="text-sm font-bold text-muted-foreground ml-0.5">/day</span>
+                      </span>
+                      {pct !== null && (
+                        <span className={`flex items-center text-xs font-bold ${up ? 'text-emerald-500' : down ? 'text-rose-500' : 'text-gray-500'}`}>
+                          {pct === 0 ? <Minus className="h-3 w-3 mr-0.5" /> : up ? <TrendingUp className="h-3 w-3 mr-0.5" /> : <TrendingDown className="h-3 w-3 mr-0.5" />}
+                          {Math.abs(pct).toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 truncate">
+                      Reviews / day · last 30 days
+                    </div>
+                  </div>
+                </div>
+
+                <div className="glass-panel p-5 flex items-center gap-4">
+                  <div className="p-2.5 rounded-xl bg-emerald-400/10 text-emerald-400 shrink-0">
+                    <MessageSquare className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-2xl font-extrabold text-foreground leading-none">
+                      {respRate !== null && respRate !== undefined ? `${respRate.toFixed(0)}%` : '—'}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 truncate">
+                      Review response rate
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Top Search Queries teaser — hooks into the Search Intelligence deep-dive */}
+          {topKeywords && totalLocations > 0 && (
+            <Link
+              href="/dashboard/insights/search-intelligence"
+              className="block glass-panel p-5 group hover:border-primary/40 transition-colors"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-sky-400/10 text-sky-400 shrink-0">
+                    <Search className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground leading-none">Top Search Queries</h3>
+                    <p className="text-[11px] text-muted-foreground mt-1">How customers find you · last month</p>
+                  </div>
+                </div>
+                <span className="flex items-center gap-1 text-xs font-semibold text-primary group-hover:gap-1.5 transition-all">
+                  View all <ArrowRight className="h-3.5 w-3.5" />
+                </span>
+              </div>
+
+              {topKeywords.length === 0 ? (
+                <div className="py-6 text-center text-xs text-muted-foreground">
+                  No search-query data yet. Open Search Intelligence to sync the latest keywords.
+                </div>
+              ) : (
+              <ul className="divide-y divide-border/40">
+                {topKeywords.map((kw, idx) => {
+                  const pct = kw.mom_growth
+                  const up = pct !== null && pct > 0
+                  const down = pct !== null && pct < 0
+                  return (
+                    <li key={idx} className="flex items-center gap-3 py-2.5">
+                      <span className="text-xs font-bold text-muted-foreground/50 w-4 shrink-0 tabular-nums">{idx + 1}</span>
+                      <span className="text-sm text-foreground truncate flex-1 min-w-0">{kw.keyword}</span>
+                      <span className={`hidden sm:inline-flex shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                        kw.is_brand_term ? 'bg-indigo-500/10 text-indigo-400' : 'bg-muted/50 text-muted-foreground'
+                      }`}>
+                        {kw.is_brand_term ? 'Brand' : 'Discovery'}
+                      </span>
+                      <span className="text-sm font-semibold text-foreground tabular-nums shrink-0 w-16 text-right">
+                        {kw.impressions.toLocaleString()}
+                      </span>
+                      <span className={`flex items-center justify-end text-[11px] font-bold w-14 shrink-0 ${
+                        up ? 'text-emerald-500' : down ? 'text-rose-500' : 'text-muted-foreground/60'
+                      }`}>
+                        {pct === null ? (
+                          kw.impressions_prior === 0 && kw.impressions > 0 ? 'New' : '—'
+                        ) : (
+                          <>
+                            {pct === 0 ? <Minus className="h-3 w-3 mr-0.5" /> : up ? <TrendingUp className="h-3 w-3 mr-0.5" /> : <TrendingDown className="h-3 w-3 mr-0.5" />}
+                            {Math.abs(pct).toFixed(0)}%
+                          </>
+                        )}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+              )}
+            </Link>
+          )}
 
           {/* Synced Locations */}
           <section ref={storefrontsRef} className="space-y-4 scroll-mt-20">
