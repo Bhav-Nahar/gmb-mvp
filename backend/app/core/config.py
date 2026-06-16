@@ -89,6 +89,29 @@ class Settings(BaseSettings):
     # Backend
     BACKEND_URL: str = "http://localhost:8000"
 
+    # Shared cookie domain. When the frontend and API are served from sibling
+    # subdomains of ONE registrable domain (e.g. app.pinzo.io + api.pinzo.io),
+    # set this to the parent WITH a leading dot (".pinzo.io") so the auth cookies
+    # (gmb_auth_token / gmb_refresh_token / gmb_csrf_token / oauth_state) are
+    # first-party to both hosts and sent in every browser — including those that
+    # block third-party cookies. Leave EMPTY for single-host or localhost dev,
+    # where cookies stay host-only. Never set this to a bare public suffix.
+    COOKIE_DOMAIN: str = ""
+
+    @field_validator("COOKIE_DOMAIN", mode="after")
+    @classmethod
+    def _normalize_cookie_domain(cls, v: str) -> str:
+        """Strip any scheme/port a user may paste and ensure a leading dot so the
+        cookie is shared across subdomains. '' stays '' (host-only)."""
+        v = (v or "").strip()
+        if not v:
+            return ""
+        # Tolerate someone pasting "https://api.pinzo.io" or "pinzo.io".
+        if "://" in v:
+            v = urlparse(v).hostname or ""
+        v = v.split(":")[0].strip().lstrip(".")
+        return f".{v}" if v else ""
+
     @field_validator("FRONTEND_URL", "BACKEND_URL", mode="after")
     @classmethod
     def _ensure_url_scheme(cls, v: str) -> str:
