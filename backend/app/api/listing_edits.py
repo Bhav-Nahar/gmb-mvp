@@ -38,6 +38,13 @@ def get_field_config(current_user: User = Depends(get_current_user)):
             "is_read_only": f.is_read_only,
             "warning_title": f.warning_title,
             "warning_body": f.warning_body,
+            # The frontend FieldRenderer picks its view/editor from these. Without
+            # them it fell back to a hardcoded name->component map, and any field
+            # not in that map silently degraded to a raw-JSON textarea (where a
+            # user could submit malformed data). Send the backend's real intent.
+            "field_type": f.field_type,
+            "ui_component": f.ui_component,
+            "supports_bulk_edit": f.supports_bulk_edit,
         }
         for f in LISTING_FIELDS
         if not f.is_read_only or current_user.role == Role.ADMIN
