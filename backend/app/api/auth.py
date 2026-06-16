@@ -36,6 +36,16 @@ OAUTH_STATE_TTL = 600  # 10 minutes — ample for an interactive consent screen
 def _oauth_state_key(csrf_token: str) -> str:
     return f"oauth_state:{csrf_token}"
 
+
+def _cookie_domain() -> str | None:
+    """Shared parent domain for auth cookies, or None for host-only cookies.
+
+    Set COOKIE_DOMAIN (e.g. ".pinzo.io") when the frontend and API live on
+    sibling subdomains so cookies are first-party to both and survive browsers
+    that block third-party cookies.
+    """
+    return settings.COOKIE_DOMAIN or None
+
 # If sync_in_progress=True but sync_started_at is older than this threshold,
 # the Celery worker almost certainly crashed (Redis lock TTL is 1h).
 # It is safe to treat this as a stuck state and reset it.
@@ -74,7 +84,8 @@ def google_login(response: Response, invite_token: str | None = None):
         httponly=True,
         secure=secure_cookie,
         samesite=samesite_val,
-        max_age=3600
+        max_age=3600,
+        domain=_cookie_domain()
     )
     return {"url": oauth_url}
 
@@ -416,9 +427,10 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             httponly=True,
             secure=secure_cookie,
             samesite=samesite_val,
-            max_age=15 * 60  # 15 minutes
+            max_age=15 * 60,  # 15 minutes
+            domain=_cookie_domain()
         )
-        
+
         # Set long-lived refresh cookie (7 days)
         response.set_cookie(
             key="gmb_refresh_token",
@@ -426,9 +438,10 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             httponly=True,
             secure=secure_cookie,
             samesite=samesite_val,
-            max_age=3600 * 24 * 7  # 7 days
+            max_age=3600 * 24 * 7,  # 7 days
+            domain=_cookie_domain()
         )
-        
+
         # Set long-lived CSRF cookie (7 days)
         response.set_cookie(
             key="gmb_csrf_token",
@@ -436,7 +449,8 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             httponly=False,
             secure=secure_cookie,
             samesite=samesite_val,
-            max_age=3600 * 24 * 7  # 7 days
+            max_age=3600 * 24 * 7,  # 7 days
+            domain=_cookie_domain()
         )
         return response
         
@@ -492,9 +506,10 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
         httponly=True,
         secure=secure_cookie,
         samesite=samesite_val,
-        max_age=15 * 60  # 15 minutes
+        max_age=15 * 60,  # 15 minutes
+        domain=_cookie_domain()
     )
-    
+
     # Generate and set new CSRF cookie on refresh
     csrf_token = secrets.token_urlsafe(32)
     response.set_cookie(
@@ -503,7 +518,8 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
         httponly=False,
         secure=secure_cookie,
         samesite=samesite_val,
-        max_age=3600 * 24 * 7  # 7 days
+        max_age=3600 * 24 * 7,  # 7 days
+        domain=_cookie_domain()
     )
     return {"status": "success", "message": "Token refreshed successfully", "csrf_token": csrf_token}
 
@@ -527,7 +543,8 @@ def logout(
         "path": "/",
         "httponly": True,
         "secure": secure_cookie,
-        "samesite": samesite_val
+        "samesite": samesite_val,
+        "domain": _cookie_domain()
     }
     
     response.delete_cookie(key="gmb_auth_token", **cookie_params)
