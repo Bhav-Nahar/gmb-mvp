@@ -37,6 +37,19 @@ class Location(Base):
     google_category_resource_name = Column(String, nullable=True) # Example: "categories/gcid:jewelry_store"
     # Secondary/additional categories: list of {"name": "categories/gcid:x", "displayName": "X"}
     additional_categories = Column(JSONB, default=list, server_default='[]', nullable=False)
+    # Additional rich GBP fields — captured for full parity with what Google returns.
+    additional_phones = Column(JSONB, default=list, server_default='[]', nullable=False)  # list of strings
+    special_hours = Column(JSONB, nullable=True)      # holiday / one-off hours
+    more_hours = Column(JSONB, nullable=True)         # extra hour types (e.g. delivery, kitchen)
+    service_area = Column(JSONB, nullable=True)       # service-area business coverage
+    service_items = Column(JSONB, nullable=True)      # structured/free-form service list
+    labels = Column(JSONB, default=list, server_default='[]', nullable=False)  # list of strings
+    open_info = Column(JSONB, nullable=True)          # open/closed status + opening date
+    latlng = Column(JSONB, nullable=True)             # {latitude, longitude}
+    store_code = Column(String, nullable=True)
+    language_code = Column(String, nullable=True)
+    # Full, verbatim GBP location payload so nothing Google sends is ever lost.
+    gbp_raw = Column(JSONB, nullable=True)
     google_attributes_stale = Column(Boolean, default=False, nullable=False)
     last_publish_hash = Column(String(64), nullable=True)
     last_published_at = Column(DateTime(timezone=True), nullable=True)

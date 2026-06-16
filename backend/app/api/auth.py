@@ -22,7 +22,19 @@ from app.models.sync_log import SyncLog
 from app.models.audit_log import AuditLog
 from app.models.organization_sync_state import OrganizationSyncState
 from app.providers.factory import ProviderFactory
+from app.core.redis_client import get_redis
 from app.worker import celery
+
+# Server-side OAuth CSRF state. The cookie-based approach failed for users whose
+# browsers block third-party cookies (frontend and backend are on different
+# domains), so the oauth_state cookie was never stored and every callback raised
+# "Invalid CSRF state token". Storing the state in Redis keyed by the CSRF token
+# removes any dependency on browser cookie behaviour.
+OAUTH_STATE_TTL = 600  # 10 minutes — ample for an interactive consent screen
+
+
+def _oauth_state_key(csrf_token: str) -> str:
+    return f"oauth_state:{csrf_token}"
 
 # If sync_in_progress=True but sync_started_at is older than this threshold,
 # the Celery worker almost certainly crashed (Redis lock TTL is 1h).
@@ -41,10 +53,21 @@ def google_login(response: Response, invite_token: str | None = None):
     csrf_token = secrets.token_urlsafe(32)
     state = f"{csrf_token}:{invite_token or ''}"
     oauth_url = ProviderFactory.get_oauth_url("gbp", state=state)
+
+    # Primary CSRF store: server-side in Redis. Works regardless of the user's
+    # browser third-party-cookie policy (frontend/backend are cross-domain).
+    try:
+        get_redis().set(_oauth_state_key(csrf_token), b"1", ex=OAUTH_STATE_TTL)
+    except Exception:
+        # Don't block login if Redis is briefly unavailable; the cookie below
+        # still provides CSRF protection for same-site / first-party browsers.
+        logging.exception("Failed to store OAuth state in Redis")
+
+    # Secondary CSRF store: cookie (back-compat / first-party browsers).
     # Secure cookie only over HTTPS (production/proxy) to avoid local development CSRF block
     secure_cookie = settings.FRONTEND_URL.startswith("https://")
     samesite_val = "none" if secure_cookie else "lax"
-    
+
     response.set_cookie(
         key="oauth_state",
         value=csrf_token,
@@ -70,8 +93,21 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         csrf_token = parts[0]
         invite_token = parts[1] if len(parts) > 1 and parts[1] else None
         
-        cookie_state = request.cookies.get("oauth_state")
-        if not cookie_state or not secrets.compare_digest(csrf_token, cookie_state):
+        # Validate CSRF state. Prefer the server-side Redis record (single-use,
+        # independent of browser cookie policy); fall back to the cookie for
+        # back-compat with logins started before this change rolled out.
+        state_valid = False
+        try:
+            # Atomic single-use check: delete returns the number of keys removed.
+            state_valid = get_redis().delete(_oauth_state_key(csrf_token)) == 1
+        except Exception:
+            logging.exception("Failed to validate OAuth state in Redis")
+
+        if not state_valid:
+            cookie_state = request.cookies.get("oauth_state")
+            state_valid = bool(cookie_state) and secrets.compare_digest(csrf_token, cookie_state)
+
+        if not state_valid:
             raise ValueError("Invalid CSRF state token. Please try logging in again.")
             
         # 1. Exchange authorization code for tokens

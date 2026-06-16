@@ -120,7 +120,7 @@ export function ProfileTab({ locationId, setHasUnsavedChanges }: ProfileTabProps
     <div className="space-y-8 animate-in fade-in duration-500">
       {renderSection("Critical Fields", criticalFields)}
       {renderSection("Standard Fields", standardFields)}
-      
+
       <div className="space-y-4 pt-6 border-t border-border/50">
         <DynamicFormEngine locationId={locationId} />
       </div>

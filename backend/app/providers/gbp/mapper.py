@@ -51,8 +51,19 @@ class GBPLocationMapper:
                 })
 
         phone = None
-        if raw.phoneNumbers and "primaryPhone" in raw.phoneNumbers:
-            phone = raw.phoneNumbers["primaryPhone"]
+        additional_phones: list = []
+        if raw.phoneNumbers:
+            phone = raw.phoneNumbers.get("primaryPhone")
+            additional_phones = [p for p in (raw.phoneNumbers.get("additionalPhones") or []) if p]
+
+        labels = list(raw.labels) if raw.labels else []
+
+        # Capture the complete GBP payload verbatim. extra="allow" keeps any field
+        # we haven't modelled; we drop the two internally-injected metrics so gbp_raw
+        # reflects only what Google actually returned for the location resource.
+        gbp_raw = raw.model_dump(exclude_none=True)
+        gbp_raw.pop("rating", None)
+        gbp_raw.pop("reviewCount", None)
 
         is_verified = None
         is_suspended = None
@@ -82,6 +93,17 @@ class GBPLocationMapper:
             total_reviews=raw.reviewCount,
             google_category_resource_name=google_category_resource_name,
             additional_categories=additional_categories,
+            additional_phones=additional_phones,
+            special_hours=raw.specialHours,
+            more_hours=raw.moreHours,
+            service_area=raw.serviceArea,
+            service_items=raw.serviceItems,
+            labels=labels,
+            open_info=raw.openInfo,
+            latlng=raw.latlng,
+            store_code=raw.storeCode,
+            language_code=raw.languageCode,
+            gbp_raw=gbp_raw,
             is_verified=is_verified,
             is_suspended=is_suspended,
             is_duplicate=is_duplicate

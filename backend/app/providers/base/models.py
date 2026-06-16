@@ -27,6 +27,20 @@ class LocationModel(BaseModel):
     # Secondary/additional categories: list of {name, displayName}
     additional_categories: List[Dict[str, Any]] = []
 
+    # Rich GBP fields captured for full parity (stored as JSON)
+    additional_phones: List[str] = []
+    special_hours: Optional[Any] = None
+    more_hours: Optional[Any] = None
+    service_area: Optional[Any] = None
+    service_items: Optional[Any] = None
+    labels: List[str] = []
+    open_info: Optional[Any] = None
+    latlng: Optional[Any] = None
+    store_code: Optional[str] = None
+    language_code: Optional[str] = None
+    # Complete, verbatim GBP location payload — nothing Google returns is dropped.
+    gbp_raw: Optional[Dict[str, Any]] = None
+
     # State tracking
     is_verified: Optional[bool] = None
     is_suspended: Optional[bool] = None

@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button"
 import { AlertCircle, ArrowLeft, RefreshCw, AlertTriangle, MessageSquare, Edit3, ClipboardList, TrendingUp, LayoutDashboard, Search, ImageIcon } from "lucide-react"
 import Link from "next/link"
 import { SkeletonLoader } from "./components/SkeletonLoader"
+import { api } from "@/lib/api"
+import { toast } from "sonner"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { Badge } from "@/components/ui/badge"
 
@@ -52,6 +54,19 @@ export default function LocationProfilePage() {
   const { location, isLocationLoading, edits, isEditsError, refetchEdits } = useLocationWorkspace(locationId)
   const [activeTab, setActiveTab] = useState("overview")
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
+
+  const handleForceSync = async () => {
+    setIsSyncing(true)
+    try {
+      await api.post('/locations/sync')
+      toast.success("Sync started — refreshing from Google. This can take a minute.")
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to start sync.")
+    } finally {
+      setIsSyncing(false)
+    }
+  }
   
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -124,9 +139,9 @@ export default function LocationProfilePage() {
               </div>
             </div>
 
-            <Button variant="outline" size="sm" className="gap-2 shrink-0 w-full min-h-[44px] self-start sm:w-auto sm:min-h-0 sm:self-auto" onClick={() => {/* Future implementation for force sync */}}>
-              <RefreshCw className="w-4 h-4" />
-              Force Sync
+            <Button variant="outline" size="sm" disabled={isSyncing} className="gap-2 shrink-0 w-full min-h-[44px] self-start sm:w-auto sm:min-h-0 sm:self-auto" onClick={handleForceSync}>
+              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+              {isSyncing ? 'Syncing…' : 'Force Sync'}
             </Button>
           </div>
 
