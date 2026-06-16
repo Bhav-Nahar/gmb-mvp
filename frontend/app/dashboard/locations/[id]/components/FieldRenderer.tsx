@@ -168,6 +168,16 @@ export function FieldRenderer({
       return <span className="text-foreground font-medium leading-relaxed">{formatted}</span>;
     }
 
+    if (fieldConfig.name === "primary_category") {
+      const label = typeof val === "object" && val !== null ? (val.displayName || val.name) : val
+      if (!label) return <span className="text-muted-foreground italic">Not set</span>
+      return (
+        <span className="inline-flex items-center rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2 py-0.5 text-xs font-semibold">
+          {String(label)}
+        </span>
+      )
+    }
+
     if (fieldConfig.name === "additional_categories") {
       const list = Array.isArray(val) ? val : []
       if (list.length === 0) return <span className="text-muted-foreground italic">None</span>
@@ -535,22 +545,20 @@ function BusinessHoursEditor({
                 <div className="flex items-center gap-3 pl-7 sm:pl-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] text-muted-foreground font-semibold">Opens:</span>
-                    <input 
-                      type="text"
-                      placeholder="09:00"
+                    <input
+                      type="time"
                       value={config.openTime}
                       onChange={(e) => handleTimeChange(day, "openTime", e.target.value)}
-                      className="w-14 rounded border border-border bg-background/50 px-2 py-0.5 text-center text-xs font-semibold font-mono text-foreground focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="w-24 rounded border border-border bg-background/50 px-2 py-0.5 text-center text-xs font-semibold font-mono text-foreground focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] text-muted-foreground font-semibold">Closes:</span>
-                    <input 
-                      type="text"
-                      placeholder="17:00"
+                    <input
+                      type="time"
                       value={config.closeTime}
                       onChange={(e) => handleTimeChange(day, "closeTime", e.target.value)}
-                      className="w-14 rounded border border-border bg-background/50 px-2 py-0.5 text-center text-xs font-semibold font-mono text-foreground focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="w-24 rounded border border-border bg-background/50 px-2 py-0.5 text-center text-xs font-semibold font-mono text-foreground focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
                 </div>
@@ -856,6 +864,60 @@ const POPULAR_CATEGORIES = [
   "Gardener"
 ]
 
+// ISO 3166-1 alpha-2 country codes — the exact format Google's
+// storefrontAddress.regionCode expects. Using a fixed list makes it impossible
+// to submit an invalid region code.
+const COUNTRIES: { code: string; name: string }[] = [
+  { code: "IN", name: "India" },
+  { code: "US", name: "United States" },
+  { code: "GB", name: "United Kingdom" },
+  { code: "AE", name: "United Arab Emirates" },
+  { code: "AU", name: "Australia" },
+  { code: "CA", name: "Canada" },
+  { code: "SG", name: "Singapore" },
+  { code: "MY", name: "Malaysia" },
+  { code: "NZ", name: "New Zealand" },
+  { code: "ZA", name: "South Africa" },
+  { code: "DE", name: "Germany" },
+  { code: "FR", name: "France" },
+  { code: "ES", name: "Spain" },
+  { code: "IT", name: "Italy" },
+  { code: "NL", name: "Netherlands" },
+  { code: "IE", name: "Ireland" },
+  { code: "CH", name: "Switzerland" },
+  { code: "SE", name: "Sweden" },
+  { code: "NO", name: "Norway" },
+  { code: "DK", name: "Denmark" },
+  { code: "BE", name: "Belgium" },
+  { code: "AT", name: "Austria" },
+  { code: "PT", name: "Portugal" },
+  { code: "PL", name: "Poland" },
+  { code: "SA", name: "Saudi Arabia" },
+  { code: "QA", name: "Qatar" },
+  { code: "KW", name: "Kuwait" },
+  { code: "BH", name: "Bahrain" },
+  { code: "OM", name: "Oman" },
+  { code: "LK", name: "Sri Lanka" },
+  { code: "BD", name: "Bangladesh" },
+  { code: "NP", name: "Nepal" },
+  { code: "PK", name: "Pakistan" },
+  { code: "ID", name: "Indonesia" },
+  { code: "TH", name: "Thailand" },
+  { code: "PH", name: "Philippines" },
+  { code: "VN", name: "Vietnam" },
+  { code: "JP", name: "Japan" },
+  { code: "KR", name: "South Korea" },
+  { code: "CN", name: "China" },
+  { code: "HK", name: "Hong Kong" },
+  { code: "BR", name: "Brazil" },
+  { code: "MX", name: "Mexico" },
+  { code: "AR", name: "Argentina" },
+  { code: "NG", name: "Nigeria" },
+  { code: "KE", name: "Kenya" },
+  { code: "EG", name: "Egypt" },
+  { code: "TR", name: "Turkey" },
+]
+
 interface AddressFields {
   regionCode: string
   addressLines: string[]
@@ -929,13 +991,17 @@ function AddressEditor({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-muted-foreground/60 uppercase">Country/Region</label>
-            <Input 
-              value={form.regionCode} 
+            <select
+              value={COUNTRIES.some(c => c.code === form.regionCode) ? form.regionCode : ""}
               onChange={(e) => setForm(prev => ({ ...prev, regionCode: e.target.value }))}
-              placeholder="e.g. IN"
-              className="bg-background/50 border-border text-sm focus:border-indigo-500 focus:ring-indigo-500"
+              className="w-full rounded-md border border-border bg-background/50 px-3 py-2 text-sm text-foreground focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               required
-            />
+            >
+              <option value="" disabled>Select a country…</option>
+              {COUNTRIES.map(c => (
+                <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+              ))}
+            </select>
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-muted-foreground/60 uppercase">Pincode / Postal Code</label>
@@ -1018,22 +1084,56 @@ function parseGDate(s: string): { year: number; month: number; day: number } | n
 }
 
 // ── Additional phones editor ────────────────────────────────────────────────
+// Google accepts national or international (E.164) phone numbers. We only allow
+// the characters Google permits (digits, spaces, hyphens, parentheses, and a
+// single leading +) and require 6–15 digits so a malformed value can never be
+// submitted. Stored value is the trimmed string as typed.
+const isValidPhone = (raw: string): boolean => {
+  const v = raw.trim()
+  if (!v) return false
+  if (!/^\+?[0-9\s\-()]+$/.test(v)) return false
+  const digits = v.replace(/\D/g, "")
+  return digits.length >= 6 && digits.length <= 15
+}
+
 function PhonesEditor({ initialValue, onSave, onCancel }: { initialValue: any; onSave: (v: string[]) => void; onCancel: () => void }) {
   const [phones, setPhones] = useState<string[]>(() => (Array.isArray(initialValue) ? initialValue.map(String) : []))
   const update = (i: number, v: string) => setPhones(prev => prev.map((p, idx) => (idx === i ? v : p)))
   const remove = (i: number) => setPhones(prev => prev.filter((_, idx) => idx !== i))
+  // Empty rows are ignored on save; only non-empty rows must be valid.
+  const hasInvalid = phones.some(p => p.trim() !== "" && !isValidPhone(p))
   return (
     <div className="space-y-2">
-      {phones.map((p, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <Input value={p} onChange={e => update(i, e.target.value)} placeholder="+91 …" className="bg-background/50 border-border text-sm" />
-          <button type="button" onClick={() => remove(i)} className="text-muted-foreground hover:text-red-400 text-lg px-1">×</button>
-        </div>
-      ))}
+      {phones.map((p, i) => {
+        const invalid = p.trim() !== "" && !isValidPhone(p)
+        return (
+          <div key={i} className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <Input
+                type="tel"
+                inputMode="tel"
+                value={p}
+                onChange={e => update(i, e.target.value)}
+                placeholder="+91 98765 43210"
+                className={`bg-background/50 text-sm ${invalid ? "border-red-500/60 focus:border-red-500 focus:ring-red-500" : "border-border"}`}
+              />
+              <button type="button" onClick={() => remove(i)} className="text-muted-foreground hover:text-red-400 text-lg px-1">×</button>
+            </div>
+            {invalid && <span className="text-[11px] text-red-400 pl-1">Enter a valid phone number (digits only, with optional country code).</span>}
+          </div>
+        )
+      })}
       <Button variant="ghost" size="sm" className="text-xs" onClick={() => setPhones(prev => [...prev, ""])}>+ Add phone</Button>
       <div className="flex justify-end gap-2 pt-1">
         <Button variant="ghost" size="sm" className="text-xs" onClick={onCancel}>Cancel</Button>
-        <Button size="sm" className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white" onClick={() => onSave(phones.map(p => p.trim()).filter(Boolean))}>Save</Button>
+        <Button
+          size="sm"
+          disabled={hasInvalid}
+          className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => onSave(phones.map(p => p.trim()).filter(Boolean))}
+        >
+          Save
+        </Button>
       </div>
     </div>
   )
@@ -1073,9 +1173,9 @@ function SpecialHoursEditor({ initialValue, onSave, onCancel }: { initialValue: 
           </label>
           {!r.closed && (
             <>
-              <input type="text" value={r.open} onChange={e => update(i, { open: e.target.value })} placeholder="09:00" className="w-16 rounded border border-border bg-background/50 px-2 py-1 text-center text-xs font-mono" />
+              <input type="time" value={r.open} onChange={e => update(i, { open: e.target.value })} className="w-28 rounded border border-border bg-background/50 px-2 py-1 text-center text-xs font-mono" />
               <span className="text-xs text-muted-foreground">–</span>
-              <input type="text" value={r.close} onChange={e => update(i, { close: e.target.value })} placeholder="17:00" className="w-16 rounded border border-border bg-background/50 px-2 py-1 text-center text-xs font-mono" />
+              <input type="time" value={r.close} onChange={e => update(i, { close: e.target.value })} className="w-28 rounded border border-border bg-background/50 px-2 py-1 text-center text-xs font-mono" />
             </>
           )}
           <button type="button" onClick={() => remove(i)} className="text-muted-foreground hover:text-red-400 text-lg px-1 ml-auto">×</button>
@@ -1115,8 +1215,11 @@ function ServiceItemsEditor({ initialValue, onSave, onCancel }: { initialValue: 
           label: { displayName: r.displayName.trim(), ...(r.description.trim() ? { description: r.description.trim() } : {}) },
         },
       }
-      if (r.price.trim()) {
-        item.price = { currencyCode: orig.price?.currencyCode || "INR", units: r.price.trim() }
+      // Google Money.units is a string-encoded integer. Coerce and drop anything
+      // non-numeric so we never publish a malformed price.
+      const units = parseInt(r.price, 10)
+      if (r.price.trim() && Number.isFinite(units) && units >= 0) {
+        item.price = { currencyCode: orig.price?.currencyCode || "INR", units: String(units) }
       } else {
         delete item.price
       }
@@ -1130,7 +1233,7 @@ function ServiceItemsEditor({ initialValue, onSave, onCancel }: { initialValue: 
         <div key={i} className="rounded-lg border border-border/50 bg-muted/10 p-3 space-y-2">
           <div className="flex items-center gap-2">
             <Input value={r.displayName} onChange={e => update(i, { displayName: e.target.value })} placeholder="Service name" className="bg-background/50 border-border text-sm font-semibold" />
-            <Input value={r.price} onChange={e => update(i, { price: e.target.value })} placeholder="Price" className="bg-background/50 border-border text-sm w-24" />
+            <Input type="number" min="0" step="1" inputMode="numeric" value={r.price} onChange={e => update(i, { price: e.target.value })} placeholder="Price" className="bg-background/50 border-border text-sm w-24" />
             <button type="button" onClick={() => remove(i)} className="text-muted-foreground hover:text-red-400 text-lg px-1">×</button>
           </div>
           <Textarea value={r.description} onChange={e => update(i, { description: e.target.value })} placeholder="Description (optional)" className="bg-background/50 border-border text-xs min-h-[60px]" />
