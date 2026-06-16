@@ -283,7 +283,7 @@ export default function HomeClient() {
           {/* Security & trust strip */}
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2.5 pt-4 text-[11px] font-semibold text-muted-foreground">
             {[
-              { icon: KeyRound, label: 'Secure Google OAuth — we never see your password' },
+              { icon: KeyRound, label: 'Secure Google OAuth, we never see your password' },
               { icon: ShieldCheck, label: 'Tokens encrypted at rest' },
               { icon: CreditCard, label: 'No credit card for trial' },
               { icon: XCircle, label: 'Cancel anytime' },
@@ -565,7 +565,7 @@ export default function HomeClient() {
             {
               step: '01',
               title: 'Connect with Google',
-              desc: 'Sign in with secure Google OAuth and grant access to your Business Profile locations. We never see or store your password — only encrypted, revocable tokens.',
+              desc: 'Sign in with secure Google OAuth and grant access to your Business Profile locations. We never see or store your password, only encrypted, revocable tokens.',
               icon: Plug,
             },
             {
@@ -577,7 +577,7 @@ export default function HomeClient() {
             {
               step: '03',
               title: 'Manage from one dashboard',
-              desc: 'Reply to reviews with AI assistance, schedule Google Posts, run profile audits, and track analytics across every location — with team roles and SLA tracking.',
+              desc: 'Reply to reviews with AI assistance, schedule Google Posts, run profile audits, and track analytics across every location, with team roles and SLA tracking.',
               icon: LayoutDashboard,
             },
           ].map((item, idx) => (
@@ -625,7 +625,7 @@ export default function HomeClient() {
             },
             {
               title: 'Multi-Location Analytics',
-              desc: 'Track Maps direction clicks, calls, website actions, and search views over time — across one location or hundreds.',
+              desc: 'Track Maps direction clicks, calls, website actions, and search views over time, across one location or hundreds.',
               icon: BarChart2,
             },
             {
@@ -635,7 +635,7 @@ export default function HomeClient() {
             },
             {
               title: 'Team Roles & Permissions (RBAC)',
-              desc: 'Give store managers, regional leads, or clients scoped access to only their locations — without ever sharing Google credentials.',
+              desc: 'Give store managers, regional leads, or clients scoped access to only their locations, without ever sharing Google credentials.',
               icon: Users,
             },
             {
@@ -650,7 +650,7 @@ export default function HomeClient() {
             },
             {
               title: 'Listing Profile Editing',
-              desc: 'Update business details across locations through a moderated, audited edit workflow — with full history of every change.',
+              desc: 'Update business details across locations through a moderated, audited edit workflow, with full history of every change.',
               icon: RefreshCw,
             },
           ].map((feat, idx) => (
@@ -676,7 +676,7 @@ export default function HomeClient() {
               One Edit. Synchronized Everywhere.
             </h2>
             <p className="text-muted-foreground leading-relaxed">
-              Updating holiday hours or telephone lines shouldn&apos;t mean logging in and out of multiple Google accounts. With Pinzo, push edits to your storefronts from one place — through a moderated, fully audited workflow.
+              Updating holiday hours or telephone lines shouldn&apos;t mean logging in and out of multiple Google accounts. With Pinzo, push edits to your storefronts from one place, through a moderated, fully audited workflow.
             </p>
 
             <ul className="space-y-3 font-semibold text-xs text-muted-foreground">
@@ -980,7 +980,7 @@ export default function HomeClient() {
               {
                 icon: Sparkles,
                 title: 'Answer every review faster',
-                desc: 'AI-drafted replies and SLA tracking help your team respond consistently and on time — review response speed is a real local-ranking signal.',
+                desc: 'AI-drafted replies and SLA tracking help your team respond consistently and on time. Review response speed is a real local-ranking signal.',
               },
               {
                 icon: ShieldCheck,
@@ -1197,15 +1197,15 @@ export default function HomeClient() {
               },
               {
                 q: "How does the AI review responder work?",
-                a: "Our engine reads the incoming review's sentiment, matches it with your storefront details, and prepares a draft response based on your brand tone. Nothing is published automatically — you review and approve each reply before it goes live."
+                a: "Our engine reads the incoming review's sentiment, matches it with your storefront details, and prepares a draft response based on your brand tone. Nothing is published automatically. You review and approve each reply before it goes live."
               },
               {
                 q: "How is my data kept secure?",
-                a: "We connect through Google's official OAuth — you sign in with Google and we receive a revocable access token, never your password. Those tokens are encrypted at rest, and access to your locations is scoped by role so team members only see what they should."
+                a: "We connect through Google's official OAuth. You sign in with Google and we receive a revocable access token, never your password. Those tokens are encrypted at rest, and access to your locations is scoped by role so team members only see what they should."
               },
               {
                 q: "Can I cancel anytime?",
-                a: "Yes. There are no lock-in contracts on self-serve plans — you can cancel from your billing settings at any time and you won't be charged again. You can also revoke our access directly from your Google account whenever you like."
+                a: "Yes. There are no lock-in contracts on self-serve plans. You can cancel from your billing settings at any time and you won't be charged again. You can also revoke our access directly from your Google account whenever you like."
               },
               {
                 q: "What does the free trial include?",

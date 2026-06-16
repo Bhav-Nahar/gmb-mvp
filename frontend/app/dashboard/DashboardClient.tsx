@@ -206,7 +206,27 @@ function DashboardContent() {
     const detailParam = searchParams.get('detail')
 
     if (onboardingParam === 'true') {
-      setIsOnboarding(true)
+      // Don't trust the URL param blindly. A genuinely-new org has a Pending org-level
+      // sync log (or none yet, because the Celery task just kicked off); an already-
+      // onboarded user whose latest org sync is already terminal must NOT see the overlay
+      // even if the param somehow leaks through. Confirm with the server first.
+      ;(async () => {
+        try {
+          const logsRes = await api.get<{ items: SyncLog[] }>('/locations/sync-logs?page=1&size=10')
+          const latestOrgLog = logsRes.items.find(log => log.location_id === null)
+          const syncInProgress =
+            !latestOrgLog || (latestOrgLog.status !== 'Success' && latestOrgLog.status !== 'Failed')
+          if (syncInProgress) {
+            setIsOnboarding(true)
+          } else {
+            // Already onboarded — strip the stale param without showing the overlay.
+            router.replace('/dashboard')
+          }
+        } catch {
+          // If we can't confirm, fail closed: skip the overlay rather than flash it.
+          router.replace('/dashboard')
+        }
+      })()
     }
 
     if (successParam === 'google_connected') {
@@ -214,7 +234,7 @@ function DashboardContent() {
     } else if (errorParam) {
       setErrorAlert(`Google authentication failed: ${detailParam || errorParam}`)
     }
-  }, [searchParams])
+  }, [searchParams, router])
 
   // Load dashboard data exactly once on mount. Kept separate from the param
   // effect above so a URL change (e.g. onboarding's router.replace('/dashboard'))
