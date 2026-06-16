@@ -88,6 +88,11 @@ class DailyInsightMetric(BaseModel):
     date: date
     search_views: int = 0
     map_views: int = 0
+    # Platform & device granular impressions (search_views / map_views are the sums)
+    desktop_search_impressions: int = 0
+    mobile_search_impressions: int = 0
+    desktop_maps_impressions: int = 0
+    mobile_maps_impressions: int = 0
     website_clicks: int = 0
     phone_calls: int = 0
     direction_requests: int = 0

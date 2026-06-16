@@ -4,7 +4,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text, or_, case
+from sqlalchemy import func, text, or_, case, and_
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 
@@ -28,6 +28,9 @@ from app.schemas.insights import (
     SentimentBreakdown,
     SLAMetricsSummary,
     IssueCategorySummary,
+    PlatformDeviceBreakdown,
+    ReputationVelocity,
+    InsightsSummaryResponse,
     KeywordMetricsResponse,
     BrandTermResponse,
     BrandTermCreate,
@@ -50,6 +53,79 @@ def calculate_delta(curr: float, prior: float) -> Optional[float]:
     if prior == 0:
         return None
     return ((curr - prior) / prior) * 100.0
+
+
+def _review_velocity_delta(db, org_id, location_ids, start, end, prior_start, prior_end) -> InsightsMetricDelta:
+    """Reviews received per day over a range, with a vs-prior-period delta.
+
+    location_ids: None = whole org (no extra filter); a list = restrict to those
+    locations; an int = a single location.
+    """
+    def _sum(s, e):
+        q = db.query(func.coalesce(func.sum(LocationDailyInsight.reviews_received), 0)).filter(
+            LocationDailyInsight.organization_id == org_id,
+            LocationDailyInsight.date >= s,
+            LocationDailyInsight.date <= e,
+        )
+        if isinstance(location_ids, int):
+            q = q.filter(LocationDailyInsight.location_id == location_ids)
+        elif location_ids is not None:
+            q = q.filter(LocationDailyInsight.location_id.in_(location_ids))
+        return q.scalar() or 0
+
+    cur_days = (end - start).days + 1
+    prior_days = (prior_end - prior_start).days + 1
+    cur_rate = round(_sum(start, end) / cur_days, 2) if cur_days > 0 else 0.0
+    prior_rate = round(_sum(prior_start, prior_end) / prior_days, 2) if prior_days > 0 else 0.0
+    return InsightsMetricDelta(
+        current=cur_rate, prior=prior_rate, percentage_change=calculate_delta(cur_rate, prior_rate)
+    )
+
+
+def _avg_rating_simple(db, org_id, location_ids):
+    """Simple mean of each accessible location's standing average_rating.
+
+    Range-independent: reflects the current GBP rating, weighting every location
+    equally. Returns (avg_rating_or_None, rated_location_count).
+    """
+    q = db.query(Location.average_rating).filter(
+        Location.organization_id == org_id,
+        Location.average_rating.isnot(None),
+    )
+    if isinstance(location_ids, int):
+        q = q.filter(Location.id == location_ids)
+    elif location_ids is not None:
+        q = q.filter(Location.id.in_(location_ids))
+    ratings = [float(r[0]) for r in q.all()]
+    if not ratings:
+        return None, 0
+    return round(sum(ratings) / len(ratings), 2), len(ratings)
+
+
+def _response_rate_all_time(db, org_id, location_ids):
+    """All-time review response rate (%): replied reviews ÷ total reviews.
+
+    Computed directly from the reviews table over the full history (not a 30-day
+    window), excluding deleted reviews. Returns None when there are no reviews.
+    """
+    # Filter Review.organization_id directly (not via a Location join) so the
+    # query can use the ix_reviews_sla_lookup index that leads on organization_id.
+    q = db.query(
+        func.count().label("total"),
+        func.coalesce(func.sum(case((Review.is_replied == True, 1), else_=0)), 0).label("replied"),  # noqa: E712
+    ).filter(
+        Review.organization_id == org_id,
+        Review.is_deleted == False,  # noqa: E712
+    )
+    if isinstance(location_ids, int):
+        q = q.filter(Review.location_id == location_ids)
+    elif location_ids is not None:
+        q = q.filter(Review.location_id.in_(location_ids))
+    row = q.one()
+    total = int(row.total or 0)
+    if total == 0:
+        return None
+    return round(int(row.replied or 0) / total * 100.0, 1)
 
 
 # Whitelist of sortable columns for keyword endpoints — never pass raw user
@@ -171,7 +247,7 @@ def get_insights_overview(
     allowed_ids_key = ",".join(map(str, sorted(allowed_ids))) if allowed_ids is not None else "all"
     # v2: response shape gained reputation aggregates + conversion-rate trend
     # fields; bump the namespace so pre-deploy cached payloads are bypassed.
-    cache_key = f"insights:overview:v2:{current_user.organization_id}:{start_date.isoformat()}:{end_date.isoformat()}:{allowed_ids_key}"
+    cache_key = f"insights:overview:v4:{current_user.organization_id}:{start_date.isoformat()}:{end_date.isoformat()}:{allowed_ids_key}"
     
     redis_client = None
     try:
@@ -192,6 +268,10 @@ def get_insights_overview(
             func.coalesce(func.sum(LocationDailyInsight.phone_calls), 0).label("phone_calls"),
             func.coalesce(func.sum(LocationDailyInsight.website_clicks), 0).label("website_clicks"),
             func.coalesce(func.sum(LocationDailyInsight.direction_requests), 0).label("direction_requests"),
+            func.coalesce(func.sum(LocationDailyInsight.desktop_search_impressions), 0).label("desktop_search"),
+            func.coalesce(func.sum(LocationDailyInsight.mobile_search_impressions), 0).label("mobile_search"),
+            func.coalesce(func.sum(LocationDailyInsight.desktop_maps_impressions), 0).label("desktop_maps"),
+            func.coalesce(func.sum(LocationDailyInsight.mobile_maps_impressions), 0).label("mobile_maps"),
         ).filter(
             LocationDailyInsight.organization_id == current_user.organization_id,
             LocationDailyInsight.date >= start,
@@ -203,6 +283,23 @@ def get_insights_overview(
 
     curr_res = _kpi_base_query(start_date, end_date)
     prior_res = _kpi_base_query(prior_start_date, prior_end_date)
+
+    platform_device = PlatformDeviceBreakdown(
+        desktop_search=curr_res.desktop_search,
+        mobile_search=curr_res.mobile_search,
+        desktop_maps=curr_res.desktop_maps,
+        mobile_maps=curr_res.mobile_maps,
+    )
+
+    avg_rating, rated_count = _avg_rating_simple(db, current_user.organization_id, allowed_ids)
+    reputation = ReputationVelocity(
+        avg_rating=avg_rating,
+        rated_location_count=rated_count,
+        review_velocity_per_day=_review_velocity_delta(
+            db, current_user.organization_id, allowed_ids,
+            start_date, end_date, prior_start_date, prior_end_date,
+        ),
+    )
 
     kpis = OverviewKPIs(
         profile_views=InsightsMetricDelta(
@@ -409,28 +506,35 @@ def get_insights_overview(
         )
 
     # SLA: response rate and reply time weighted by replies (not a flat mean of
-    # per-day rates), aggregated across every accessible location.
-    sla_rows = rep_base.with_entities(
-        LocationDailyInsight.reviews_received,
-        LocationDailyInsight.response_rate,
-        LocationDailyInsight.avg_response_time_hours,
-    ).all()
-    total_reviews = sum(int(r.reviews_received or 0) for r in sla_rows)
-    total_replied = sum(int((r.reviews_received or 0) * ((r.response_rate or 0) / 100.0)) for r in sla_rows)
+    # per-day rates), aggregated across every accessible location. Computed as a
+    # single SQL aggregate rather than summing per-day rows in Python — for a
+    # large org over a long range that row set is locations × days (tens of
+    # thousands of rows). FLOOR(reviews * rate / 100) reproduces the previous
+    # per-day int() truncation exactly so the numbers are unchanged.
+    _replies_expr = func.floor(
+        LocationDailyInsight.reviews_received * LocationDailyInsight.response_rate / 100.0
+    )
+    _time_ok = and_(
+        LocationDailyInsight.avg_response_time_hours.isnot(None),
+        _replies_expr > 0,
+    )
+    sla_agg = rep_base.with_entities(
+        func.coalesce(func.sum(LocationDailyInsight.reviews_received), 0).label("total_reviews"),
+        func.coalesce(func.sum(_replies_expr), 0).label("total_replied"),
+        func.coalesce(
+            func.sum(case((_time_ok, LocationDailyInsight.avg_response_time_hours * _replies_expr), else_=0.0)),
+            0.0,
+        ).label("time_sum"),
+        func.coalesce(func.sum(case((_time_ok, _replies_expr), else_=0)), 0).label("time_weight"),
+    ).one()
+    total_reviews = int(sla_agg.total_reviews or 0)
+    total_replied = int(sla_agg.total_replied or 0)
     sla_resp_rate = (total_replied / total_reviews * 100.0) if total_reviews > 0 else 0.0
-    total_time_hours = 0.0
-    replies_with_time = 0
-    for r in sla_rows:
-        if r.avg_response_time_hours is not None and (r.reviews_received or 0) > 0:
-            replies = int((r.reviews_received or 0) * ((r.response_rate or 0) / 100.0))
-            if replies > 0:
-                total_time_hours += r.avg_response_time_hours * replies
-                replies_with_time += replies
     sla = SLAMetricsSummary(
         total_reviews=total_reviews,
         replied_reviews=total_replied,
         response_rate=sla_resp_rate,
-        avg_response_time_hours=(total_time_hours / replies_with_time) if replies_with_time > 0 else None,
+        avg_response_time_hours=(float(sla_agg.time_sum) / float(sla_agg.time_weight)) if sla_agg.time_weight else None,
     )
 
     # Top recurring issue categories across all accessible locations.
@@ -441,8 +545,9 @@ def get_insights_overview(
         Location.organization_id == current_user.organization_id,
         Review.issue_category.isnot(None),
         Review.is_deleted == False,  # noqa: E712
-        func.date(Review.review_created_at) >= start_date,
-        func.date(Review.review_created_at) <= end_date,
+        # Sargable range (no func.date wrapper) so the review_created_at index is usable.
+        Review.review_created_at >= start_date,
+        Review.review_created_at < end_date + datetime.timedelta(days=1),
     )
     if allowed_ids is not None:
         issues_q = issues_q.filter(Review.location_id.in_(allowed_ids))
@@ -465,7 +570,9 @@ def get_insights_overview(
         attention_locations_count=attention_count,
         sentiment=sentiment,
         sla=sla,
-        top_issue_categories=top_issues
+        top_issue_categories=top_issues,
+        platform_device=platform_device,
+        reputation=reputation
     )
 
     # Only cache when we actually have synced data for this range. The insights
@@ -484,6 +591,99 @@ def get_insights_overview(
             logger.error(f"Redis cache write failed: {e}")
 
     return response_data
+
+
+@router.get("/summary", response_model=InsightsSummaryResponse)
+def get_insights_summary(
+    location_id: Optional[int] = Query(None),
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    """Lightweight reputation snapshot for the dashboard and reviews KPI cards.
+
+    Returns the simple-mean average rating, total reviews, review velocity
+    (reviews/day with vs-prior delta) and response rate (%) over the last 30
+    days. Org-wide by default; pass `location_id` to scope to one location.
+    Intentionally cheap — no trends, leaderboard, or sync triggering.
+    """
+    allowed_ids = deps.get_user_location_ids(current_user, db)
+    if allowed_ids is not None and not allowed_ids:
+        return InsightsSummaryResponse()
+
+    # Resolve the scope: a single location (access-checked) or all accessible ones.
+    if location_id is not None:
+        if allowed_ids is not None and location_id not in allowed_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to location.")
+        scope = location_id
+        scope_key = f"loc:{location_id}"
+    else:
+        scope = allowed_ids
+        scope_key = "all" if allowed_ids is None else "ids:" + ",".join(map(str, sorted(allowed_ids)))
+
+    # This endpoint runs 6 small queries and is hit on every dashboard + reviews
+    # load, so cache it briefly (short TTL — the underlying data only moves when a
+    # sync runs). Keyed by org + the exact access scope to avoid cross-user bleed.
+    cache_key = f"insights:summary:v1:{current_user.organization_id}:{scope_key}"
+    redis_client = None
+    try:
+        redis_client = get_redis()
+        cached = redis_client.get(cache_key)
+        if cached:
+            return InsightsSummaryResponse(**json.loads(cached))
+    except Exception as e:
+        logger.error(f"Redis cache lookup failed for insights summary: {e}")
+
+    end_date = datetime.date.today() - datetime.timedelta(days=1)
+    start_date = end_date - datetime.timedelta(days=29)
+    prior_end_date = start_date - datetime.timedelta(days=1)
+    prior_start_date = prior_end_date - datetime.timedelta(days=29)
+
+    avg_rating, rated_count = _avg_rating_simple(db, current_user.organization_id, scope)
+    velocity = _review_velocity_delta(
+        db, current_user.organization_id, scope,
+        start_date, end_date, prior_start_date, prior_end_date,
+    )
+    response_rate = _response_rate_all_time(db, current_user.organization_id, scope)
+
+    total_reviews_q = db.query(func.coalesce(func.sum(LocationDailyInsight.reviews_received), 0)).filter(
+        LocationDailyInsight.organization_id == current_user.organization_id,
+        LocationDailyInsight.date >= start_date,
+        LocationDailyInsight.date <= end_date,
+    )
+    if isinstance(scope, int):
+        total_reviews_q = total_reviews_q.filter(LocationDailyInsight.location_id == scope)
+    elif scope is not None:
+        total_reviews_q = total_reviews_q.filter(LocationDailyInsight.location_id.in_(scope))
+    total_reviews = total_reviews_q.scalar() or 0
+
+    # All-time review count from each location's standing total_reviews (GBP figure).
+    all_time_q = db.query(func.coalesce(func.sum(Location.total_reviews), 0)).filter(
+        Location.organization_id == current_user.organization_id,
+    )
+    if isinstance(scope, int):
+        all_time_q = all_time_q.filter(Location.id == scope)
+    elif scope is not None:
+        all_time_q = all_time_q.filter(Location.id.in_(scope))
+    total_reviews_all_time = all_time_q.scalar() or 0
+
+    result = InsightsSummaryResponse(
+        avg_rating=avg_rating,
+        rated_location_count=rated_count,
+        total_reviews=total_reviews,
+        total_reviews_all_time=total_reviews_all_time,
+        review_velocity_per_day=velocity,
+        response_rate=response_rate,
+    )
+
+    # Cache only when there's some data — never pin an empty snapshot for a
+    # freshly-onboarded org whose first sync hasn't landed yet.
+    if redis_client and (rated_count > 0 or total_reviews_all_time > 0 or total_reviews > 0):
+        try:
+            redis_client.setex(cache_key, 600, json.dumps(jsonable_encoder(result)))  # 10 min
+        except Exception as e:
+            logger.error(f"Redis cache write failed for insights summary: {e}")
+
+    return result
 
 
 @router.get("/locations/{id}", response_model=LocationInsightsResponse)
@@ -540,7 +740,7 @@ def get_location_insights(
     prior_start_date = prior_end_date - datetime.timedelta(days=duration - 1)
 
     # Cache Check
-    cache_key = f"insights:location:v2:{current_user.organization_id}:{id}:{start_date.isoformat()}:{end_date.isoformat()}"
+    cache_key = f"insights:location:v4:{current_user.organization_id}:{id}:{start_date.isoformat()}:{end_date.isoformat()}"
     
     redis_client = None
     try:
@@ -560,14 +760,35 @@ def get_location_insights(
             COALESCE(SUM(maps_views), 0) AS maps_views,
             COALESCE(SUM(phone_calls), 0) AS phone_calls,
             COALESCE(SUM(website_clicks), 0) AS website_clicks,
-            COALESCE(SUM(direction_requests), 0) AS direction_requests
+            COALESCE(SUM(direction_requests), 0) AS direction_requests,
+            COALESCE(SUM(desktop_search_impressions), 0) AS desktop_search,
+            COALESCE(SUM(mobile_search_impressions), 0) AS mobile_search,
+            COALESCE(SUM(desktop_maps_impressions), 0) AS desktop_maps,
+            COALESCE(SUM(mobile_maps_impressions), 0) AS mobile_maps
         FROM location_daily_insights
         WHERE location_id = :location_id
           AND date BETWEEN :start AND :end
     """)
-    
+
     curr_res = db.execute(kpi_query, {"location_id": id, "start": start_date, "end": end_date}).fetchone()
     prior_res = db.execute(kpi_query, {"location_id": id, "start": prior_start_date, "end": prior_end_date}).fetchone()
+
+    _loc_avg_rating, _loc_rated_count = _avg_rating_simple(db, current_user.organization_id, id)
+    reputation = ReputationVelocity(
+        avg_rating=_loc_avg_rating,
+        rated_location_count=_loc_rated_count,
+        review_velocity_per_day=_review_velocity_delta(
+            db, current_user.organization_id, id,
+            start_date, end_date, prior_start_date, prior_end_date,
+        ),
+    )
+
+    platform_device = PlatformDeviceBreakdown(
+        desktop_search=curr_res.desktop_search,
+        mobile_search=curr_res.mobile_search,
+        desktop_maps=curr_res.desktop_maps,
+        mobile_maps=curr_res.mobile_maps,
+    )
 
     kpis = OverviewKPIs(
         profile_views=InsightsMetricDelta(
@@ -703,18 +924,23 @@ def get_location_insights(
     )
 
     # 5. Top issue categories aggregated directly via SQL (using existing sentiment reviews tagging)
+    # Sargable range (no DATE() wrapper) so the review_created_at index is usable.
     issue_query = text("""
         SELECT issue_category, COUNT(*) AS count
         FROM reviews
         WHERE location_id = :location_id
           AND issue_category IS NOT NULL
           AND is_deleted = FALSE
-          AND DATE(review_created_at) BETWEEN :start AND :end
+          AND review_created_at >= :start
+          AND review_created_at < :end_excl
         GROUP BY issue_category
         ORDER BY count DESC
         LIMIT 10
     """)
-    issues_res = db.execute(issue_query, {"location_id": id, "start": start_date, "end": end_date}).fetchall()
+    issues_res = db.execute(
+        issue_query,
+        {"location_id": id, "start": start_date, "end_excl": end_date + datetime.timedelta(days=1)},
+    ).fetchall()
     
     top_issues = [
         IssueCategorySummary(category=row.issue_category, count=row.count)
@@ -740,7 +966,9 @@ def get_location_insights(
         trends=trends,
         sentiment=sentiment,
         sla=sla,
-        top_issue_categories=top_issues
+        top_issue_categories=top_issues,
+        platform_device=platform_device,
+        reputation=reputation
     )
 
     # Don't cache an empty (not-yet-synced) range for 6h — see overview endpoint.

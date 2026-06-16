@@ -16,6 +16,15 @@ class LocationDailyInsight(Base):
     search_impressions = Column(Integer, default=0, nullable=False)
     maps_views = Column(Integer, default=0, nullable=False)
 
+    # Platform & Device impressions breakdown (Google Performance API splits
+    # impressions across the search/maps platform and desktop/mobile device).
+    # search_impressions == desktop_search_impressions + mobile_search_impressions
+    # maps_views          == desktop_maps_impressions  + mobile_maps_impressions
+    desktop_search_impressions = Column(Integer, default=0, nullable=False)
+    mobile_search_impressions = Column(Integer, default=0, nullable=False)
+    desktop_maps_impressions = Column(Integer, default=0, nullable=False)
+    mobile_maps_impressions = Column(Integer, default=0, nullable=False)
+
     # Engagement Metrics
     phone_calls = Column(Integer, default=0, nullable=False)
     website_clicks = Column(Integer, default=0, nullable=False)

@@ -12,6 +12,8 @@ import {
   Calendar,
   AlertTriangle,
   RefreshCw,
+  Star,
+  Zap,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -23,11 +25,14 @@ import {
   SearchComposition,
   ReputationGrid,
   PeriodComparison,
+  PlatformDeviceImpressions,
+  type ReputationVelocity,
   type OverviewKPIs,
   type DailyMetricPoint,
   type SentimentBreakdown,
   type SLAMetricsSummary,
   type IssueCategorySummary,
+  type PlatformDeviceBreakdown,
   type TrendMetricKey,
 } from '@/components/insights/InsightsShared'
 
@@ -42,6 +47,8 @@ interface LocationInsightsResponse {
   sentiment: SentimentBreakdown
   sla: SLAMetricsSummary
   top_issue_categories: IssueCategorySummary[]
+  platform_device: PlatformDeviceBreakdown
+  reputation: ReputationVelocity
 }
 
 export function InsightsTab({ locationId }: { locationId: number }) {
@@ -183,6 +190,23 @@ export function InsightsTab({ locationId }: { locationId: number }) {
             <KpiCard title="Phone Calls" icon={Phone} metric={data.kpis.phone_calls} color="emerald" />
             <KpiCard title="Website Clicks" icon={Globe} metric={data.kpis.website_clicks} color="purple" />
             <KpiCard title="Directions Requests" icon={Navigation} metric={data.kpis.direction_requests} color="amber" />
+            <KpiCard
+              title="Avg Rating"
+              icon={Star}
+              color="gold"
+              hideDelta
+              metric={{ current: data.reputation.avg_rating ?? 0, prior: 0, percentage_change: null }}
+              formatValue={(n) => (n > 0 ? n.toFixed(1) : '—')}
+              subtitle="Current Google rating"
+            />
+            <KpiCard
+              title="Reviews / Day"
+              icon={Zap}
+              color="pink"
+              metric={data.reputation.review_velocity_per_day}
+              formatValue={(n) => n.toFixed(1)}
+              valueSuffix="/day"
+            />
           </div>
 
           {/* Conversion Quality */}
@@ -208,6 +232,9 @@ export function InsightsTab({ locationId }: { locationId: number }) {
 
           {/* Search composition */}
           <SearchComposition trends={data.trends} />
+
+          {/* Platform & Device impressions breakdown */}
+          {data.platform_device && <PlatformDeviceImpressions data={data.platform_device} />}
 
           {/* Sentiment / SLA / Themes */}
           <ReputationGrid

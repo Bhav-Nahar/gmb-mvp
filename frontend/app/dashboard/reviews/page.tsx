@@ -62,6 +62,14 @@ interface ReviewListResponse {
   pages: number
 }
 
+interface ReviewSummary {
+  avg_rating: number | null
+  rated_location_count: number
+  total_reviews: number
+  total_reviews_all_time: number
+  response_rate: number | null
+}
+
 export default function ReviewsPage(props: any) {
   const locationId = props.locationId;
   const [reviews, setReviews] = useState<Review[]>([])
@@ -84,6 +92,7 @@ export default function ReviewsPage(props: any) {
 
   // SLA State
   const [slaMetrics, setSlaMetrics] = useState<SLAMetrics | null>(null)
+  const [reviewSummary, setReviewSummary] = useState<ReviewSummary | null>(null)
   const [showSlaModal, setShowSlaModal] = useState(false)
   const [enablingSla, setEnablingSla] = useState(false)
 
@@ -127,6 +136,21 @@ export default function ReviewsPage(props: any) {
     } else {
       setSlaMetrics(null)
     }
+  }, [filterLocation])
+
+  // Reputation KPIs (avg rating, total reviews, response rate) — scoped to the
+  // selected location, or org-wide when no location filter is applied.
+  useEffect(() => {
+    const loadReviewSummary = async () => {
+      try {
+        const qs = filterLocation !== '' ? `?location_id=${filterLocation}` : ''
+        const data = await api.get<ReviewSummary>(`/insights/summary${qs}`)
+        setReviewSummary(data)
+      } catch (e: any) {
+        console.error('Failed to load review summary', e)
+      }
+    }
+    loadReviewSummary()
   }, [filterLocation])
 
   useEffect(() => {
@@ -365,6 +389,47 @@ export default function ReviewsPage(props: any) {
               </div>
             )}
           </div>
+
+          {/* Reputation KPI row — avg rating, total reviews, response rate */}
+          {reviewSummary && (
+            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+              <div className="glass-panel p-4 sm:p-5 flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-amber-400/10 text-amber-400 shrink-0">
+                  <Star className="h-4 w-4 sm:h-5 sm:w-5 fill-amber-400" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xl sm:text-2xl font-extrabold text-foreground leading-none">
+                    {reviewSummary.avg_rating && reviewSummary.avg_rating > 0 ? reviewSummary.avg_rating.toFixed(1) : '—'}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-1 truncate">Avg rating</div>
+                </div>
+              </div>
+
+              <div className="glass-panel p-4 sm:p-5 flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-sky-400/10 text-sky-400 shrink-0">
+                  <MessageCircle className="h-4 w-4 sm:h-5 sm:w-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xl sm:text-2xl font-extrabold text-foreground leading-none tabular-nums">
+                    {reviewSummary.total_reviews_all_time.toLocaleString()}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-1 truncate">Total reviews</div>
+                </div>
+              </div>
+
+              <div className="glass-panel p-4 sm:p-5 flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-400/10 text-emerald-400 shrink-0">
+                  <Send className="h-4 w-4 sm:h-5 sm:w-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xl sm:text-2xl font-extrabold text-foreground leading-none">
+                    {reviewSummary.response_rate !== null && reviewSummary.response_rate !== undefined ? `${reviewSummary.response_rate.toFixed(0)}%` : '—'}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-1 truncate">Response rate</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {errorAlert && (
             <div className="flex items-center gap-3 rounded-xl bg-red-500/10 border border-red-500/20 p-4 text-sm font-medium text-red-400">

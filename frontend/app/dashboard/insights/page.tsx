@@ -23,6 +23,8 @@ import {
   Compass
 } from 'lucide-react'
 import Link from 'next/link'
+import { PlatformDeviceImpressions, KpiCard as SharedKpiCard, type PlatformDeviceBreakdown, type ReputationVelocity } from '@/components/insights/InsightsShared'
+import { Star, Zap } from 'lucide-react'
 
 interface InsightsMetricDelta {
   current: number
@@ -97,6 +99,8 @@ interface InsightsOverviewData {
   sentiment: SentimentBreakdown | null
   sla: SLAMetricsSummary | null
   top_issue_categories: IssueCategorySummary[]
+  platform_device: PlatformDeviceBreakdown
+  reputation: ReputationVelocity
 }
 
 // Static Tailwind classes — dynamic `text-${color}-400` strings get purged in
@@ -841,6 +845,31 @@ export default function InsightsPage() {
                     <KpiCard title="Phone Calls" icon={Phone} metric={activeData.kpis.phone_calls} color="emerald" />
                     <KpiCard title="Website Clicks" icon={Globe} metric={activeData.kpis.website_clicks} color="purple" />
                     <KpiCard title="Directions Requests" icon={Navigation} metric={activeData.kpis.direction_requests} color="amber" />
+                    {activeData.reputation && (
+                      <>
+                        <SharedKpiCard
+                          title="Avg Rating"
+                          icon={Star}
+                          color="gold"
+                          hideDelta
+                          metric={{ current: activeData.reputation.avg_rating ?? 0, prior: 0, percentage_change: null }}
+                          formatValue={(n) => (n > 0 ? n.toFixed(1) : '—')}
+                          subtitle={
+                            selectedLocation === 'all'
+                              ? `Across ${activeData.reputation.rated_location_count} location${activeData.reputation.rated_location_count === 1 ? '' : 's'}`
+                              : 'Current Google rating'
+                          }
+                        />
+                        <SharedKpiCard
+                          title="Reviews / Day"
+                          icon={Zap}
+                          color="pink"
+                          metric={activeData.reputation.review_velocity_per_day}
+                          formatValue={(n) => n.toFixed(1)}
+                          valueSuffix="/day"
+                        />
+                      </>
+                    )}
                   </div>
 
                   {/* Conversion Quality — how often a profile view turns into an
@@ -970,6 +999,11 @@ export default function InsightsPage() {
                     />
                   )}
 
+                  {/* Platform & Device impressions breakdown */}
+                  {selectedLocation === 'all' && data && data.platform_device && (
+                    <PlatformDeviceImpressions data={data.platform_device} />
+                  )}
+
                   {/* Bottom Grid */}
                   {selectedLocation === 'all' && data ? (
                     <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
@@ -1072,6 +1106,11 @@ export default function InsightsPage() {
                         topIssues={locationData.top_issue_categories}
                         scopeLabel="This location"
                       />
+
+                      {/* Platform & Device impressions breakdown */}
+                      {locationData.platform_device && (
+                        <PlatformDeviceImpressions data={locationData.platform_device} />
+                      )}
 
                       {/* Period Comparison for Single Location */}
                       <div className="glass-panel p-6">
