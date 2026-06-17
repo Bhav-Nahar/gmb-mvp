@@ -42,7 +42,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                          window.location.pathname === '/login/success' ||
                          window.location.pathname === '/' ||
                          window.location.pathname === '/privacy' ||
-                         window.location.pathname === '/terms'
+                         window.location.pathname === '/terms' ||
+                         window.location.pathname === '/refund' ||
+                         window.location.pathname === '/contact'
                          
     if (isPublicPage) {
       setLoading(false)
