@@ -1298,6 +1298,8 @@ export default function HomeClient() {
             <ul className="space-y-1.5 text-xs text-muted-foreground font-semibold">
               <li><a href="/privacy" className="hover:text-foreground transition-colors">Privacy Policy</a></li>
               <li><a href="/terms" className="hover:text-foreground transition-colors">Terms of Service</a></li>
+              <li><a href="/refund" className="hover:text-foreground transition-colors">Cancellation &amp; Refund Policy</a></li>
+              <li><a href="/contact" className="hover:text-foreground transition-colors">Contact Us</a></li>
               <li><a href="/privacy#oauth" className="hover:text-foreground transition-colors">Google API &amp; OAuth Usage</a></li>
             </ul>
           </div>

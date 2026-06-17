@@ -111,7 +111,14 @@ export default function PrivacyPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-foreground">Contact</h2>
             <p>
-              Questions about this policy? Reach us on{' '}
+              Questions about this policy? Reach us via email at{' '}
+              <a
+                href="mailto:bhav.nahar@gmail.com"
+                className="text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
+              >
+                bhav.nahar@gmail.com
+              </a>{' '}
+              or on{' '}
               <a
                 href="https://wa.me/917021052482"
                 target="_blank"

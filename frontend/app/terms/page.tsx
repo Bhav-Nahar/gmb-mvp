@@ -89,7 +89,14 @@ export default function TermsPage() {
             <h2 className="text-lg font-bold text-foreground">Changes &amp; contact</h2>
             <p>
               We may update these Terms from time to time. Continued use after changes constitutes acceptance. Questions?
-              Reach us on{' '}
+              Reach us via email at{' '}
+              <a
+                href="mailto:bhav.nahar@gmail.com"
+                className="text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
+              >
+                bhav.nahar@gmail.com
+              </a>{' '}
+              or on{' '}
               <a
                 href="https://wa.me/917021052482"
                 target="_blank"
