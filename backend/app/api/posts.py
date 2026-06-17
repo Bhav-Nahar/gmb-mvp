@@ -529,8 +529,9 @@ def get_post_publish_jobs(
     from app.api.deps import get_user_location_ids
     allowed_locs = get_user_location_ids(current_user, db)
     
-    from sqlalchemy.orm import joinedload as _joinedload
-    query = db.query(PublishJob).options(_joinedload(PublishJob.location)).filter(PublishJob.post_id == post.id)
+    # Note: do NOT joinedload(PublishJob.location) here — the joined location is
+    # never read. location_name is resolved from the projected location_map below.
+    query = db.query(PublishJob).filter(PublishJob.post_id == post.id)
     if allowed_locs is not None:
         query = query.filter(PublishJob.location_id.in_(allowed_locs))
     jobs = query.all()
@@ -543,10 +544,12 @@ def get_post_publish_jobs(
 
     # Batch-load all locations in a single query (eliminates N+1)
     location_ids = {job.location_id for job in jobs}
-    location_map: dict[int, Location] = {}
+    location_map: dict[int, str] = {}
     if location_ids:
-        rows = db.query(Location).filter(Location.id.in_(location_ids)).all()
-        location_map = {loc.id: loc for loc in rows}
+        # Only location_name is used (below); project it to avoid hauling all 44
+        # Location columns (incl. the large gbp_raw JSON) per job.
+        rows = db.query(Location.id, Location.location_name).filter(Location.id.in_(location_ids)).all()
+        location_map = {loc_id: name for loc_id, name in rows}
 
     mapped_jobs = [
         {
@@ -556,7 +559,7 @@ def get_post_publish_jobs(
             "post_id": job.post_id,
             "location_id": job.location_id,
             "location_name": (
-                location_map[job.location_id].location_name
+                location_map[job.location_id]
                 if job.location_id in location_map
                 else f"Location #{job.location_id}"
             ),
