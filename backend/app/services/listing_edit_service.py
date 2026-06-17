@@ -1,3 +1,4 @@
+import json
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from typing import Optional, Any
@@ -282,7 +283,12 @@ class ListingEditService:
                         location.google_category_resource_name = resource_name
                 # Mark attributes stale when category changes
                 location.google_attributes_stale = True
-                
+
+            # location.address is a String column; sync stores it JSON-serialized
+            # (gbp/mapper.py). Match that so we don't hand psycopg2 a raw dict.
+            if edit.field_name == "address" and isinstance(final_value, dict):
+                final_value = json.dumps(final_value, default=str)
+
             setattr(location, edit.field_name, final_value)
             location.last_synced_at = datetime.now(timezone.utc)
 

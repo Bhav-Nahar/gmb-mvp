@@ -4,11 +4,9 @@ from app.core.config import settings
 
 # Explicitly import and register all providers
 from app.storage.providers.local import LocalStorageProvider
-from app.storage.providers.s3 import S3StorageProvider
 from app.storage.providers.r2 import R2StorageProvider
 
 StorageRegistry.register(LocalStorageProvider)
-StorageRegistry.register(S3StorageProvider)
 StorageRegistry.register(R2StorageProvider)
 
 class StorageProviderFactory:

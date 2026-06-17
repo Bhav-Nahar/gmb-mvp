@@ -8,7 +8,7 @@ from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyMod
 from app.providers.base.exceptions import ProviderAPIError, ProviderError
 from app.providers.base.auth import AuthContext
 from app.core.config import settings
-from app.core.gbp_client import http_request_with_retry
+from app.core.http import http_request_with_retry
 from .auth import GBPAuthManager
 from .client import GBPAsyncClient
 from .schemas import GBPLocationRaw, GBPReviewRaw

@@ -268,7 +268,9 @@ def get_pending_locations(
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User does not belong to an organization")
 
-    pending = db.query(Location).filter(
+    # Only id, location_name, address are used below — project them to avoid
+    # fetching all 44 Location columns (incl. the large gbp_raw JSON) per row.
+    pending = db.query(Location.id, Location.location_name, Location.address).filter(
         Location.organization_id == current_user.organization_id,
         Location.billing_status == "pending_payment",
     ).all()

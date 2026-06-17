@@ -224,17 +224,18 @@ def publish_edit(
             edit_id=edit_id,
             organization_id=current_user.organization_id,
         )
+        # Commit the Publishing state BEFORE dispatch, else the worker can read the
+        # row while it's still Approved and skip ("Edit not in Publishing state").
+        db.commit()
+        db.refresh(edit)
         from app.worker import celery as celery_app
         try:
             celery_app.send_task("app.tasks.publish_listing_edit_task", args=[edit_id, current_user.organization_id])
         except Exception as dispatch_err:
-            db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Task dispatch failed: {str(dispatch_err)}"
             )
-        db.commit()
-        db.refresh(edit)
         return edit
     except (ConflictError, NotFoundError) as e:
         db.rollback()
