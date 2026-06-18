@@ -12,6 +12,12 @@ class RazorpayPlan(Base):
 
     The amount is part of the key so a pricing change creates a NEW plan rather
     than silently reusing one that bills the old amount.
+
+    `mode` ('test' | 'live') is also part of the key: a Razorpay plan id created
+    with test keys does not exist under live keys (and vice versa), so the same
+    (count, interval, amount) tier legitimately needs one cached row per mode.
+    Without it, the first row cached in test mode blocks the live row from ever
+    persisting, recreating a fresh live plan on every checkout (sprawl + 429s).
     """
     __tablename__ = "razorpay_plans"
 
@@ -20,11 +26,12 @@ class RazorpayPlan(Base):
     interval = Column(String, nullable=False)  # 'monthly' | 'annual'
     amount_paise = Column(Integer, nullable=False)
     razorpay_plan_id = Column(String, nullable=False)
+    mode = Column(String, nullable=False, default="live")  # 'test' | 'live'
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         UniqueConstraint(
-            "location_count", "interval", "amount_paise",
-            name="uq_razorpay_plan_count_interval_amount",
+            "location_count", "interval", "amount_paise", "mode",
+            name="uq_razorpay_plan_count_interval_amount_mode",
         ),
     )

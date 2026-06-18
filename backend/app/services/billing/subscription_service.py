@@ -34,6 +34,13 @@ class SubscriptionService:
         return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
     @staticmethod
+    def _current_mode() -> str:
+        """'test' or 'live' for the configured keys. Cached Razorpay customer/plan ids
+        are namespaced by this because a test id is invalid under live keys (and vice
+        versa); guarded against an unset key id (would otherwise AttributeError → 500)."""
+        return "test" if (settings.RAZORPAY_KEY_ID or "").startswith("rzp_test_") else "live"
+
+    @staticmethod
     def ensure_razorpay_customer(db: Session, org_id: int, org_name: str, user_email: str) -> str:
         """Get-or-create the org's Razorpay customer id under a row lock."""
         stmt = select(Organization).where(Organization.id == org_id).with_for_update()
@@ -41,8 +48,18 @@ class SubscriptionService:
         if not org:
             raise HTTPException(status_code=404, detail="Organization not found")
 
+        current_mode = SubscriptionService._current_mode()
+
         if org.razorpay_customer_id:
-            return org.razorpay_customer_id
+            stored_id = org.razorpay_customer_id
+            if ":" in stored_id:
+                mode, cust_id = stored_id.split(":", 1)
+                if mode == current_mode:
+                    return cust_id
+            else:
+                # Legacy check: if in test mode, trust it. In live mode, ignore/re-verify.
+                if current_mode == "test":
+                    return stored_id
 
         client = SubscriptionService.get_razorpay_client()
         try:
@@ -55,9 +72,10 @@ class SubscriptionService:
                 "fail_existing": "0",
                 "notes": {"organization_id": str(org_id)},
             })
-            org.razorpay_customer_id = customer["id"]
+            cust_id = customer["id"]
+            org.razorpay_customer_id = f"{current_mode}:{cust_id}"
             db.commit()
-            return org.razorpay_customer_id
+            return cust_id
         except Exception as e:
             db.rollback()
             logger.error(f"Failed to create Razorpay customer for org {org_id}: {e}")
@@ -69,19 +87,29 @@ class SubscriptionService:
 
         Plan ids are cached durably in the razorpay_plans table so repeated/cold
         checkouts reuse the same plan instead of creating an orphan plan on every
-        call (which caused plan sprawl and Razorpay rate-limiting). The amount is
+        call (which caused plan sprawl and rate-limiting). The amount is
         part of the key so a pricing change yields a new plan, never a stale one."""
         from app.models.razorpay_plan import RazorpayPlan
 
         amount = PricingService.compute_price_paise(location_count, interval)
+        current_mode = SubscriptionService._current_mode()
 
-        existing = db.query(RazorpayPlan).filter(
+        existing_plans = db.query(RazorpayPlan).filter(
             RazorpayPlan.location_count == location_count,
             RazorpayPlan.interval == interval,
             RazorpayPlan.amount_paise == amount,
-        ).first()
-        if existing:
-            return existing.razorpay_plan_id
+        ).all()
+
+        for plan in existing_plans:
+            stored_id = plan.razorpay_plan_id
+            if ":" in stored_id:
+                mode, plan_id = stored_id.split(":", 1)
+                if mode == current_mode:
+                    return plan_id
+            else:
+                # Legacy check: if in test mode, trust it.
+                if current_mode == "test":
+                    return stored_id
 
         client = SubscriptionService.get_razorpay_client()
         period = "yearly" if interval == "annual" else "monthly"
@@ -99,26 +127,31 @@ class SubscriptionService:
             raise HTTPException(status_code=500, detail=f"Failed to create plan: {str(e)}")
 
         plan_id = plan["id"]
+        prefixed_plan_id = f"{current_mode}:{plan_id}"
+
         db.add(RazorpayPlan(
             location_count=location_count,
             interval=interval,
             amount_paise=amount,
-            razorpay_plan_id=plan_id,
+            razorpay_plan_id=prefixed_plan_id,
+            mode=current_mode,
         ))
         try:
             db.commit()
         except IntegrityError:
-            # A concurrent checkout created the same plan row first. Roll back and
-            # use the now-committed row (we created a duplicate Razorpay plan, which
-            # is harmless — it just goes unused).
             db.rollback()
-            existing = db.query(RazorpayPlan).filter(
+            existing_plans = db.query(RazorpayPlan).filter(
                 RazorpayPlan.location_count == location_count,
                 RazorpayPlan.interval == interval,
                 RazorpayPlan.amount_paise == amount,
-            ).first()
-            if existing:
-                return existing.razorpay_plan_id
+            ).all()
+            for plan in existing_plans:
+                stored_id = plan.razorpay_plan_id
+                if ":" in stored_id:
+                    mode, plan_id = stored_id.split(":", 1)
+                    if mode == current_mode:
+                        return plan_id
+            return plan_id
         return plan_id
 
     @staticmethod
