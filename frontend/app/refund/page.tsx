@@ -27,7 +27,7 @@ export default function RefundPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-foreground">Subscription Cancellation</h2>
             <p>
-              You can cancel your subscription at any time. To cancel, navigate to the **Billing** section within your account settings on Pinzo and click &ldquo;Cancel Subscription&rdquo;. 
+              You can cancel your subscription at any time. To cancel, navigate to the <strong>Billing</strong> section within your account settings on Pinzo and click &ldquo;Cancel Subscription&rdquo;.
             </p>
             <p>
               Upon cancellation, your subscription will remain active until the end of your current paid billing cycle, and you will not be charged again. 
@@ -40,7 +40,7 @@ export default function RefundPage() {
               We offer a free trial plan to allow you to experience Pinzo before committing to a paid plan.
             </p>
             <p>
-              Since we provide digital subscription services and API access, **all payments made to Pinzo are non-refundable**, except as required by applicable law or in case of duplicate billing errors.
+              Since we provide digital subscription services and API access, <strong>all payments made to Pinzo are non-refundable</strong>, except as required by applicable law or in case of duplicate billing errors.
             </p>
             <p>
               If you believe you have been billed in error or experienced a duplicate transaction charge, please reach out to us at <a href="mailto:bhav.nahar@gmail.com" className="text-indigo-500 underline">bhav.nahar@gmail.com</a> within 7 days of the transaction.

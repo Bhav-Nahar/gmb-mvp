@@ -462,8 +462,69 @@ def test_location_addon_unlock_grants_and_activates(db):
     # Idempotent: re-delivering the same payment must not double-grant.
     with patch("app.services.billing.subscription_service.SubscriptionService.update_subscription_plan_for_quota"), \
          patch("app.worker.celery.send_task"):
-        WebhookService._handle_payment_captured(db, payload)
-        db.commit()
+         WebhookService._handle_payment_captured(db, payload)
+         db.commit()
     db.refresh(org)
     assert org.location_quota == 5
     assert org.monthly_ai_credits_balance == 150
+
+
+def test_razorpay_mode_isolation(db):
+    """Verify that customer and plan IDs are isolated by environment mode (test vs live)."""
+    from app.core.config import settings
+    from app.models.razorpay_plan import RazorpayPlan
+
+    org = Organization(
+        name="Mode Test Org",
+        subscription_status="active",
+        location_quota=1,
+        billing_cycle="monthly",
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    # Mock Razorpay customer.create and plan.create
+    fake_client = MagicMock()
+    fake_client.customer.create.side_effect = lambda data: {"id": f"cust_mock_{data['email']}"}
+    fake_client.plan.create.side_effect = lambda data: {"id": f"plan_mock_{data['item']['amount']}"}
+
+    with patch("app.services.billing.subscription_service.SubscriptionService.get_razorpay_client", return_value=fake_client):
+        # 1. Test environment
+        with patch.object(settings, "RAZORPAY_KEY_ID", "rzp_test_key"):
+            cust_id = SubscriptionService.ensure_razorpay_customer(db, org.id, org.name, "user@mode.com")
+            assert cust_id == "cust_mock_user@mode.com"
+            db.refresh(org)
+            assert org.razorpay_customer_id == "test:cust_mock_user@mode.com"
+
+            plan_id = SubscriptionService._get_or_create_plan(db, 1, "monthly")
+            assert plan_id == "plan_mock_49900"  # Starter price: 499 INR = 49900 paise
+            plan_row = db.query(RazorpayPlan).filter_by(location_count=1, interval="monthly").first()
+            assert plan_row.razorpay_plan_id == "test:plan_mock_49900"
+
+        # 2. Transition to live environment: should create new live records and ignore test ones
+        fake_client.customer.create.side_effect = lambda data: {"id": "cust_live_123"}
+        fake_client.plan.create.side_effect = lambda data: {"id": "plan_live_123"}
+
+        with patch.object(settings, "RAZORPAY_KEY_ID", "rzp_live_key"):
+            cust_id_live = SubscriptionService.ensure_razorpay_customer(db, org.id, org.name, "user@mode.com")
+            assert cust_id_live == "cust_live_123"
+            db.refresh(org)
+            assert org.razorpay_customer_id == "live:cust_live_123"
+
+            plan_id_live = SubscriptionService._get_or_create_plan(db, 1, "monthly")
+            assert plan_id_live == "plan_live_123"
+            # There should be two rows now: test and live
+            plans = db.query(RazorpayPlan).filter_by(location_count=1, interval="monthly").all()
+            assert len(plans) == 2
+            plan_ids = [p.razorpay_plan_id for p in plans]
+            assert "test:plan_mock_49900" in plan_ids
+            assert "live:plan_live_123" in plan_ids
+
+        # 3. Transition back to test: should reuse the test ones we created in step 1
+        with patch.object(settings, "RAZORPAY_KEY_ID", "rzp_test_key"):
+            cust_id_test2 = SubscriptionService.ensure_razorpay_customer(db, org.id, org.name, "user@mode.com")
+            assert cust_id_test2 == "cust_mock_user@mode.com"
+
+            plan_id_test2 = SubscriptionService._get_or_create_plan(db, 1, "monthly")
+            assert plan_id_test2 == "plan_mock_49900"
