@@ -15,7 +15,8 @@ from app.models.review import Review
 from app.schemas.review import ReviewResponse, ReviewListResponse, ReviewReplyRequest, GenerateReplyResponse
 from app.providers.factory import ProviderFactory
 from app.worker import celery as celery_app
-from app.services.ai_reply_service import generate_reply
+from app.services.ai_reply_service import generate_reply, empty_review_reply
+from app.services import reply_validation
 from app.services.billing.credit_service import CreditService
 from app.llm.exceptions import LLMProviderError
 from app.constants.review_sentiment import ALLOWED_SENTIMENTS, ALLOWED_ISSUE_CATEGORIES
@@ -270,9 +271,26 @@ async def generate_review_reply(
 
     assert_location_active(db, location.id)
 
+    rating = review.rating if review.rating is not None else 3
+
+    # Rating-only review: rotating canned reply, no LLM, no credit.
+    if not (review.comment or "").strip():
+        reply = empty_review_reply(rating)
+        return GenerateReplyResponse(
+            review_id=review.id,
+            generated_reply=reply,
+            recommended_reply=reply,
+            short_reply=reply,
+            warm_or_professional_reply=reply,
+            topics=[],
+            tone="grateful" if rating >= 4 else "neutral" if rating == 3 else "empathetic",
+            manual_review_required=reply_validation.manual_review_required(rating, review.comment),
+            risk_level="high" if rating <= 1 else "low",
+        )
+
     try:
         with CreditService.consume_ai_credit(db, current_user.organization_id, "generate_review_reply"):
-            result = await generate_reply(review, location)
+            result = await generate_reply(review, location, db)
     except LLMProviderError as e:
         logger.error("LLM generation failed for review %s: %s", review_id, e, exc_info=True)
         raise HTTPException(
@@ -285,11 +303,19 @@ async def generate_review_reply(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI service temporarily unavailable. Please write a manual reply."
         )
-        
+
+    variants = result["variants"]
+    checks = reply_validation.validate(variants["recommended"], review.sentiment, rating, review.comment)
     return GenerateReplyResponse(
         review_id=review.id,
         generated_reply=result["generated_reply"],
-        tone=result["tone"]
+        recommended_reply=variants["recommended"],
+        short_reply=variants["short"],
+        warm_or_professional_reply=variants["warm_or_professional"],
+        topics=result["topics"],
+        tone=result["tone"],
+        manual_review_required=checks["manual_review_required"],
+        risk_level=checks["risk_level"],
     )
 
 

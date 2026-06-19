@@ -1,28 +1,28 @@
 from sqlalchemy.orm import Session
 from app.providers.base.provider import BaseProvider
 from app.providers.base.auth import AuthContext
-from app.providers.registry import ProviderRegistry
 from app.models.user import User
 from app.models.oauth_account import OAuthAccount
 from app.core.security import decrypt_token
 from app.core.roles import ADMIN_ROLES
-
-# Make sure all providers are imported so they register themselves!
 from app.providers.gbp.provider import GBPProvider
 
-# Register GBP explicitly if decorator isn't used
-ProviderRegistry.register(GBPProvider)
+
+# ponytail: GBP is the only provider; resolve by name directly. Add a dict here
+# if a second provider ever ships.
+def _resolve_provider(provider_name: str) -> type:
+    if provider_name in ("gbp", "google"):
+        return GBPProvider
+    raise ValueError(f"Provider '{provider_name}' not found.")
 
 class ProviderFactory:
     @staticmethod
     def get_oauth_url(provider_name: str, state: str) -> str:
-        provider_class = ProviderRegistry.get(provider_name)
-        return provider_class.get_oauth_url(state)
+        return _resolve_provider(provider_name).get_oauth_url(state)
 
     @staticmethod
     def exchange_code_for_tokens(provider_name: str, code: str) -> dict:
-        provider_class = ProviderRegistry.get(provider_name)
-        return provider_class.exchange_code_for_tokens(code)
+        return _resolve_provider(provider_name).exchange_code_for_tokens(code)
 
     @staticmethod
     def get_provider(provider_name: str, organization_id: int, db: Session) -> BaseProvider:
@@ -71,5 +71,5 @@ class ProviderFactory:
             expires_at=oauth_account.expires_at
         )
         
-        provider_class = ProviderRegistry.get(provider_name)
+        provider_class = _resolve_provider(provider_name)
         return provider_class(auth_context=auth_context, db=db)

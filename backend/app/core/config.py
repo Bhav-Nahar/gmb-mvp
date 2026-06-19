@@ -75,8 +75,11 @@ class Settings(BaseSettings):
 
     # LLM Settings
     GROQ_API_KEY: str = ""
-    LLM_PROVIDER: str = "groq"
-    LLM_MODEL: str = "llama-3.3-70b-versatile"
+    GEMINI_API_KEY: str = ""
+    # Gemini's OpenAI-compatible endpoint — lets us reuse the AsyncOpenAI client.
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    LLM_PROVIDER: str = "groq"  # "groq" | "gemini"
+    LLM_MODEL: str = "llama-3.3-70b-versatile"  # set to e.g. "gemini-2.5-flash" when LLM_PROVIDER=gemini
 
     # Frontend
     FRONTEND_URL: str = "http://localhost:3000"

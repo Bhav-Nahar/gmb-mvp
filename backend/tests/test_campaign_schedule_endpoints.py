@@ -16,6 +16,14 @@ def _future(hours=24):
     return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=hours)
 
 
+def _norm(dt):
+    # SQLite (test DB) returns naive datetimes; Postgres returns tz-aware. Normalize
+    # both to UTC-naive, second precision, so equality compares wall-clock only.
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return dt.replace(microsecond=0)
+
+
 def _setup_scheduled_campaign(db):
     org = Organization(name="Acme", subscription_status="active")
     db.add(org)
@@ -55,7 +63,7 @@ def test_edit_scheduled_campaign_updates_content_and_time(db):
     db.refresh(post)
     assert post.title == "New title"
     assert post.summary == "New body"
-    assert post.scheduled_at.replace(microsecond=0) == new_time.replace(microsecond=0)
+    assert _norm(post.scheduled_at) == _norm(new_time)
     # Still scheduled — editing must not change lifecycle state.
     assert post.status == PostStatus.SCHEDULED.value
     assert campaign.status == CampaignStatus.SCHEDULED.value
@@ -71,7 +79,7 @@ def test_reschedule_only_changes_time(db):
     db.refresh(post)
     assert post.title == "Old title"          # untouched
     assert post.summary == "Old body"         # untouched
-    assert post.scheduled_at.replace(microsecond=0) == new_time.replace(microsecond=0)
+    assert _norm(post.scheduled_at) == _norm(new_time)
 
 
 def test_cancel_schedule_reverts_to_draft(db):

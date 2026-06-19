@@ -106,7 +106,13 @@ export default function ReviewsPage(props: any) {
 
   // AI Generation state
   const [generatingFor, setGeneratingFor] = useState<number | null>(null)
-  const [generatedReplies, setGeneratedReplies] = useState<Record<number, { reply: string; tone: string }>>({})
+  const [generatedReplies, setGeneratedReplies] = useState<Record<number, {
+    reply: string
+    tone: string
+    variants?: { recommended: string; short: string; warm_or_professional: string }
+    manualReviewRequired?: boolean
+    riskLevel?: string
+  }>>({})
   const [generationError, setGenerationError] = useState<Record<number, string>>({})
 
   // Retag state
@@ -303,14 +309,23 @@ export default function ReviewsPage(props: any) {
       return copy
     })
     try {
-      const response = await api.post<{ review_id: number; generated_reply: string; tone: string }>(
-        `/reviews/${reviewId}/generate-reply`
-      )
+      const response = await api.post<{
+        review_id: number; generated_reply: string; tone: string
+        recommended_reply?: string; short_reply?: string; warm_or_professional_reply?: string
+        manual_review_required?: boolean; risk_level?: string
+      }>(`/reviews/${reviewId}/generate-reply`)
       setGeneratedReplies(prev => ({
         ...prev,
         [reviewId]: {
-          reply: response.generated_reply,
-          tone: response.tone
+          reply: response.recommended_reply ?? response.generated_reply,
+          tone: response.tone,
+          variants: response.recommended_reply ? {
+            recommended: response.recommended_reply,
+            short: response.short_reply ?? response.recommended_reply,
+            warm_or_professional: response.warm_or_professional_reply ?? response.recommended_reply,
+          } : undefined,
+          manualReviewRequired: response.manual_review_required,
+          riskLevel: response.risk_level,
         }
       }))
     } catch (err: any) {
@@ -684,10 +699,40 @@ export default function ReviewsPage(props: any) {
                               </span>
                             )}
                           </div>
-                          <span className={`text-xs ${generatedReplies[review.id].reply.trim().split(/\s+/).filter(Boolean).length > 100 ? 'text-amber-500 font-semibold' : 'text-muted-foreground'}`}>
+                          <span className={`text-xs ${generatedReplies[review.id].reply.trim().split(/\s+/).filter(Boolean).length > 80 ? 'text-amber-500 font-semibold' : 'text-muted-foreground'}`}>
                             {generatedReplies[review.id].reply.trim().split(/\s+/).filter(Boolean).length} words
                           </span>
                         </div>
+                        {generatedReplies[review.id].manualReviewRequired && (
+                          <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium bg-red-500/15 text-red-400 border border-red-500/30">
+                            ⚠ Needs human review before posting
+                          </div>
+                        )}
+                        {generatedReplies[review.id].variants && (
+                          <div className="flex flex-wrap gap-2">
+                            {([
+                              ['recommended', 'Recommended'],
+                              ['short', 'Shorter'],
+                              ['warm_or_professional', 'Alternative'],
+                            ] as const).map(([key, label]) => {
+                              const v = generatedReplies[review.id].variants![key]
+                              const active = generatedReplies[review.id].reply === v
+                              return (
+                                <button
+                                  key={key}
+                                  type="button"
+                                  onClick={() => setGeneratedReplies({
+                                    ...generatedReplies,
+                                    [review.id]: { ...generatedReplies[review.id], reply: v },
+                                  })}
+                                  className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors ${active ? 'bg-primary/15 text-primary border-primary/40' : 'text-muted-foreground border-border hover:border-primary/40'}`}
+                                >
+                                  {label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
                         <textarea
                           value={generatedReplies[review.id].reply}
                           onChange={(e) => {
