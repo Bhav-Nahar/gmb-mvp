@@ -71,7 +71,8 @@ def patched_externals(monkeypatch, db):
 
 
 def _make_org(db, **overrides):
-    org = Organization(name="Acme", subscription_status="active", **overrides)
+    overrides.setdefault("subscription_status", "active")
+    org = Organization(name="Acme", **overrides)
     db.add(org)
     db.flush()
     return org

@@ -9,6 +9,7 @@ from xml.sax.saxutils import escape as xml_escape
 from sqlalchemy.orm import Session
 
 from app.constants.review_sentiment import ALLOWED_SENTIMENTS, ALLOWED_ISSUE_CATEGORIES
+from app.core.config import settings
 from app.llm.exceptions import LLMProviderError
 from app.llm.factory import get_llm_provider
 from app.models.review import Review
@@ -120,7 +121,8 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
     # batch, leaving the reviews to loop through the hourly retry forever).
     max_tokens = max(_MIN_COMPLETION_TOKENS, len(reviews) * _TOKENS_PER_REVIEW)
 
-    llm = get_llm_provider()
+    # Sentiment runs on Groq (see config) to keep batch classification off the Gemini quota.
+    llm = get_llm_provider(settings.LLM_PROVIDER_SENTIMENT, settings.LLM_MODEL_SENTIMENT)
     raw: str = ""
     for attempt in range(3):
         try:

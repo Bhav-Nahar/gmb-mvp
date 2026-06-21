@@ -153,8 +153,7 @@ class ReliabilityGuardrailsTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status_code, 400)
 
-    @patch("app.tasks.process_publish_job_task.delay")
-    def test_active_job_concurrency_deduplication(self, mock_celery):
+    def test_active_job_concurrency_deduplication(self):
         # 1. Create an Approved post with valid optimized media
         post = Post(
             organization_id=self.org.id,
@@ -190,7 +189,6 @@ class ReliabilityGuardrailsTests(unittest.TestCase):
             user_id=self.user.id
         )
         self.assertEqual(job_1.status.upper(), "PENDING")
-        self.assertEqual(mock_celery.call_count, 1)
 
         # Reset post status to Approved so the second call passes eligibility checks
         post.status = "Approved"
@@ -204,9 +202,8 @@ class ReliabilityGuardrailsTests(unittest.TestCase):
             organization_id=self.org.id,
             user_id=self.user.id
         )
+        # Dedup: the active job is returned instead of staging a new one.
         self.assertEqual(job_2.id, job_1.id)
-        # Celery must NOT be invoked a second time
-        self.assertEqual(mock_celery.call_count, 1)
 
     @patch("redis.Redis.from_url")
     @patch("app.providers.factory.ProviderFactory.get_provider")

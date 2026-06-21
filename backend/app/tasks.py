@@ -24,6 +24,155 @@ def run_async(coro):
     """
     return asyncio.run(coro)
 
+
+def _is_retryable_publish_error(e) -> bool:
+    """Auth failures, 4xx client errors, and logic/system exceptions are permanent;
+    network/timeout errors and non-4xx HTTP errors are worth retrying."""
+    import httpx
+    from app.providers.gbp.auth import PermanentAuthError
+    if isinstance(e, PermanentAuthError):
+        return False
+    if isinstance(e, httpx.HTTPStatusError):
+        return e.response.status_code not in (400, 401, 403, 404, 409)
+    return isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError))
+
+
+def _provider_error_data(e) -> dict:
+    """Best-effort structured body from a failed provider HTTP call."""
+    import httpx
+    if isinstance(e, httpx.HTTPStatusError):
+        try:
+            return e.response.json()
+        except Exception:
+            return {"raw_response": e.response.text}
+    return {}
+
+
+def _finalize_campaign_if_complete(db, campaign, organization_id):
+    """When a campaign's last pending job resolves (total_pending == 0), set its
+    terminal status + primary-post status from the published/failed counts and
+    write the 'completed' audit log. No-op while jobs are still pending."""
+    if not (campaign and campaign.total_pending == 0):
+        return
+    from app.models.campaign_audit_log import CampaignAuditLog
+    from app.constants.posts import PostStatus
+    old_status = campaign.status
+    if campaign.total_failed == 0:
+        new_status = "Completed"
+    elif campaign.total_published == 0:
+        new_status = "Failed"
+    else:
+        new_status = "PartiallyCompleted"
+    campaign.status = new_status
+    if campaign.primary_post:
+        if campaign.total_failed == 0 and campaign.total_published > 0:
+            campaign.primary_post.status = PostStatus.PUBLISHED.value
+        elif campaign.total_published == 0:
+            campaign.primary_post.status = PostStatus.FAILED.value
+        else:
+            campaign.primary_post.status = PostStatus.PARTIALLY_PUBLISHED.value
+    db.add(CampaignAuditLog(
+        organization_id=organization_id,
+        campaign_id=campaign.id,
+        actor_user_id=None,
+        action="completed",
+        previous_status=old_status,
+        new_status=new_status,
+        log_metadata={"final_stats": {"published": campaign.total_published, "failed": campaign.total_failed}},
+    ))
+
+
+@shared_task(name="app.tasks.run_local_rank_scan_task")
+def run_local_rank_scan_task(scan_id: int) -> dict:
+    """Run a queued geo-grid local rank scan (N² DataForSEO Maps calls).
+
+    Credits are charged here, AFTER the scan succeeds, so a failed fetch is free.
+    Redis-locked per location to stop overlapping scans burning the API twice.
+    """
+    import logging
+    from fastapi import HTTPException
+    from app.models.local_rank_scan import LocalRankScan
+    from app.services import local_rank_service
+    from app.services.billing.credit_service import CreditService
+
+    logger = logging.getLogger(__name__)
+    db: Session = SessionLocal()
+    try:
+        scan = db.query(LocalRankScan).filter(LocalRankScan.id == scan_id).first()
+        if not scan:
+            return {"status": "error", "reason": "scan not found"}
+
+        location = db.query(Location).filter(Location.id == scan.location_id).first()
+        if not location:
+            scan.status = "Failed"
+            scan.error = "Location not found"
+            db.commit()
+            return {"status": "error", "reason": "location not found"}
+
+        r = _get_redis()
+        lock = r.lock(f"lock:local_rank_scan:{scan.location_id}", timeout=600)
+        if not lock.acquire(blocking=False):
+            scan.status = "Failed"
+            scan.error = "Another scan is already running for this location"
+            db.commit()
+            return {"status": "skipped", "reason": "scan in progress"}
+
+        try:
+            meta = location.gbp_raw.get("metadata") if isinstance(location.gbp_raw, dict) else None
+            business_place_id = meta.get("placeId") if isinstance(meta, dict) else None
+            result = run_async(local_rank_service.scan_for_location(
+                latlng=location.latlng, gbp_raw=location.gbp_raw, address=location.address,
+                keyword=scan.keyword, grid_size=scan.grid_size,
+                radius_miles=scan.radius_miles, business_name=location.location_name,
+                business_place_id=business_place_id,
+            ))
+            price = local_rank_service.scan_price(scan.grid_size)
+            # Deduct + persist results together; pre-check inside may 402 if balance
+            # changed since the route check (rare) — caught below, no charge, no data loss.
+            with CreditService.consume_ai_credit(
+                db, scan.organization_id, local_rank_service.LOCAL_GRID_SCAN_ACTION, credits_required=price
+            ):
+                scan.cells = result["cells"]
+                scan.avg_rank = result["avg_rank"]
+                scan.solv = result["solv"]
+                scan.found_count = result["found_count"]
+                scan.total_cells = result["total_cells"]
+                scan.credits_charged = price
+                scan.status = "Completed"
+                db.add(scan)
+                # Capture the storefront's real coords (from our own result) so future
+                # scans centre exactly — only when we don't already have coordinates.
+                bc = result.get("business_coords")
+                has_latlng = isinstance(location.latlng, dict) and location.latlng.get("latitude") is not None
+                if bc and not has_latlng:
+                    location.latlng = bc
+                    db.add(location)
+            return {"status": "completed", "scan_id": scan_id}
+        except HTTPException as he:
+            db.rollback()
+            scan = db.query(LocalRankScan).filter(LocalRankScan.id == scan_id).first()
+            if scan:
+                scan.status = "Failed"
+                scan.error = str(he.detail)
+                db.commit()
+            return {"status": "error", "reason": str(he.detail)}
+        except Exception as e:
+            db.rollback()
+            logger.error("Local rank scan %s failed: %s", scan_id, e, exc_info=True)
+            scan = db.query(LocalRankScan).filter(LocalRankScan.id == scan_id).first()
+            if scan:
+                scan.status = "Failed"
+                scan.error = str(e)[:500]
+                db.commit()
+            return {"status": "error", "reason": str(e)}
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
+    finally:
+        db.close()
+
 @shared_task(name="app.tasks.sync_reviews_task")
 def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: int = None) -> dict:
     """
@@ -292,7 +441,10 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                 existing_loc.service_items = p_loc.service_items
                 existing_loc.labels = p_loc.labels or []
                 existing_loc.open_info = p_loc.open_info
-                existing_loc.latlng = p_loc.latlng
+                # Don't wipe a known latlng (incl. one captured from a local-rank scan)
+                # when Google returns none — only overwrite with a real value.
+                if p_loc.latlng is not None:
+                    existing_loc.latlng = p_loc.latlng
                 existing_loc.store_code = p_loc.store_code
                 existing_loc.language_code = p_loc.language_code
                 existing_loc.gbp_raw = p_loc.gbp_raw
@@ -841,7 +993,6 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
         # Atomic campaign counter update
         if job.campaign_id:
             from app.models.campaign import Campaign
-            from app.models.campaign_audit_log import CampaignAuditLog
             from sqlalchemy import func
             db.query(Campaign).filter(Campaign.id == job.campaign_id).update({
                 Campaign.total_published: Campaign.total_published + 1,
@@ -849,32 +1000,7 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
             }, synchronize_session=False)
             
             campaign = db.query(Campaign).filter(Campaign.id == job.campaign_id).first()
-            if campaign and campaign.total_pending == 0:
-                old_status = campaign.status
-                if campaign.total_failed == 0:
-                    new_status = "Completed"
-                elif campaign.total_published == 0:
-                    new_status = "Failed"
-                else:
-                    new_status = "PartiallyCompleted"
-                    
-                campaign.status = new_status
-                if campaign.primary_post:
-                    if campaign.total_failed == 0 and campaign.total_published > 0:
-                        campaign.primary_post.status = PostStatus.PUBLISHED.value
-                    elif campaign.total_published == 0:
-                        campaign.primary_post.status = PostStatus.FAILED.value
-                    else:
-                        campaign.primary_post.status = PostStatus.PARTIALLY_PUBLISHED.value
-                db.add(CampaignAuditLog(
-                    organization_id=organization_id,
-                    campaign_id=campaign.id,
-                    actor_user_id=None,
-                    action="completed",
-                    previous_status=old_status,
-                    new_status=new_status,
-                    log_metadata={"final_stats": {"published": campaign.total_published, "failed": campaign.total_failed}}
-                ))
+            _finalize_campaign_if_complete(db, campaign, organization_id)
         
         # Save a PostAuditLog
         audit_log = PostAuditLog(
@@ -916,17 +1042,7 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
         db.rollback()
         
         # Decide if error is retryable or not
-        is_retryable = True
-        
-        if isinstance(e, PermanentAuthError):
-            is_retryable = False
-        elif isinstance(e, httpx.HTTPStatusError):
-            # Client errors (except 429) are usually non-retryable
-            if e.response.status_code in [400, 401, 403, 404, 409]:
-                is_retryable = False
-        elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
-            # System logic/code exceptions are non-retryable
-            is_retryable = False
+        is_retryable = _is_retryable_publish_error(e)
             
         # Capture scalar values from the detached ORM objects BEFORE opening a new session,
         # since accessing lazy-loaded attrs on detached objects raises DetachedInstanceError.
@@ -940,12 +1056,7 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
             
             if job_record:
                 # Capture status details from the exception safely
-                err_data = {}
-                if isinstance(e, httpx.HTTPStatusError):
-                    try:
-                        err_data = e.response.json()
-                    except Exception:
-                        err_data = {"raw_response": e.response.text}
+                err_data = _provider_error_data(e)
                 
                 if is_retryable and self.request.retries < self.max_retries:
                     job_record.status = PublishJobStatus.RETRYING.value
@@ -983,7 +1094,6 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
                         
                     if job_record.campaign_id:
                         from app.models.campaign import Campaign
-                        from app.models.campaign_audit_log import CampaignAuditLog
                         from sqlalchemy import func
                         job_db.query(Campaign).filter(Campaign.id == job_record.campaign_id).update({
                             Campaign.total_failed: Campaign.total_failed + 1,
@@ -991,32 +1101,7 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
                         }, synchronize_session=False)
                         
                         campaign = job_db.query(Campaign).filter(Campaign.id == job_record.campaign_id).first()
-                        if campaign and campaign.total_pending == 0:
-                            old_status = campaign.status
-                            if campaign.total_failed == 0:
-                                new_status = "Completed"
-                            elif campaign.total_published == 0:
-                                new_status = "Failed"
-                            else:
-                                new_status = "PartiallyCompleted"
-                                
-                            campaign.status = new_status
-                            if campaign.primary_post:
-                                if campaign.total_failed == 0 and campaign.total_published > 0:
-                                    campaign.primary_post.status = PostStatus.PUBLISHED.value
-                                elif campaign.total_published == 0:
-                                    campaign.primary_post.status = PostStatus.FAILED.value
-                                else:
-                                    campaign.primary_post.status = PostStatus.PARTIALLY_PUBLISHED.value
-                            job_db.add(CampaignAuditLog(
-                                organization_id=organization_id,
-                                campaign_id=campaign.id,
-                                actor_user_id=None,
-                                action="completed",
-                                previous_status=old_status,
-                                new_status=new_status,
-                                log_metadata={"final_stats": {"published": campaign.total_published, "failed": campaign.total_failed}}
-                            ))
+                        _finalize_campaign_if_complete(job_db, campaign, organization_id)
                     
                     job_db.commit()
         finally:
@@ -1445,21 +1530,9 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
                 # Savepoint auto-rolled back; outer session is still valid.
                 logger.error(f"Job {job_id} in shard failed: {str(e)}")
 
-                is_retryable = True
-                if isinstance(e, PermanentAuthError):
-                    is_retryable = False
-                elif isinstance(e, httpx.HTTPStatusError):
-                    if e.response.status_code in [400, 401, 403, 404, 409]:
-                        is_retryable = False
-                elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
-                    is_retryable = False
+                is_retryable = _is_retryable_publish_error(e)
 
-                err_data = {}
-                if isinstance(e, httpx.HTTPStatusError):
-                    try:
-                        err_data = e.response.json()
-                    except Exception:
-                        err_data = {"raw_response": e.response.text}
+                err_data = _provider_error_data(e)
 
                 try:
                     # Re-fetch via the still-valid session (savepoint rolled back, session ok).
@@ -2353,22 +2426,24 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
             res = run_async(provider.patch_location(location.google_location_id, gbp_payload, update_mask))
             ListingEditService.mark_published(db, edit_id=edit.id, organization_id=organization_id)
             db.commit()
+            # A published field edit (e.g. the business description) changes profile
+            # completeness, so refresh the health score for an accurate before/after.
+            try:
+                from app.services.health_score_service import HealthScoreService
+                HealthScoreService.recalculate_health_score(db, location.id, reason="listing_edit_publish")
+                db.commit()
+            except Exception as hs_err:
+                logger.warning("Health score recalc failed after listing-edit publish %s: %s", edit.id, hs_err)
             return {"status": "completed"}
             
         except Exception as e:
             logger.error(f"PublishListingEdit {edit_id} failed: {str(e)}")
-            is_retryable = True
+            is_retryable = _is_retryable_publish_error(e)
             google_error_code = None
-            
             if isinstance(e, PermanentAuthError):
-                is_retryable = False
                 google_error_code = "AUTH_REVOKED"
             elif isinstance(e, httpx.HTTPStatusError):
-                if e.response.status_code in [400, 401, 403, 404, 409]:
-                    is_retryable = False
                 google_error_code = str(e.response.status_code)
-            elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
-                is_retryable = False
                 
             if is_retryable and self.request.retries < self.max_retries:
                 # Let celery handle retry; leave it in Publishing state
@@ -2479,17 +2554,12 @@ def publish_location_media_task(self, media_id: int, organization_id: int) -> di
 
         except Exception as e:
             logger.error(f"PublishLocationMedia {media_id} failed: {str(e)}")
-            is_retryable = True
+            is_retryable = _is_retryable_publish_error(e)
             google_error_code = None
             if isinstance(e, PermanentAuthError):
-                is_retryable = False
                 google_error_code = "AUTH_REVOKED"
             elif isinstance(e, httpx.HTTPStatusError):
-                if e.response.status_code in [400, 401, 403, 404, 409]:
-                    is_retryable = False
                 google_error_code = str(e.response.status_code)
-            elif not isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError)):
-                is_retryable = False
 
             if is_retryable and self.request.retries < self.max_retries:
                 countdown = 60 * (2 ** self.request.retries)

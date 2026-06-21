@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X } from 'lucide-react'
+import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -32,6 +32,7 @@ export default function Sidebar({
     { label: 'Dashboard', href: '/dashboard', icon: MapPin },
     { label: 'Insights', href: '/dashboard/insights', icon: TrendingUp },
     { label: 'Search Intelligence', href: '/dashboard/insights/search-intelligence', icon: Search },
+    { label: 'Local Rank', href: '/dashboard/local-rank', icon: Grid3x3 },
     { label: 'Reviews', href: '/dashboard/reviews', icon: MessageSquare },
     { label: 'Posts & Media', href: '/dashboard/posts', icon: Calendar },
   ]
@@ -116,6 +117,21 @@ export default function Sidebar({
             </Link>
           )
         })}
+
+        {user?.is_superuser && (
+          <Link
+            href="/admin"
+            onClick={onClose}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${
+              pathname?.startsWith('/admin')
+                ? 'bg-primary/10 text-primary border border-primary/20'
+                : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground border border-transparent'
+            }`}
+          >
+            <ShieldCheck className={`h-4 w-4 shrink-0 ${pathname?.startsWith('/admin') ? 'text-primary' : 'text-muted-foreground/60'}`} />
+            <span>Super Admin</span>
+          </Link>
+        )}
 
         {/* Settings group */}
         <div className="pt-2 mt-2 border-t border-border/60">

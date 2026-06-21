@@ -7,6 +7,7 @@ import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
 import { useAuth } from "@/hooks/useAuth"
 import { SkeletonLoader } from "../components/SkeletonLoader"
 import { DynamicFormEngine } from "../components/DynamicFormEngine"
+import { AIDescriptionCard } from "../components/AIDescriptionCard"
 
 interface ProfileTabProps {
   locationId: number
@@ -120,6 +121,8 @@ export function ProfileTab({ locationId, setHasUnsavedChanges }: ProfileTabProps
     <div className="space-y-8 animate-in fade-in duration-500">
       {renderSection("Critical Fields", criticalFields)}
       {renderSection("Standard Fields", standardFields)}
+
+      <AIDescriptionCard locationId={locationId} />
 
       <div className="space-y-4 pt-6 border-t border-border/50">
         <DynamicFormEngine locationId={locationId} />

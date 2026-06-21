@@ -9,11 +9,13 @@ export interface User {
   email: string
   role: string
   avatar?: string
+  is_superuser?: boolean
 }
 
 interface AuthContextType {
   user: User | null
   isAdmin: boolean
+  isSuperAdmin: boolean
   loading: boolean
   logout: () => Promise<void>
   refresh: () => Promise<void>
@@ -66,9 +68,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const isAdmin = user?.role === 'Admin' || user?.role === 'admin' || user?.role === 'Owner' || user?.role === 'owner'
+  const isSuperAdmin = !!user?.is_superuser
 
   return (
-    <AuthContext.Provider value={{ user, isAdmin, loading, logout, refresh: fetchProfile }}>
+    <AuthContext.Provider value={{ user, isAdmin, isSuperAdmin, loading, logout, refresh: fetchProfile }}>
       {children}
     </AuthContext.Provider>
   )

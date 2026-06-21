@@ -4,6 +4,8 @@ import { useAuth } from '@/hooks/useAuth';
 
 export interface BillingStatus {
   plan: string;
+  plan_tier?: string;
+  features?: string[];
   subscription_status: string;
   monthly_ai_credits_balance: number;
   monthly_ai_credits_allowance?: number;
@@ -25,7 +27,11 @@ export interface BillingStatus {
 export interface Quote {
   location_count: number;
   interval: string;
-  price_paise: number;
+  plan_tier: string;
+  price_paise: number;   // base (ex-GST)
+  gst_paise: number;
+  total_paise: number;   // base + GST — charged
+  gst_rate: number;
   monthly_ai_credits: number;
 }
 
@@ -76,10 +82,11 @@ export function useBillingTransactions(page = 0, pageSize = 10, enabled = true) 
 
 export function useCheckoutSubscription() {
   return useMutation({
-    mutationFn: (data: { location_count: number; interval: 'monthly' | 'annual' }) =>
+    mutationFn: (data: { location_count: number; interval: 'monthly' | 'annual'; plan_tier?: string }) =>
       api.post<{ subscription: { id: string; razorpay_key?: string } }>('/billing/checkout-subscription', {
         location_count: data.location_count,
         interval: data.interval,
+        plan_tier: data.plan_tier ?? 'basic',
       })
   });
 }
@@ -113,7 +120,9 @@ export interface UnlockQuote {
   location_ids: number[];
   added: number;
   interval: string;
-  amount_paise: number;
+  amount_paise: number;   // GST-inclusive — what is charged
+  base_paise?: number;
+  gst_paise?: number;
   credits_granted: number;
 }
 
@@ -156,10 +165,10 @@ export function useConfirmRemandate() {
   });
 }
 
-export function useQuote(locationCount: number, interval: 'monthly' | 'annual', enabled = true) {
+export function useQuote(locationCount: number, interval: 'monthly' | 'annual', planTier: string = 'basic', enabled = true) {
   return useQuery({
-    queryKey: ['billing_quote', locationCount, interval],
-    queryFn: () => api.get<Quote>(`/billing/quote?location_count=${locationCount}&interval=${interval}`),
+    queryKey: ['billing_quote', locationCount, interval, planTier],
+    queryFn: () => api.get<Quote>(`/billing/quote?location_count=${locationCount}&interval=${interval}&plan_tier=${planTier}`),
     enabled,
   });
 }

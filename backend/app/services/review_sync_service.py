@@ -31,6 +31,23 @@ def generate_content_hash(rating: int, comment: str, reply_text: str, updated_at
     hash_str = f"{rating or 0}:{comment or ''}:{reply_text or ''}:{updated_at_str}:{reply_created_at_str}"
     return hashlib.sha256(hash_str.encode('utf-8')).hexdigest()
 
+
+def _record_sync_log(db, sync_log, organization_id, location_id, run_type, status, message):
+    """Update the passed-in SyncLog row if present, else insert a fresh one, then commit."""
+    if sync_log:
+        sync_log.status = status
+        sync_log.error_message = message
+    else:
+        db.add(SyncLog(
+            organization_id=organization_id,
+            location_id=location_id,
+            status=status,
+            run_type=run_type,
+            error_message=message,
+        ))
+    db.commit()
+
+
 class ReviewSyncService:
     @staticmethod
     async def sync_location_reviews(db: Session, location_id: int, run_type: str = "Scheduled", sync_log_id: int = None) -> str:
@@ -68,36 +85,12 @@ class ReviewSyncService:
             except Exception as fetch_err:
                 logger.error("Provider fetch failed for location %s: %s", location_id, fetch_err)
                 error_msg = f"ProviderError: {str(fetch_err)}"
-                if sync_log:
-                    sync_log.status = "ProviderError"
-                    sync_log.error_message = error_msg
-                else:
-                    new_log = SyncLog(
-                        organization_id=organization_id,
-                        location_id=location_id,
-                        status="ProviderError",
-                        run_type=run_type,
-                        error_message=error_msg
-                    )
-                    db.add(new_log)
-                db.commit()
+                _record_sync_log(db, sync_log, organization_id, location_id, run_type, "ProviderError", error_msg)
                 return f"PROVIDER_ERROR: {error_msg}"
 
             if not provider_reviews:
                 log_msg = "Successfully synced 0 reviews."
-                if sync_log:
-                    sync_log.status = "Success"
-                    sync_log.error_message = log_msg
-                else:
-                    new_log = SyncLog(
-                        organization_id=organization_id,
-                        location_id=location_id,
-                        status="Success",
-                        run_type=run_type,
-                        error_message=log_msg
-                     )
-                    db.add(new_log)
-                db.commit()
+                _record_sync_log(db, sync_log, organization_id, location_id, run_type, "Success", log_msg)
                 return f"SUCCESS: {log_msg}"
             
             # 3. Filter out reviews with missing provider IDs
@@ -258,38 +251,14 @@ class ReviewSyncService:
 
             # Log successful sync
             log_message = f"Successfully synced {synced_count} reviews (from {len(provider_reviews)} fetched)."
-            if sync_log:
-                sync_log.status = "Success"
-                sync_log.error_message = log_message
-            else:
-                new_log = SyncLog(
-                    organization_id=organization_id,
-                    location_id=location_id,
-                    status="Success",
-                    run_type=run_type,
-                    error_message=log_message
-                )
-                db.add(new_log)
-            db.commit()
+            _record_sync_log(db, sync_log, organization_id, location_id, run_type, "Success", log_message)
 
             return f"SUCCESS: {log_message}"
 
         except Exception as e:
             db.rollback()
             error_msg = f"Review Sync Failed: {str(e)}"
-            if sync_log:
-                sync_log.status = "Failed"
-                sync_log.error_message = error_msg
-            else:
-                new_log = SyncLog(
-                    organization_id=organization_id,
-                    location_id=location_id,
-                    status="Failed",
-                    run_type=run_type,
-                    error_message=error_msg
-                )
-                db.add(new_log)
-            db.commit()
+            _record_sync_log(db, sync_log, organization_id, location_id, run_type, "Failed", error_msg)
             raise e
 
 review_sync_service = ReviewSyncService()

@@ -39,6 +39,56 @@ AI_TOPUP_PACKS = {
     "large": {"credits": 2_000, "price_paise": 179_900},
 }
 
+# GST added on top of every price. Change the rate here and it applies everywhere
+# prices are quoted/charged (all stored prices are GST-exclusive base amounts).
+GST_RATE = 0.18
+
+# ---------------------------------------------------------------------------
+# Plan tiers. The `plan_tier` column on the organization selects one. `features`
+# gates premium features (Local Rank is the first); `credits_per_location` and
+# `price_tiers` let each tier grant/charge differently. Everything tweakable here.
+# NOTE: kept separate from the `plan` column, which remains the trial/active
+# billing-STATE flag — `plan_tier` is the product TIER, so neither overloads the other.
+# ---------------------------------------------------------------------------
+PLANS = {
+    "basic": {
+        "name": "Basic",
+        "price_tiers": LOCATION_PRICE_TIERS,            # current graduated pricing
+        "credits_per_location": CREDITS_PER_LOCATION,   # 30
+        "features": [],
+    },
+    "pro": {
+        "name": "Pro",
+        "price_tiers": [(10, 300_000), (25, 250_000), (None, 200_000)],  # ~₹500/loc more
+        "credits_per_location": 45,
+        "features": ["local_rank"],
+    },
+}
+DEFAULT_PLAN_TIER = "basic"
+
+
+def get_plan(plan_tier: str | None) -> dict:
+    return PLANS.get(plan_tier or DEFAULT_PLAN_TIER, PLANS[DEFAULT_PLAN_TIER])
+
+
+def plan_has_feature(plan_tier: str | None, feature: str) -> bool:
+    return feature in get_plan(plan_tier).get("features", [])
+
+
+def price_with_gst(price_paise: int) -> dict:
+    """base / gst / total (paise) for a price, applying GST_RATE."""
+    gst = round(price_paise * GST_RATE)
+    return {"base_paise": price_paise, "gst_paise": gst, "total_paise": price_paise + gst}
+
+
+def per_location_price_paise(plan_tier: str, location_count: int) -> int:
+    """Graduated per-location price for a plan at a given location count."""
+    for upper, price in get_plan(plan_tier)["price_tiers"]:
+        if upper is None or location_count <= upper:
+            return price
+    return get_plan(plan_tier)["price_tiers"][-1][1]
+
+
 PLATFORM_AI_ACTIONS = {
     "sentiment_tagging",
 }
@@ -46,4 +96,7 @@ PLATFORM_AI_ACTIONS = {
 USER_AI_ACTIONS = {
     "generate_review_reply",
     "generate_google_post",
+    "generate_business_description",     # first description for a location: 5 credits
+    "regenerate_business_description",   # subsequent regenerations: 2 credits
+    "run_local_grid_scan",               # geo-grid local rank scan: 1–6 credits by grid size
 }

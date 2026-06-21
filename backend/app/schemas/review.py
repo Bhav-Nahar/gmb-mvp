@@ -44,5 +44,11 @@ class ReviewReplyRequest(BaseModel):
 
 class GenerateReplyResponse(BaseModel):
     review_id: int
-    generated_reply: str
+    generated_reply: str  # = recommended variant, kept for back-compat
+    recommended_reply: str
+    short_reply: str
+    warm_or_professional_reply: str
+    topics: List[str] = []
     tone: str
+    manual_review_required: bool = False
+    risk_level: str = "low"

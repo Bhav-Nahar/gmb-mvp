@@ -31,15 +31,17 @@ from app.models.keyword_monthly_metrics import KeywordMonthlyMetric
 from app.models.organization_brand_terms import OrganizationBrandTerm
 from app.models.location_media import LocationMedia
 from app.models.reply_template import ReplyTemplate
+from app.models.description_generation import DescriptionGeneration
+from app.models.local_rank_scan import LocalRankScan
 
 __all__ = [
-    "Base", "Organization", "User", "OAuthAccount", "Location", 
+    "Base", "Organization", "User", "OAuthAccount", "Location",
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
     "Campaign", "Post", "PostVariant", "PostMedia", "PublishJob", "PostAuditLog",
     "CampaignAuditLog", "LocationEdit", "ActivityLog", "ActivityLogArchive",
     "LocationDailyInsight", "OrganizationSyncState", "GbpAttributeMetadata", "GbpAttributeDefinition",
     "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction",
     "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm",
-    "LocationMedia", "ReplyTemplate"
+    "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan"
 ]
 
