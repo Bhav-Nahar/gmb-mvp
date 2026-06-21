@@ -81,6 +81,20 @@ staff_required = RoleChecker(list(STAFF_ROLES))
 team_viewer_required = RoleChecker(list(TEAM_VIEWER_ROLES))
 regional_manager_plus = RoleChecker(list(TEAM_VIEWER_ROLES))
 
+
+def superadmin_required(current_user: User = Depends(get_current_user)) -> User:
+    """Platform super-admin gate for the cross-org /admin panel.
+
+    Membership is an env allowlist (settings.SUPERADMIN_EMAILS), not a DB role — so
+    granting access needs no migration and the first admin needs no manual DB edit.
+    """
+    if not settings.is_superadmin(current_user.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super-admin access required",
+        )
+    return current_user
+
 def get_user_location_ids(user: User, db: Session) -> Optional[List[int]]:
     if user.role in ADMIN_ROLES:
         return None
@@ -214,6 +228,11 @@ def get_redis_client() -> redis.Redis:
 def check_billing_lock(request: Request, db: Session = Depends(get_db)):
     """Global dependency to block write operations if organization is locked."""
     if request.method in ["GET", "OPTIONS", "HEAD"]:
+        return
+
+    # The platform super-admin panel acts cross-org as staff; never gate it on the
+    # acting admin's own organization lock.
+    if request.url.path.startswith("/api/v1/admin/"):
         return
 
     _WHITELIST = frozenset({

@@ -11,20 +11,16 @@ class CreditService:
     """AI credit consumption.
 
     We pre-check that the org can afford the action (fail fast on locked / no
-    credits) and only deduct AFTER the LLM call succeeds. The user is never
-    charged for a failed generation, and there is no refund path to get wrong.
-    The trade-off is that two highly-concurrent requests with one credit left
-    could both pass the pre-check — acceptable for our volume."""
+    credits) and only deduct AFTER the work succeeds. The user is never charged
+    for a failed action, and there is no refund path to get wrong. The trade-off
+    is that two highly-concurrent requests with one credit left could both pass
+    the pre-check — acceptable for our volume."""
 
     @staticmethod
-    @contextmanager
-    def consume_ai_credit(
-        db: Session, org_id: int, action_name: str, credits_required: int = 1
-    ) -> Generator[None, None, None]:
-        if action_name in PLATFORM_AI_ACTIONS:
-            yield
-            return
-
+    def precheck(db: Session, org_id: int, credits_required: int = 1) -> None:
+        """Raise 402/404 if the org cannot afford the action. Use this to gate work
+        that is deducted later (e.g. a background scan), where the consume context
+        manager can't wrap the actual work."""
         from app.services.billing.entitlement_service import EntitlementService
 
         org = db.query(Organization).filter(Organization.id == org_id).first()
@@ -35,7 +31,18 @@ class CreditService:
         if (org.monthly_ai_credits_balance + org.topup_ai_credits_balance) < credits_required:
             raise HTTPException(status_code=402, detail="Insufficient AI credits")
 
-        # Run the LLM call; if it raises, we never reach the deduction below.
+    @staticmethod
+    @contextmanager
+    def consume_ai_credit(
+        db: Session, org_id: int, action_name: str, credits_required: int = 1
+    ) -> Generator[None, None, None]:
+        if action_name in PLATFORM_AI_ACTIONS:
+            yield
+            return
+
+        CreditService.precheck(db, org_id, credits_required)
+
+        # Run the work; if it raises, we never reach the deduction below.
         yield
 
         # Deduct after success: monthly balance first, then top-up.

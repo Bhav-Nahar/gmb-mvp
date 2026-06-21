@@ -7,6 +7,7 @@ from app.models.location import Location
 from app.models.review import Review
 from app.models.location_health_score import LocationHealthScore
 from app.models.location_media import LocationMedia, LocationMediaStatus
+from app.services import description_validation
 
 class HealthScoreService:
     SCORE_VERSION = "HEALTH_V1"
@@ -30,13 +31,18 @@ class HealthScoreService:
         has_website = bool(location.website and location.website.strip())
         has_hours = bool(location.business_hours and len(location.business_hours) > 0)
         has_desc = bool(location.description and location.description.strip())
+        # Graduated 0-5 quality (length band + category mention + policy-clean),
+        # so improving a weak description actually moves the score — not just
+        # presence. Same analysis powers the "is it already good?" gate. No LLM.
+        desc_analysis = description_validation.analyze(location.description, location.primary_category)
+        desc_quality = desc_analysis["quality_score"]
 
         if has_name: prof_score += 5
         if has_address: prof_score += 5
         if has_phone: prof_score += 5
         if has_website: prof_score += 5
         if has_hours: prof_score += 5
-        if has_desc: prof_score += 5
+        prof_score += desc_quality
 
         # 2. Reviews & Rating (25 Max)
         rating_score = 0
@@ -137,7 +143,16 @@ class HealthScoreService:
             "reviews_rating": {"score": reviews_score, "max_score": 25},
             "response_rate": {"score": resp_score, "max_score": 10},
             "post_activity": {"score": post_score, "max_score": 20},
-            "photos_media": {"score": photo_score, "max_score": 15}
+            "photos_media": {"score": photo_score, "max_score": 15},
+            # Surfaced so the UI shows the description's "before" status/flags
+            # straight from the cached score — no recompute, no extra table.
+            "description": {
+                "score": desc_quality, "max_score": 5,
+                "status": desc_analysis["status"],
+                "char_count": desc_analysis["char_count"],
+                "hard_flags": desc_analysis["hard_flags"],
+                "soft_flags": desc_analysis["soft_flags"],
+            },
         }
 
         # Recommendations
@@ -160,6 +175,16 @@ class HealthScoreService:
             recs.append({"priority": 3, "title": "Add Business Hours", "description": "Business hours are missing.", "potential_gain": 5, "target_tab": "profile"})
         if not has_desc:
             recs.append({"priority": 3, "title": "Add Description", "description": "Business description is missing.", "potential_gain": 5, "target_tab": "profile"})
+        elif desc_quality < 5:
+            if desc_analysis["hard_flags"]:
+                why = "Your description contains content Google may reject."
+            elif desc_analysis["char_count"] < 350:
+                why = "Your description is short — aim for 550-700 characters."
+            elif not desc_analysis["has_category"]:
+                why = "Mention your business category naturally in the description."
+            else:
+                why = "Polish your description for stronger local relevance."
+            recs.append({"priority": 3, "title": "Improve Description", "description": why, "potential_gain": 5 - desc_quality, "target_tab": "profile"})
         if rating_score < 15 and avg_rating > 0:
             recs.append({"priority": 3, "title": "Improve Rating", "description": "Your average rating is below 4.0. Focus on customer experience.", "potential_gain": 20 - rating_score, "target_tab": "reviews"})
 

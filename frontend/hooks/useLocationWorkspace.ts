@@ -34,6 +34,15 @@ export interface HealthScoreBreakdown {
   max_score: number;
 }
 
+export interface DescriptionBreakdown {
+  score: number;
+  max_score: number;
+  status: 'Missing' | 'Thin' | 'Weak' | 'Good';
+  char_count: number;
+  hard_flags: string[];
+  soft_flags: string[];
+}
+
 export interface HealthScoreRecommendation {
   title: string;
   description: string;
@@ -52,6 +61,7 @@ export interface LocationHealthScoreOut {
     response_rate: HealthScoreBreakdown;
     post_activity: HealthScoreBreakdown;
     photos_media: HealthScoreBreakdown;
+    description?: DescriptionBreakdown;
   };
   recommendations: HealthScoreRecommendation[];
   last_recalculated_reason: string;

@@ -16,12 +16,22 @@ class HealthScoreBreakdown(BaseModel):
     score: int
     max_score: int
 
+class DescriptionBreakdown(BaseModel):
+    score: int
+    max_score: int
+    status: str
+    char_count: int
+    hard_flags: list[str] = []
+    soft_flags: list[str] = []
+
 class HealthScoreBreakdowns(BaseModel):
     profile_completeness: HealthScoreBreakdown
     reviews_rating: HealthScoreBreakdown
     response_rate: HealthScoreBreakdown
     post_activity: HealthScoreBreakdown
     photos_media: HealthScoreBreakdown
+    # Optional so older cached scores (pre-enrichment) still serialize.
+    description: Optional[DescriptionBreakdown] = None
 
 class HealthScoreRecommendation(BaseModel):
     title: str

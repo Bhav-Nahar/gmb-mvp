@@ -36,7 +36,11 @@ class UserOut(BaseModel):
     viewer_scope: Optional[str] = None
     organization_id: int
     created_at: datetime
-    
+
+    # True when the user's email is in the platform super-admin allowlist
+    # (settings.SUPERADMIN_EMAILS). Computed per-request in /users/me, not stored.
+    is_superuser: bool = False
+
     # We can include active accounts
     oauth_accounts: List[OAuthAccountOut] = []
 

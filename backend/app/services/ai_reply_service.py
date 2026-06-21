@@ -63,11 +63,15 @@ def _parse_variants(raw: str, fallback_tone: str) -> dict:
         recommended = (data.get("recommended") or "").strip()
         if not recommended:
             raise ValueError("no recommended reply")
+        # topics is untrusted model output; a bare string would 500 the List[str]
+        # response AFTER the credit was charged. Coerce to a list of strings.
+        topics = data.get("topics")
+        topics = [str(t) for t in topics if t is not None] if isinstance(topics, list) else []
         return {
             "recommended": recommended,
             "short": (data.get("short") or recommended).strip(),
             "warm_or_professional": (data.get("warm_or_professional") or recommended).strip(),
-            "topics": data.get("topics") or [],
+            "topics": topics,
         }
     except (json.JSONDecodeError, ValueError, AttributeError):
         text = _clean_model_json(raw).strip() or (raw or "").strip()

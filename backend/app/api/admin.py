@@ -1,0 +1,448 @@
+"""Cross-org super-admin control panel API.
+
+Gated by `superadmin_required` (env email allowlist — see config.SUPERADMIN_EMAILS).
+Every mutating endpoint records an AuditLog row (actor = the super-admin, org =
+the affected organization) so manual overrides are never silent.
+"""
+import json
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
+from sqlalchemy.orm import Session, aliased
+
+from app.db.session import get_db
+from app.api.deps import superadmin_required
+from app.core import plan_config
+from app.core.config import settings
+from app.core.roles import Role
+from app.worker import celery
+from app.models.user import User
+from app.models.organization import Organization
+from app.models.location import Location
+from app.models.audit_log import AuditLog
+from app.models.sync_log import SyncLog
+from app.models.organization_sync_state import OrganizationSyncState
+from app.models.billing_transaction import BillingTransaction
+from app.schemas.admin import OrgUpdate, AdminUserUpdate, LocationUpdate, AdminActionBody
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+VALID_SUBSCRIPTION_STATUSES = {"trial", "active", "past_due", "locked"}
+VALID_ROLES = {Role.OWNER, Role.ADMIN, Role.REGIONAL_MANAGER, Role.STORE_MANAGER, Role.VIEWER}
+
+# Org columns a super-admin may set directly (validated below where applicable).
+_ORG_EDITABLE = [
+    "plan_tier",
+    "subscription_status",
+    "location_quota",
+    "monthly_ai_credits_balance",
+    "topup_ai_credits_balance",
+    "trial_ends_at",
+    "grace_period_ends_at",
+]
+
+
+def _audit(db, *, actor, organization_id, action, changes, reason, target_user_id=None):
+    db.add(AuditLog(
+        organization_id=organization_id,
+        user_id=actor.id,
+        actor_user_id=actor.id,
+        target_user_id=target_user_id,
+        action=action,
+        details=json.dumps({"changes": changes, "reason": reason}, default=str),
+    ))
+
+
+def _org_row(org, user_count, location_count):
+    return {
+        "id": org.id,
+        "name": org.name,
+        "plan": org.plan,
+        "plan_tier": org.plan_tier,
+        "subscription_status": org.subscription_status,
+        "location_quota": org.location_quota,
+        "location_count": location_count,
+        "user_count": user_count,
+        "monthly_ai_credits_balance": org.monthly_ai_credits_balance,
+        "topup_ai_credits_balance": org.topup_ai_credits_balance,
+        "trial_ends_at": org.trial_ends_at,
+        "grace_period_ends_at": org.grace_period_ends_at,
+        "subscription_ends_at": org.subscription_ends_at,
+        "created_at": org.created_at,
+    }
+
+
+@router.get("/metrics")
+def get_metrics(db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    status_counts = dict(
+        db.query(Organization.subscription_status, func.count())
+        .group_by(Organization.subscription_status)
+        .all()
+    )
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    failed_syncs_7d = (
+        db.query(func.count(SyncLog.id))
+        .filter(SyncLog.status.in_(["Failed", "ProviderError"]), SyncLog.created_at >= cutoff)
+        .scalar()
+    )
+    needs_remandate = (
+        db.query(func.count(Organization.id))
+        .filter(Organization.subscription_needs_remandate.is_(True))
+        .scalar()
+    )
+    credits_in_circulation = db.query(
+        func.coalesce(func.sum(Organization.monthly_ai_credits_balance), 0)
+        + func.coalesce(func.sum(Organization.topup_ai_credits_balance), 0)
+    ).scalar()
+    return {
+        "total_organizations": db.query(func.count(Organization.id)).scalar(),
+        "total_users": db.query(func.count(User.id)).scalar(),
+        "total_locations": db.query(func.count(Location.id)).scalar(),
+        "by_status": {(k or "unknown"): v for k, v in status_counts.items()},
+        "active_organizations": status_counts.get("active", 0),
+        "trial_organizations": status_counts.get("trial", 0),
+        "past_due_organizations": status_counts.get("past_due", 0),
+        "locked_organizations": status_counts.get("locked", 0),
+        "needs_remandate": needs_remandate,
+        "failed_syncs_7d": failed_syncs_7d,
+        "credits_in_circulation": credits_in_circulation,
+    }
+
+
+@router.get("/organizations")
+def list_organizations(
+    db: Session = Depends(get_db),
+    _: User = Depends(superadmin_required),
+    q: Optional[str] = None,
+    subscription_status: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    query = db.query(Organization)
+    if q:
+        query = query.filter(Organization.name.ilike(f"%{q}%"))
+    if subscription_status:
+        query = query.filter(Organization.subscription_status == subscription_status)
+
+    total = query.count()
+    orgs = query.order_by(Organization.created_at.desc()).limit(limit).offset(offset).all()
+    org_ids = [o.id for o in orgs]
+
+    # Grouped counts (avoids N+1) — empty IN() is invalid, so guard on org_ids.
+    user_counts = dict(
+        db.query(User.organization_id, func.count())
+        .filter(User.organization_id.in_(org_ids))
+        .group_by(User.organization_id).all()
+    ) if org_ids else {}
+    loc_counts = dict(
+        db.query(Location.organization_id, func.count())
+        .filter(Location.organization_id.in_(org_ids))
+        .group_by(Location.organization_id).all()
+    ) if org_ids else {}
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [_org_row(o, user_counts.get(o.id, 0), loc_counts.get(o.id, 0)) for o in orgs],
+    }
+
+
+@router.get("/organizations/{org_id}")
+def get_organization(org_id: int, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    users = db.query(User).filter(User.organization_id == org_id).order_by(User.created_at.asc()).all()
+    locations = db.query(Location).filter(Location.organization_id == org_id).all()
+    transactions = (
+        db.query(BillingTransaction)
+        .filter(BillingTransaction.organization_id == org_id)
+        .order_by(BillingTransaction.created_at.desc()).limit(20).all()
+    )
+    audit = (
+        db.query(AuditLog)
+        .filter(AuditLog.organization_id == org_id)
+        .order_by(AuditLog.created_at.desc()).limit(25).all()
+    )
+    sync_state = db.query(OrganizationSyncState).filter(
+        OrganizationSyncState.organization_id == org_id
+    ).first()
+
+    org_detail = _org_row(org, len(users), len(locations))
+    org_detail.update({
+        "billing_cycle": org.billing_cycle,
+        "ai_credits_reset_date": org.ai_credits_reset_date,
+        "razorpay_customer_id": org.razorpay_customer_id,
+        "razorpay_subscription_id": org.razorpay_subscription_id,
+        "subscription_needs_remandate": org.subscription_needs_remandate,
+        "paid_location_quota": org.paid_location_quota,
+        "remandate_due_at": org.remandate_due_at,
+    })
+
+    return {
+        "organization": org_detail,
+        "users": [
+            {
+                "id": u.id, "email": u.email, "name": u.name, "role": u.role,
+                "is_active": u.is_active, "viewer_scope": u.viewer_scope,
+                "created_at": u.created_at,
+            }
+            for u in users
+        ],
+        "locations": [
+            {
+                "id": l.id, "location_name": l.location_name,
+                "billing_status": l.billing_status, "sync_status": l.sync_status,
+                "average_rating": l.average_rating, "total_reviews": l.total_reviews,
+                "last_synced_at": l.last_synced_at,
+            }
+            for l in locations
+        ],
+        # BillingTransaction field names vary across the codebase; getattr keeps this
+        # robust whether the column is `transaction_type`/`type`, `credits`, etc.
+        "transactions": [
+            {
+                "id": t.id,
+                "type": getattr(t, "transaction_type", None) or getattr(t, "type", None),
+                "amount_paise": t.amount_paise,
+                "credits": getattr(t, "credits", None),
+                "status": t.status,
+                "source": getattr(t, "source", None),
+                "invoice_url": getattr(t, "invoice_url", None),
+                "created_at": t.created_at,
+            }
+            for t in transactions
+        ],
+        "audit": [
+            {
+                "id": a.id, "action": a.action, "details": a.details,
+                "actor_user_id": a.actor_user_id, "target_user_id": a.target_user_id,
+                "created_at": a.created_at,
+            }
+            for a in audit
+        ],
+        "sync_state": {
+            "sync_in_progress": sync_state.sync_in_progress if sync_state else False,
+            "sync_started_at": sync_state.sync_started_at if sync_state else None,
+            "last_sync_status": sync_state.last_sync_status if sync_state else None,
+            "last_sync_error": sync_state.last_sync_error if sync_state else None,
+            "last_review_sync_at": sync_state.last_review_sync_at if sync_state else None,
+        },
+    }
+
+
+@router.patch("/organizations/{org_id}")
+def update_organization(
+    org_id: int,
+    payload: OrgUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if payload.plan_tier is not None and payload.plan_tier not in plan_config.PLANS:
+        raise HTTPException(status_code=400, detail=f"Invalid plan_tier. Allowed: {list(plan_config.PLANS)}")
+    if payload.subscription_status is not None and payload.subscription_status not in VALID_SUBSCRIPTION_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid subscription_status. Allowed: {sorted(VALID_SUBSCRIPTION_STATUSES)}")
+
+    changes = {}
+    for field in _ORG_EDITABLE:
+        new = getattr(payload, field)
+        if new is None:
+            continue
+        old = getattr(org, field)
+        if old != new:
+            changes[field] = {"old": old, "new": new}
+            setattr(org, field, new)
+
+    if not changes:
+        raise HTTPException(status_code=400, detail="No changes provided")
+
+    _audit(db, actor=admin, organization_id=org.id, action="superadmin.org_update",
+           changes=changes, reason=payload.reason)
+    db.commit()
+    return {"message": "Organization updated", "changes": changes}
+
+
+@router.patch("/users/{user_id}")
+def update_user(
+    user_id: int,
+    payload: AdminUserUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    changes = {}
+
+    if payload.role is not None and payload.role != user.role:
+        if payload.role not in VALID_ROLES:
+            raise HTTPException(status_code=400, detail=f"Invalid role. Allowed: {sorted(VALID_ROLES)}")
+        changes["role"] = {"old": user.role, "new": payload.role}
+        user.role = payload.role
+        # Viewer is the only role with org-wide vs assigned scope; normalise the rest.
+        # ponytail: super-admin role change skips the Store-Manager single-location
+        # invariant — location assignments stay managed via the normal Team UI.
+        user.viewer_scope = "organization" if payload.role == Role.VIEWER else "assigned"
+        user.token_version += 1
+
+    if payload.is_active is not None and payload.is_active != user.is_active:
+        changes["is_active"] = {"old": user.is_active, "new": payload.is_active}
+        user.is_active = payload.is_active
+        user.token_version += 1
+
+    if payload.force_logout:
+        user.token_version += 1
+        changes["force_logout"] = True
+
+    if not changes:
+        raise HTTPException(status_code=400, detail="No changes provided")
+
+    _audit(db, actor=admin, organization_id=user.organization_id, action="superadmin.user_update",
+           changes=changes, reason=payload.reason, target_user_id=user.id)
+    db.commit()
+    return {"message": "User updated", "changes": changes}
+
+
+@router.patch("/locations/{location_id}")
+def update_location(
+    location_id: int,
+    payload: LocationUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    loc = db.query(Location).filter(Location.id == location_id).first()
+    if not loc:
+        raise HTTPException(status_code=404, detail="Location not found")
+    if payload.billing_status not in {"active", "pending_payment"}:
+        raise HTTPException(status_code=400, detail="billing_status must be 'active' or 'pending_payment'")
+    if loc.billing_status == payload.billing_status:
+        raise HTTPException(status_code=400, detail="No change")
+
+    changes = {"billing_status": {"old": loc.billing_status, "new": payload.billing_status}}
+    loc.billing_status = payload.billing_status
+    _audit(db, actor=admin, organization_id=loc.organization_id, action="superadmin.location_update",
+           changes={**changes, "location_id": location_id}, reason=payload.reason)
+    db.commit()
+    return {"message": "Location updated", "changes": changes}
+
+
+@router.post("/organizations/{org_id}/sync")
+def force_review_sync(
+    org_id: int,
+    body: Optional[AdminActionBody] = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Queue an org-wide review re-sync, mirroring the user-facing /reviews/sync."""
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    loc_ids = [lid for (lid,) in db.query(Location.id).filter(Location.organization_id == org_id).all()]
+    if not loc_ids:
+        raise HTTPException(status_code=400, detail="Organization has no locations to sync")
+
+    chunk_size = getattr(settings, "REVIEW_SYNC_CHUNK_SIZE", 20)
+    task_ids = []
+    for i in range(0, len(loc_ids), chunk_size):
+        chunk = loc_ids[i:i + chunk_size]
+        # actor user_id=None: the acting super-admin belongs to a different org, so
+        # don't attribute this sync to a cross-org user in the target org's logs.
+        task = celery.send_task(
+            "app.tasks.sync_reviews_chunk_task",
+            args=[chunk, org_id, "Manual", None],
+        )
+        task_ids.append(task.id)
+
+    reason = body.reason if body else None
+    _audit(db, actor=admin, organization_id=org_id, action="superadmin.force_review_sync",
+           changes={"locations": len(loc_ids), "batches": len(task_ids)}, reason=reason)
+    db.commit()
+    return {"message": f"Queued review sync for {len(loc_ids)} locations in {len(task_ids)} batches", "task_ids": task_ids}
+
+
+@router.post("/organizations/{org_id}/reset-sync")
+def reset_stuck_sync(
+    org_id: int,
+    body: Optional[AdminActionBody] = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Clear an orphaned in-progress sync lock (e.g. after a worker crash)."""
+    state = db.query(OrganizationSyncState).filter(OrganizationSyncState.organization_id == org_id).first()
+    if not state:
+        raise HTTPException(status_code=404, detail="No sync state for this organization")
+
+    before = {"sync_in_progress": state.sync_in_progress, "insights_sync_in_progress": state.insights_sync_in_progress}
+    state.sync_in_progress = False
+    state.insights_sync_in_progress = False
+    state.last_sync_status = "Reset by super-admin"
+
+    reason = body.reason if body else None
+    _audit(db, actor=admin, organization_id=org_id, action="superadmin.reset_sync",
+           changes={"before": before}, reason=reason)
+    db.commit()
+    return {"message": "Sync state reset"}
+
+
+@router.get("/audit")
+def list_audit(
+    db: Session = Depends(get_db),
+    _: User = Depends(superadmin_required),
+    action: Optional[str] = None,
+    organization_id: Optional[int] = None,
+    actor_user_id: Optional[int] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Cross-org operator action trail. Filter by action substring / org / actor."""
+    base = db.query(AuditLog)
+    if action:
+        base = base.filter(AuditLog.action.ilike(f"%{action}%"))
+    if organization_id is not None:
+        base = base.filter(AuditLog.organization_id == organization_id)
+    if actor_user_id is not None:
+        base = base.filter(AuditLog.actor_user_id == actor_user_id)
+
+    total = base.count()
+
+    Actor = aliased(User)
+    rows = (
+        base.add_columns(Organization.name.label("org_name"), Actor.email.label("actor_email"))
+        .outerjoin(Organization, Organization.id == AuditLog.organization_id)
+        .outerjoin(Actor, Actor.id == AuditLog.actor_user_id)
+        .order_by(AuditLog.created_at.desc())
+        .limit(limit).offset(offset)
+        .all()
+    )
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [
+            {
+                "id": log.id,
+                "action": log.action,
+                "details": log.details,
+                "organization_id": log.organization_id,
+                "org_name": org_name,
+                "actor_user_id": log.actor_user_id,
+                "actor_email": actor_email,
+                "target_user_id": log.target_user_id,
+                "created_at": log.created_at,
+            }
+            for (log, org_name, actor_email) in rows
+        ],
+    }

@@ -11,6 +11,9 @@ class Organization(Base):
 
     # Billing Fields
     plan = Column(String, nullable=True, default="trial", server_default=text("'trial'"))
+    # Product tier (basic | pro | ...) — gates premium features (see plan_config.PLANS).
+    # Distinct from `plan` above, which is the trial/active billing-state flag.
+    plan_tier = Column(String, nullable=False, default="basic", server_default=text("'basic'"))
     billing_cycle = Column(String, nullable=True)
     # States: trial (trial_ends_at NULL = not yet activated), active
     # (subscription_ends_at set = cancelled but still valid), past_due, locked.

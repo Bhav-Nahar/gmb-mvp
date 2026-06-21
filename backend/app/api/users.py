@@ -30,6 +30,8 @@ router = APIRouter()
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):
     """Retrieve currently authenticated Google user profile details."""
+    # Transient (non-persisted) flag so the SPA can show/hide the super-admin panel.
+    current_user.is_superuser = settings.is_superadmin(current_user.email)
     return current_user
 
 @router.get("/me/token-status")

@@ -33,13 +33,17 @@ def manual_review_required(rating, comment: str) -> bool:
     return any(kw in low for kw in MANUAL_REVIEW_KEYWORDS)
 
 
-def validate(reply_text: str, sentiment: str, rating, comment: str) -> dict:
-    """Return {risk_level, manual_review_required, violations}. Pure, deterministic."""
+def validate(reply_text: str, sentiment: str, rating, comment: str,
+             min_words: int = MIN_WORDS, max_words: int = MAX_WORDS) -> dict:
+    """Return {risk_level, manual_review_required, violations}. Pure, deterministic.
+
+    Word bounds are per-variant: the 'short' variant is 15-25 words by design, so the
+    caller passes a lower floor for it than for the 35-55 word recommended variant."""
     violations = []
     text = (reply_text or "").strip()
     wc = _words(text)
-    if wc < MIN_WORDS or wc > MAX_WORDS:
-        violations.append(f"length {wc} words outside {MIN_WORDS}-{MAX_WORDS}")
+    if wc < min_words or wc > max_words:
+        violations.append(f"length {wc} words outside {min_words}-{max_words}")
 
     low = text.lower()
     for phrase in BANNED_PHRASES:

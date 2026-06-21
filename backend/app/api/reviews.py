@@ -305,7 +305,17 @@ async def generate_review_reply(
         )
 
     variants = result["variants"]
-    checks = reply_validation.validate(variants["recommended"], review.sentiment, rating, review.comment)
+    # Validate EVERY variant the user can post (not just the recommended one), with the
+    # right word bounds per variant, and surface the worst risk across all of them.
+    _bounds = {"recommended": (30, 60), "warm_or_professional": (30, 60), "short": (12, 30)}
+    all_checks = [
+        reply_validation.validate(variants[k], review.sentiment, rating, review.comment,
+                                  min_words=lo, max_words=hi)
+        for k, (lo, hi) in _bounds.items()
+    ]
+    _risk_rank = {"low": 0, "medium": 1, "high": 2}
+    risk_level = max((c["risk_level"] for c in all_checks), key=lambda r: _risk_rank[r])
+    manual_review_required = any(c["manual_review_required"] for c in all_checks)
     return GenerateReplyResponse(
         review_id=review.id,
         generated_reply=result["generated_reply"],
@@ -314,8 +324,8 @@ async def generate_review_reply(
         warm_or_professional_reply=variants["warm_or_professional"],
         topics=result["topics"],
         tone=result["tone"],
-        manual_review_required=checks["manual_review_required"],
-        risk_level=checks["risk_level"],
+        manual_review_required=manual_review_required,
+        risk_level=risk_level,
     )
 
 

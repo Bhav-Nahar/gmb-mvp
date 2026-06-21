@@ -27,6 +27,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const queryClient = useQueryClient();
   const [paymentTerm, setPaymentTerm] = useState<'monthly' | 'annual'>('monthly');
   const [locationCount, setLocationCount] = useState<number>(1);
+  const [planTier, setPlanTier] = useState<'basic' | 'pro'>('pro');
   // Held true across the whole Razorpay flow so a second click can't create a second
   // subscription/order (the backend overwrites razorpay_subscription_id each call).
   const [submitting, setSubmitting] = useState(false);
@@ -46,10 +47,17 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const { data: quote, isLoading: quoteLoading } = useQuote(
     locationCount,
     paymentTerm,
+    planTier,
     open && !isUnlockMode
   );
-  const totalRupees = quote ? Math.round(quote.price_paise / 100) : null;
-  const unlockRupees = pending?.quote ? Math.round(pending.quote.amount_paise / 100) : null;
+  // Headline shows the BASE price per the agreed convention (₹X/- with + GST beneath).
+  const baseRupees = quote ? Math.round(quote.price_paise / 100) : null;
+  const gstRupees = quote ? Math.round(quote.gst_paise / 100) : null;
+  const totalRupees = quote ? Math.round(quote.total_paise / 100) : null;
+  const gstPct = quote ? Math.round(quote.gst_rate * 100) : 18;
+  const unlockRupees = pending?.quote ? Math.round(pending.quote.amount_paise / 100) : null; // GST-incl total
+  const unlockBaseRupees = pending?.quote?.base_paise != null ? Math.round(pending.quote.base_paise / 100) : null;
+  const unlockGstRupees = pending?.quote?.gst_paise != null ? Math.round(pending.quote.gst_paise / 100) : null;
 
   const handleUnlock = async () => {
     if (submitting) return;
@@ -130,6 +138,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
       const response = await checkoutSubscription({
         location_count: locationCount,
         interval: paymentTerm,
+        plan_tier: planTier,
       });
 
       const options = {
@@ -218,8 +227,16 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
               <div>
                 <p className="text-sm text-muted-foreground">Prorated charge</p>
                 <p className="text-3xl font-bold">
-                  {unlockRupees !== null ? `₹${unlockRupees.toLocaleString('en-IN')}` : '—'}
+                  {unlockBaseRupees !== null
+                    ? `₹${unlockBaseRupees.toLocaleString('en-IN')}/-`
+                    : unlockRupees !== null ? `₹${unlockRupees.toLocaleString('en-IN')}` : '—'}
                 </p>
+                {unlockGstRupees !== null && unlockRupees !== null && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    + 18% GST (₹{unlockGstRupees.toLocaleString('en-IN')}) ={' '}
+                    <span className="font-medium text-foreground">₹{unlockRupees.toLocaleString('en-IN')}</span> total
+                  </p>
+                )}
               </div>
               <Button
                 className="w-full sm:w-auto"
@@ -244,6 +261,31 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             Select how many locations you manage to calculate your customized plan.
           </DialogDescription>
         </DialogHeader>
+
+        {/* Plan tier picker */}
+        <div className="grid grid-cols-2 gap-2 mt-2">
+          {([
+            { key: 'basic', name: 'Basic', note: 'Core GBP tools' },
+            { key: 'pro', name: 'Pro', note: 'Adds Local Rank + more credits' },
+          ] as const).map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setPlanTier(t.key)}
+              className={`text-left rounded-lg border p-3 transition-colors ${
+                planTier === t.key ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/40'
+              }`}
+            >
+              <div className="text-sm font-semibold flex items-center gap-1.5">
+                {t.name}
+                {t.key === 'pro' && (
+                  <span className="text-[10px] bg-primary/15 text-primary px-1.5 py-0.5 rounded">Recommended</span>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">{t.note}</div>
+            </button>
+          ))}
+        </div>
 
         <div className="flex justify-center my-4 gap-2 sm:space-x-2">
           <Button
@@ -290,11 +332,17 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
 
           <div className="pt-4 border-t flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Total Price</p>
+              <p className="text-sm text-muted-foreground">Price</p>
               <p className="text-3xl font-bold">
-                {totalRupees !== null ? `₹${totalRupees.toLocaleString('en-IN')}` : '—'}{' '}
+                {baseRupees !== null ? `₹${baseRupees.toLocaleString('en-IN')}/-` : '—'}{' '}
                 <span className="text-sm font-normal text-muted-foreground">/{paymentTerm === 'monthly' ? 'mo' : 'yr'}</span>
               </p>
+              {gstRupees !== null && totalRupees !== null && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  + {gstPct}% GST (₹{gstRupees.toLocaleString('en-IN')}) ={' '}
+                  <span className="font-medium text-foreground">₹{totalRupees.toLocaleString('en-IN')}</span> total
+                </p>
+              )}
             </div>
             <Button
               className="w-full sm:w-auto"

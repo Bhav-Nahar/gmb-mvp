@@ -62,7 +62,8 @@ export default function HomeClient() {
   // never drift from what the user is actually charged.
   const [pricingLocations, setPricingLocations] = useState<number>(5)
   const [pricingInterval, setPricingInterval] = useState<'monthly' | 'annual'>('monthly')
-  const { data: pricingQuote } = useQuote(pricingLocations, pricingInterval, true)
+  const [pricingTier, setPricingTier] = useState<'basic' | 'pro'>('basic')
+  const { data: pricingQuote } = useQuote(pricingLocations, pricingInterval, pricingTier, true)
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -1027,6 +1028,22 @@ export default function HomeClient() {
           </button>
         </div>
 
+        {/* Plan tier toggle */}
+        <div className="flex items-center justify-center gap-2">
+          {([
+            { key: 'basic', label: 'Basic' },
+            { key: 'pro', label: 'Pro · incl. Local Rank' },
+          ] as const).map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setPricingTier(t.key)}
+              className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors ${pricingTier === t.key ? 'bg-primary text-primary-foreground' : 'bg-muted/30 text-muted-foreground hover:text-foreground'}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch max-w-5xl mx-auto">
           {/* Self-serve per-location calculator */}
           <div className="lg:col-span-2 p-8 rounded-2xl border-2 border-primary bg-primary/5 flex flex-col gap-6 shadow-md">
@@ -1065,13 +1082,16 @@ export default function HomeClient() {
               <div>
                 <div className="flex items-baseline gap-1 text-foreground">
                   <span className="text-4xl font-extrabold">
-                    {pricingQuote ? `₹${Math.round(pricingQuote.price_paise / 100).toLocaleString('en-IN')}` : '—'}
+                    {pricingQuote ? `₹${Math.round(pricingQuote.price_paise / 100).toLocaleString('en-IN')}/-` : '—'}
                   </span>
                   <span className="text-sm font-semibold text-muted-foreground">
                     /{pricingInterval === 'monthly' ? 'mo' : 'yr'}
                   </span>
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-1">
+                  {pricingQuote
+                    ? `+ ${Math.round(pricingQuote.gst_rate * 100)}% GST = ₹${Math.round(pricingQuote.total_paise / 100).toLocaleString('en-IN')} total · `
+                    : ''}
                   for {pricingLocations} {pricingLocations === 1 ? 'location' : 'locations'}
                 </p>
               </div>
@@ -1097,12 +1117,18 @@ export default function HomeClient() {
             <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-foreground font-semibold border-t border-primary/20 pt-6">
               <li className="flex items-center gap-2">
                 <Check className="h-3.5 w-3.5 text-primary shrink-0" />
-                <span>{pricingQuote ? pricingQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 30} AI credits / month</span>
+                <span>{pricingQuote ? pricingQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * (pricingTier === 'pro' ? 45 : 30)} AI credits / month</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="h-3.5 w-3.5 text-primary shrink-0" />
-                <span>30 AI credits per location</span>
+                <span>{pricingTier === 'pro' ? '45' : '30'} AI credits per location</span>
               </li>
+              {pricingTier === 'pro' && (
+                <li className="flex items-center gap-2">
+                  <Check className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span>Local Rank heatmaps (geo-grid)</span>
+                </li>
+              )}
               <li className="flex items-center gap-2">
                 <Check className="h-3.5 w-3.5 text-primary shrink-0" />
                 <span>Unified review inbox + AI replies</span>

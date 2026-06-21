@@ -154,8 +154,8 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
       {breakdown && (
         <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm">
           <h3 className="text-sm font-medium text-foreground mb-4">Score Breakdown</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+
             <div className="p-4 rounded-lg bg-muted/30 border border-border/50 flex flex-col items-center text-center">
               <span className="text-xs font-semibold text-muted-foreground mb-2">Profile</span>
               <span className="text-lg font-bold text-foreground">{breakdown.profile_completeness.score} <span className="text-xs text-muted-foreground font-normal">/ {breakdown.profile_completeness.max_score}</span></span>
@@ -180,6 +180,13 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
               <span className="text-xs font-semibold text-muted-foreground mb-2">Photos</span>
               <span className="text-lg font-bold text-foreground">{breakdown.photos_media.score} <span className="text-xs text-muted-foreground font-normal">/ {breakdown.photos_media.max_score}</span></span>
             </div>
+
+            {breakdown.description && (
+              <div className="p-4 rounded-lg bg-muted/30 border border-border/50 flex flex-col items-center text-center">
+                <span className="text-xs font-semibold text-muted-foreground mb-2">Description</span>
+                <span className="text-lg font-bold text-foreground">{breakdown.description.score} <span className="text-xs text-muted-foreground font-normal">/ {breakdown.description.max_score}</span></span>
+              </div>
+            )}
 
           </div>
         </div>

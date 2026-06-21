@@ -82,16 +82,19 @@ class SubscriptionService:
             raise HTTPException(status_code=500, detail=f"Failed to create Razorpay customer: {str(e)}")
 
     @staticmethod
-    def _get_or_create_plan(db: Session, location_count: int, interval: str) -> str:
+    def _get_or_create_plan(db: Session, location_count: int, interval: str, plan_tier: str = "basic") -> str:
         """Get-or-create a Razorpay plan for this (location_count, interval, amount).
 
         Plan ids are cached durably in the razorpay_plans table so repeated/cold
         checkouts reuse the same plan instead of creating an orphan plan on every
         call (which caused plan sprawl and rate-limiting). The amount is
-        part of the key so a pricing change yields a new plan, never a stale one."""
+        part of the key so a pricing change yields a new plan, never a stale one.
+        Tier + GST both feed the amount, so basic/pro (and pre/post-GST) never collide
+        on a stale cached plan."""
         from app.models.razorpay_plan import RazorpayPlan
 
-        amount = PricingService.compute_price_paise(location_count, interval)
+        base = PricingService.compute_price_paise(location_count, interval, plan_tier)
+        amount = plan_config.price_with_gst(base)["total_paise"]  # GST-inclusive: what Razorpay bills
         current_mode = SubscriptionService._current_mode()
 
         existing_plans = db.query(RazorpayPlan).filter(
@@ -118,7 +121,7 @@ class SubscriptionService:
                 "period": period,
                 "interval": 1,
                 "item": {
-                    "name": f"GMB {location_count} location(s) ({interval})",
+                    "name": f"GMB {plan_tier} {location_count} location(s) ({interval})",
                     "amount": amount,
                     "currency": "INR",
                 },
@@ -162,15 +165,18 @@ class SubscriptionService:
         user_email: str,
         location_count: int,
         interval: str = "monthly",
+        plan_tier: str = "basic",
     ) -> Dict[str, Any]:
         PricingService.validate_location_count(location_count)
         if interval not in ("monthly", "annual"):
             raise HTTPException(status_code=400, detail="interval must be 'monthly' or 'annual'")
+        if plan_tier not in plan_config.PLANS:
+            raise HTTPException(status_code=400, detail="Unknown plan tier")
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
-        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval)
+        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier)
         client = SubscriptionService.get_razorpay_client()
-        credits = PricingService.get_credits_for_locations(location_count)
+        credits = PricingService.get_credits_for_locations(location_count, plan_tier)
 
         try:
             subscription = client.subscription.create(data={
@@ -184,6 +190,7 @@ class SubscriptionService:
                     "location_count": str(location_count),
                     "interval": interval,
                     "credits": str(credits),
+                    "plan_tier": plan_tier,
                 },
             })
         except Exception as e:
@@ -217,12 +224,13 @@ class SubscriptionService:
 
         location_count = org.location_quota or 0
         interval = org.billing_cycle or "monthly"
+        plan_tier = org.plan_tier or "basic"
         PricingService.validate_location_count(location_count)
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
-        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval)
+        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier)
         client = SubscriptionService.get_razorpay_client()
-        credits = PricingService.get_credits_for_locations(location_count)
+        credits = PricingService.get_credits_for_locations(location_count, plan_tier)
 
         try:
             subscription = client.subscription.create(data={
@@ -236,6 +244,7 @@ class SubscriptionService:
                     "location_count": str(location_count),
                     "interval": interval,
                     "credits": str(credits),
+                    "plan_tier": plan_tier,
                     "remandate": "1",
                 },
             })
@@ -280,10 +289,11 @@ class SubscriptionService:
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
         client = SubscriptionService.get_razorpay_client()
         pack = PricingService.get_topup_pack(pack_key)
+        amount = plan_config.price_with_gst(pack["price_paise"])["total_paise"]  # GST-inclusive
 
         try:
             return client.order.create(data={
-                "amount": pack["price_paise"],
+                "amount": amount,
                 "currency": "INR",
                 "receipt": f"topup_org_{org_id}",
                 "notes": {
@@ -326,12 +336,14 @@ class SubscriptionService:
         added = len(pending_ids)
 
         interval = org.billing_cycle or "monthly"
+        tier = org.plan_tier or "basic"
         current_quota = org.location_quota if org.location_quota is not None else plan_config.TRIAL_LOCATION_QUOTA
         days_left, days_in_cycle = SubscriptionService._cycle_days_remaining(org, interval)
 
-        amount = PricingService.prorated_addon_paise(current_quota, added, interval, days_left, days_in_cycle)
+        base_amount = PricingService.prorated_addon_paise(current_quota, added, interval, days_left, days_in_cycle, tier)
         if added > 0:
-            amount = max(amount, _MIN_ORDER_PAISE)
+            base_amount = max(base_amount, _MIN_ORDER_PAISE)
+        gst = plan_config.price_with_gst(base_amount)
 
         return {
             "location_ids": pending_ids,
@@ -339,8 +351,10 @@ class SubscriptionService:
             "interval": interval,
             "days_left": days_left,
             "days_in_cycle": days_in_cycle,
-            "amount_paise": amount,
-            "credits_granted": added * plan_config.CREDITS_PER_LOCATION,
+            "amount_paise": gst["total_paise"],   # GST-inclusive — what the order charges
+            "base_paise": gst["base_paise"],
+            "gst_paise": gst["gst_paise"],
+            "credits_granted": added * plan_config.get_plan(tier)["credits_per_location"],
         }
 
     @staticmethod
@@ -400,7 +414,7 @@ class SubscriptionService:
             return "noop"
         interval = org.billing_cycle or "monthly"
         try:
-            new_plan_id = SubscriptionService._get_or_create_plan(db, org.location_quota, interval)
+            new_plan_id = SubscriptionService._get_or_create_plan(db, org.location_quota, interval, org.plan_tier or "basic")
             client = SubscriptionService.get_razorpay_client()
             # The razorpay SDK exposes the PATCH /subscriptions/{id} call as `edit`
             # (there is no `update` method) — using the wrong name silently raised

@@ -6,7 +6,8 @@ from app.llm.exceptions import LLMProviderError
 class GeminiLLMProvider(BaseLLMProvider):
     # ponytail: Gemini speaks OpenAI's API at its compat endpoint, so this is the
     # groq provider with a different base_url + key. No new SDK.
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model or settings.LLM_MODEL
         self.client = AsyncOpenAI(
             api_key=settings.GEMINI_API_KEY or "dummy_key_to_prevent_crash",
             base_url=settings.GEMINI_BASE_URL,
@@ -15,7 +16,7 @@ class GeminiLLMProvider(BaseLLMProvider):
     async def complete(self, system_prompt: str, user_message: str, max_tokens: int = 200, temperature: float = 0.7) -> str:
         try:
             response = await self.client.chat.completions.create(
-                model=settings.LLM_MODEL,
+                model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},

@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     ENCRYPTION_KEY: str = ""
 
+    # Platform super-admin allowlist (comma-separated emails). These users get the
+    # cross-org /admin panel; they still log in normally via Google. Set in
+    # docker-compose `backend` env. Empty = no super-admins. No DB column/migration,
+    # so the first admin needs no manual DB edit — just add their email here.
+    SUPERADMIN_EMAILS: str = ""
+
     @model_validator(mode="after")
     def _validate_secrets(self) -> "Settings":
         # JWT_SECRET signs every auth token and ENCRYPTION_KEY encrypts OAuth
@@ -80,6 +86,11 @@ class Settings(BaseSettings):
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     LLM_PROVIDER: str = "groq"  # "groq" | "gemini"
     LLM_MODEL: str = "llama-3.3-70b-versatile"  # set to e.g. "gemini-2.5-flash" when LLM_PROVIDER=gemini
+    # Per-feature override. Review replies + descriptions use the global provider
+    # above (Gemini in prod); sentiment tagging runs on Groq to keep its high-volume
+    # batch classification off the Gemini quota. Provider + model must be set together.
+    LLM_PROVIDER_SENTIMENT: str = "groq"
+    LLM_MODEL_SENTIMENT: str = "llama-3.3-70b-versatile"
 
     # Frontend
     FRONTEND_URL: str = "http://localhost:3000"
@@ -125,6 +136,15 @@ class Settings(BaseSettings):
             v = f"https://{v}"
         return v
 
+    # DataForSEO — local rank grid + competitor maps data (one vendor, one client).
+    # Defaults to the FREE sandbox (simulated data) so nothing is billed until you
+    # set the base URL to https://api.dataforseo.com. Same login/password for both.
+    # Sign up (sandbox + $1 live credit, no card): https://app.dataforseo.com
+    DATAFORSEO_LOGIN: str = ""
+    DATAFORSEO_PASSWORD: str = ""
+    DATAFORSEO_BASE_URL: str = "https://sandbox.dataforseo.com"
+    LOCAL_RANK_MAX_CONCURRENCY: int = 8  # concurrent live maps calls per scan
+
     # Task Settings
     REVIEW_SYNC_CHUNK_SIZE: int = 20
     REVIEW_SYNC_SLEEP_SECONDS: float = 0.2
@@ -164,5 +184,16 @@ class Settings(BaseSettings):
             if not self.RAZORPAY_KEY_ID or not self.RAZORPAY_KEY_SECRET or not self.RAZORPAY_WEBHOOK_SECRET:
                 raise ValueError("FATAL: Razorpay credentials must be set in production")
         return self
+
+    @property
+    def superadmin_email_set(self) -> frozenset:
+        return frozenset(
+            e.strip().lower()
+            for e in (self.SUPERADMIN_EMAILS or "").split(",")
+            if e.strip()
+        )
+
+    def is_superadmin(self, email: str | None) -> bool:
+        return bool(email) and email.strip().lower() in self.superadmin_email_set
 
 settings = Settings()

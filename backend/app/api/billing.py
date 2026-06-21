@@ -24,6 +24,7 @@ webhook_router = APIRouter()
 class CheckoutRequest(BaseModel):
     location_count: int = 1
     interval: str = "monthly"
+    plan_tier: str = "basic"
 
 class BuyCreditsRequest(BaseModel):
     pack: str = "small"
@@ -31,7 +32,11 @@ class BuyCreditsRequest(BaseModel):
 class QuoteResponse(BaseModel):
     location_count: int
     interval: str
-    price_paise: int
+    plan_tier: str
+    price_paise: int        # base (ex-GST)
+    gst_paise: int
+    total_paise: int        # base + GST — what is actually charged
+    gst_rate: float
     monthly_ai_credits: int
 
 class ConfirmRequest(BaseModel):
@@ -41,14 +46,22 @@ class ConfirmRequest(BaseModel):
     razorpay_order_id: str | None = None
 
 @router.get("/quote", response_model=QuoteResponse)
-def get_quote(location_count: int, interval: str = "monthly"):
-    """Server-authoritative price for a given location count (for display)."""
-    price = PricingService.compute_price_paise(location_count, interval)
+def get_quote(location_count: int, interval: str = "monthly", plan_tier: str = "basic"):
+    """Server-authoritative price for a location count + tier (for display).
+    Returns base, GST, and the GST-inclusive total that is actually charged."""
+    if plan_tier not in plan_config.PLANS:
+        raise HTTPException(status_code=400, detail="Unknown plan tier")
+    base = PricingService.compute_price_paise(location_count, interval, plan_tier)
+    gst = plan_config.price_with_gst(base)
     return QuoteResponse(
         location_count=location_count,
         interval=interval,
-        price_paise=price,
-        monthly_ai_credits=PricingService.get_credits_for_locations(location_count),
+        plan_tier=plan_tier,
+        price_paise=base,
+        gst_paise=gst["gst_paise"],
+        total_paise=gst["total_paise"],
+        gst_rate=plan_config.GST_RATE,
+        monthly_ai_credits=PricingService.get_credits_for_locations(location_count, plan_tier),
     )
 
 @router.post("/checkout-subscription")
@@ -74,6 +87,7 @@ def checkout_subscription(
         user_email=current_user.email,
         location_count=request.location_count,
         interval=request.interval,
+        plan_tier=request.plan_tier,
     )
     return {"subscription": subscription}
 
@@ -183,13 +197,15 @@ def get_billing_status(
 
     return {
         "plan": org.plan,
+        "plan_tier": org.plan_tier,
+        "features": plan_config.get_plan(org.plan_tier).get("features", []),
         "subscription_status": org.subscription_status,
         "monthly_ai_credits_balance": org.monthly_ai_credits_balance,
         # Monthly allowance = the full grant the org gets each cycle, used as the
         # denominator for the usage bar. For a paid org this scales with quota; on
         # the trial it is the flat trial grant.
         "monthly_ai_credits_allowance": (
-            org.location_quota * plan_config.CREDITS_PER_LOCATION
+            org.location_quota * plan_config.get_plan(org.plan_tier)["credits_per_location"]
             if org.plan == "active" and org.location_quota
             else plan_config.TRIAL_AI_CREDITS
         ),
