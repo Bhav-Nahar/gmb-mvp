@@ -20,32 +20,63 @@ def test_normalize_review_volume():
     assert 0 < score_10 < score_100 <= 100.0
 
 def test_normalize_review_velocity():
-    assert LeaderboardService.normalize_review_velocity(0) == 0.0
-    assert LeaderboardService.normalize_review_velocity(-5) == 0.0
+    # Below floor for ineligible locations
+    assert LeaderboardService.normalize_review_velocity(0, 1) == 0.0
+    # Zero-floor logic for established locations
+    assert LeaderboardService.normalize_review_velocity(0, 10) == 35.0
     
     cap = leaderboard_config.REVIEW_VELOCITY_CAP
-    assert LeaderboardService.normalize_review_velocity(cap) == 100.0
-    assert LeaderboardService.normalize_review_velocity(cap * 2) == 100.0
+    assert LeaderboardService.normalize_review_velocity(cap, 10) == 100.0
+    assert LeaderboardService.normalize_review_velocity(cap * 2, 10) == 100.0
     
-    half_cap = cap / 2
-    assert LeaderboardService.normalize_review_velocity(half_cap) == 50.0
+    # Sqrt curve check
+    # if cap is 41, sqrt(cap) is ~6.4.
+    # We just ensure it's > 0 and <= 100
+    score_mid = LeaderboardService.normalize_review_velocity(cap // 2, 10)
+    assert 0.0 < score_mid < 100.0
 
-def test_normalize_engagement_growth():
-    cap = leaderboard_config.ENGAGEMENT_GROWTH_CAP_PERCENT
-    floor = leaderboard_config.ENGAGEMENT_GROWTH_FLOOR_PERCENT
-    
-    # inf cases
-    assert LeaderboardService.normalize_engagement_growth(float('inf')) == 50.0
-    assert LeaderboardService.normalize_engagement_growth(float('-inf')) == 0.0
-    
-    # above cap
-    assert LeaderboardService.normalize_engagement_growth(cap + 10) == 100.0
-    
-    # below floor
-    assert LeaderboardService.normalize_engagement_growth(floor - 10) == 0.0
-    
-    # zero to zero
-    assert LeaderboardService.normalize_engagement_growth(0.0) == ((0.0 - floor) / (cap - floor)) * 100.0
+def test_effective_weights_renormalizes_without_health():
+    full = LeaderboardService.effective_weights(True)
+    assert full == leaderboard_config.LEADERBOARD_METRIC_WEIGHTS  # no-op when health present
+    assert abs(sum(full.values()) - 1.0) < 1e-9
+
+    no_health = LeaderboardService.effective_weights(False)
+    assert "health_score" not in no_health
+    assert abs(sum(no_health.values()) - 1.0) < 1e-9  # still sums to 1
+    # rating keeps its proportional share, scaled up since health's weight is redistributed
+    assert no_health["average_rating"] > full["average_rating"]
+
+def test_assign_cohort():
+    assert LeaderboardService.assign_cohort(0) == "Emerging"
+    assert LeaderboardService.assign_cohort(49) == "Emerging"
+    assert LeaderboardService.assign_cohort(50) == "Growing"
+    assert LeaderboardService.assign_cohort(199) == "Growing"
+    assert LeaderboardService.assign_cohort(200) == "Established"
+    assert LeaderboardService.assign_cohort(1000) == "Flagship"
+    assert LeaderboardService.assign_cohort(None) == "Emerging"
+
+def test_compute_next_action():
+    # Eligible location weak on response_rate; peer is strong -> response_rate is top action.
+    me = LeaderboardSnapshot(
+        location_id=1, is_eligible=True, composite_score=60.0, cohort="Growing", cohort_rank=2,
+        rating_score=90.0, health_score_input=90.0, review_volume_score=90.0,
+        review_velocity_score=90.0, response_rate_score=20.0, engagement_growth_score=90.0,
+        review_volume_raw=100, response_rate_raw=20.0,
+    )
+    peer = LeaderboardSnapshot(
+        location_id=2, is_eligible=True, composite_score=80.0, cohort="Growing", cohort_rank=1,
+        rating_score=90.0, health_score_input=90.0, review_volume_score=90.0,
+        review_velocity_score=90.0, response_rate_score=95.0, engagement_growth_score=90.0,
+    )
+    action = LeaderboardService.compute_next_action(me, [me, peer])
+    assert action["metric"] == "response_rate"
+    assert action["projected_composite_gain"] > 0
+    assert "80" in action["headline"] or "unanswered" in action["headline"]
+    assert action["current_cohort_rank"] == 2
+
+    # Ineligible -> no action
+    bad = LeaderboardSnapshot(location_id=3, is_eligible=False, composite_score=None)
+    assert LeaderboardService.compute_next_action(bad, []) is None
 
 def test_calculate_metric_contributions():
     snap = LeaderboardSnapshot(
@@ -65,7 +96,6 @@ def test_calculate_metric_contributions():
     assert contribs["health_score_contribution"] == 100.0 * w.get("health_score", 0)
     assert contribs["review_volume_contribution"] == 100.0 * w.get("review_volume", 0)
     assert contribs["review_velocity_contribution"] == 100.0 * w.get("review_velocity", 0)
-    assert contribs["engagement_growth_contribution"] == 100.0 * w.get("engagement_growth", 0)
     
 def test_prior_period_label():
     assert LeaderboardService._get_prior_period_label("2026-06") == "2026-05"
@@ -152,6 +182,13 @@ def test_generate_snapshots_for_period(db):
     assert snap_map[20].rank == 1  # 20 total reviews vs 10 total reviews (tie-breaker)
     assert snap_map[10].rank == 2
     assert snap_map[30].rank is None
+
+    # Cohort ranking: both eligible locs are <50 reviews -> "Emerging" cohort of size 2
+    assert snap_map[20].cohort == "Emerging"
+    assert snap_map[20].cohort_rank == 1
+    assert snap_map[20].cohort_size == 2
+    assert snap_map[10].cohort_rank == 2
+    assert snap_map[30].cohort_rank is None  # ineligible
     
     # Check not-null constraint columns
     assert snap_map[10].period_start.date() == period_start

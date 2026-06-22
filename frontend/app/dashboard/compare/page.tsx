@@ -33,19 +33,21 @@ interface LocationSnapshot {
   rank: number | null
   previous_rank: number | null
   rank_movement: number | null
+  cohort: string | null
+  cohort_rank: number | null
+  cohort_size: number | null
   streak_count: number
   most_improved_flag: boolean
   average_rating_raw: number | null
   review_velocity_raw: number | null
   health_score_raw: number | null
   review_volume_raw: number | null
-  engagement_growth_raw: number | null
   score_contributions: {
     average_rating?: number
     review_velocity?: number
     health_score?: number
     review_volume?: number
-    engagement_growth?: number
+    response_rate?: number
   }
 }
 
@@ -64,7 +66,6 @@ interface LeaderboardData {
     most_improved?: { location_id: number; location_name: string; rank_movement: number }
     highest_rated?: { location_id: number; location_name: string; average_rating_raw: number }
     highest_review_velocity?: { location_id: number; location_name: string; review_velocity_raw: number }
-    highest_growth?: { location_id: number; location_name: string; engagement_growth_raw: number }
   }
   eligible_locations: LocationSnapshot[]
   ineligible_locations: LocationSnapshot[]
@@ -88,6 +89,22 @@ interface HistoryData {
   is_eligible: boolean
 }
 
+interface NextAction {
+  metric: string
+  headline: string
+  detail: string
+  projected_composite_gain: number
+  projected_composite_score: number
+  current_cohort_rank: number | null
+  projected_cohort_rank: number | null
+}
+
+interface NextActionData {
+  has_data: boolean
+  cohort?: string | null
+  next_action: NextAction | null
+}
+
 export default function LeaderboardPage() {
   const { user } = useAuth()
   const [periods, setPeriods] = useState<string[]>([])
@@ -104,6 +121,7 @@ export default function LeaderboardPage() {
   const [selectedLocation, setSelectedLocation] = useState<LocationSnapshot | null>(null)
   const [explainData, setExplainData] = useState<ExplainData | null>(null)
   const [historyData, setHistoryData] = useState<HistoryData[]>([])
+  const [nextAction, setNextAction] = useState<NextAction | null>(null)
   const [drawerLoading, setDrawerLoading] = useState(false)
 
   const isAdmin = user?.role === 'Admin' || user?.role === 'Owner'
@@ -184,14 +202,17 @@ export default function LeaderboardPage() {
     setSelectedLocation(loc)
     setExplainData(null)
     setHistoryData([])
+    setNextAction(null)
     setDrawerLoading(true)
     try {
-      const [explainRes, historyRes] = await Promise.all([
+      const [explainRes, historyRes, actionRes] = await Promise.all([
         api.get<ExplainData>(`/leaderboard/${loc.location_id}/explain?period=${loc.period_label}`),
-        api.get<HistoryData[]>(`/leaderboard/${loc.location_id}/history`)
+        api.get<HistoryData[]>(`/leaderboard/${loc.location_id}/history`),
+        api.get<NextActionData>(`/leaderboard/${loc.location_id}/next-action?period=${loc.period_label}`)
       ])
       setExplainData(explainRes)
       setHistoryData(historyRes)
+      setNextAction(actionRes?.next_action ?? null)
     } catch (err) {
       console.error(err)
     } finally {
@@ -330,7 +351,7 @@ export default function LeaderboardPage() {
           {!isSmallOrg && data.awards && Object.values(data.awards).some(v => v !== undefined && v !== null) && (
             <div>
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Medal className="h-5 w-5 text-indigo-500"/> Monthly Awards</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {data.awards.top_performer && (
                   <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.top_performer?.location_id)!)} className="bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border border-yellow-500/20 rounded-xl p-4 cursor-pointer hover:border-yellow-500/40 transition-colors shadow-sm">
                     <p className="text-[10px] font-extrabold uppercase tracking-widest text-yellow-600 mb-1">Top Performer</p>
@@ -357,13 +378,6 @@ export default function LeaderboardPage() {
                     <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground mb-1">Review Champion</p>
                     <p className="text-sm font-bold text-foreground truncate">{data.awards.highest_review_velocity.location_name}</p>
                     <p className="text-xs text-muted-foreground mt-1">{data.awards.highest_review_velocity.review_velocity_raw} reviews</p>
-                  </div>
-                )}
-                {data.awards.highest_growth && (
-                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.highest_growth?.location_id)!)} className="bg-card border border-border rounded-xl p-4 cursor-pointer hover:bg-muted/50 transition-colors shadow-sm">
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground mb-1">Highest Growth</p>
-                    <p className="text-sm font-bold text-foreground truncate">{data.awards.highest_growth.location_name}</p>
-                    <p className="text-xs text-muted-foreground mt-1">+{data.awards.highest_growth.engagement_growth_raw?.toFixed(1)}%</p>
                   </div>
                 )}
               </div>
@@ -428,7 +442,14 @@ export default function LeaderboardPage() {
                         <div className="text-3xl font-black text-muted-foreground/30 w-10">#{loc.rank}</div>
                         <div>
                           <h4 className="font-bold text-foreground text-lg leading-tight">{loc.location_name}</h4>
-                          <div className="mt-1"><MovementIcon movement={loc.rank_movement} /></div>
+                          <div className="mt-1 flex items-center gap-2">
+                            <MovementIcon movement={loc.rank_movement} />
+                            {loc.cohort && loc.cohort_rank && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-500/10 px-1.5 py-0.5 rounded">
+                                {loc.cohort} #{loc.cohort_rank}/{loc.cohort_size}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       
@@ -454,6 +475,7 @@ export default function LeaderboardPage() {
                         <th className="px-4 py-3 font-bold text-muted-foreground w-16">Rank</th>
                         <th className="px-4 py-3 font-bold text-muted-foreground w-20">Move</th>
                         <th className="px-4 py-3 font-bold text-muted-foreground">Location Name</th>
+                        <th className="px-4 py-3 font-bold text-muted-foreground">Cohort</th>
                         <th className="px-4 py-3 font-bold text-muted-foreground text-right">Score</th>
                         <th className="px-4 py-3 font-bold text-muted-foreground text-right">Rating</th>
                         <th className="px-4 py-3 font-bold text-muted-foreground text-right">Reviews This Month</th>
@@ -472,6 +494,9 @@ export default function LeaderboardPage() {
                           <td className="px-4 py-3 font-semibold text-foreground flex items-center gap-2">
                             {loc.location_name}
                             {loc.streak_count >= 3 && <span title={`${loc.streak_count} month top streak`}>🔥</span>}
+                          </td>
+                          <td className="px-4 py-3 text-muted-foreground text-xs">
+                            {loc.cohort ? `${loc.cohort} #${loc.cohort_rank}/${loc.cohort_size}` : '—'}
                           </td>
                           <td className="px-4 py-3 text-right font-bold text-primary">{loc.composite_score?.toFixed(1)}</td>
                           <td className="px-4 py-3 text-right">{loc.average_rating_raw?.toFixed(2)}</td>
@@ -575,7 +600,7 @@ export default function LeaderboardPage() {
                           review_velocity: 'Reviews This Month',
                           health_score: 'Profile Health',
                           review_volume: 'Total Reviews',
-                          engagement_growth: 'Engagement Growth'
+                          response_rate: 'Response Rate'
                         }
                         return (
                           <div key={key} className="flex items-center justify-between bg-muted/40 p-3 rounded-lg border border-border/50">
@@ -586,6 +611,35 @@ export default function LeaderboardPage() {
                       })}
                     </div>
                   </div>
+
+                  {/* How to move up (next best action) */}
+                  {nextAction && (
+                    <div>
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-4">How to Move Up</h3>
+                      <div className="bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 rounded-xl p-5">
+                        <div className="flex items-start gap-3">
+                          <div className="h-9 w-9 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+                            <TrendingUp className="h-5 w-5 text-primary" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-bold text-foreground">{nextAction.headline}</p>
+                            <p className="text-sm text-muted-foreground mt-1">{nextAction.detail}</p>
+                            <div className="flex flex-wrap gap-4 mt-3 text-sm">
+                              <span className="font-semibold text-green-600">
+                                +{nextAction.projected_composite_gain.toFixed(1)} pts
+                              </span>
+                              {nextAction.current_cohort_rank && nextAction.projected_cohort_rank &&
+                                nextAction.projected_cohort_rank < nextAction.current_cohort_rank && (
+                                <span className="text-muted-foreground">
+                                  cohort rank #{nextAction.current_cohort_rank} → <span className="font-semibold text-primary">#{nextAction.projected_cohort_rank}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Why did I move? */}
                   {explainData && explainData.previous_period && (
@@ -612,7 +666,7 @@ export default function LeaderboardPage() {
                               review_velocity: 'Velocity change',
                               health_score: 'Health score change',
                               review_volume: 'Volume change',
-                              engagement_growth: 'Growth change'
+                              response_rate: 'Response rate change'
                             }
                             return (
                               <div key={key} className="flex justify-between items-center text-sm">

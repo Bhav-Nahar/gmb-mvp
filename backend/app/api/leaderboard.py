@@ -5,7 +5,7 @@ import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api import deps
 from app.db.session import SessionLocal
@@ -27,6 +27,8 @@ router = APIRouter()
 def get_scoped_snapshots(db: Session, org_id: int, period: str, allowed_ids: Optional[List[int]]) -> List[LeaderboardSnapshot]:
     query = db.query(LeaderboardSnapshot).join(
         Location, Location.id == LeaderboardSnapshot.location_id
+    ).options(
+        joinedload(LeaderboardSnapshot.location)
     ).filter(
         LeaderboardSnapshot.organization_id == org_id,
         LeaderboardSnapshot.period_label == period
@@ -40,6 +42,8 @@ def get_leaderboard(
     period: Optional[str] = Query(None),
     sort_by: str = Query("composite_score"),
     sort_order: str = Query("desc"),
+    limit: int = Query(1000, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
@@ -85,13 +89,14 @@ def get_leaderboard(
     for s in snapshots:
         contribs = {}
         if s.is_eligible:
-            w = leaderboard_config.LEADERBOARD_METRIC_WEIGHTS
+            from app.services.leaderboard_service import LeaderboardService
+            w = LeaderboardService.effective_weights(s.health_score_input is not None)
             contribs = {
                 "average_rating": round((s.rating_score or 0) * w.get("average_rating", 0), 2),
                 "health_score": round((s.health_score_input or 0) * w.get("health_score", 0), 2),
                 "review_volume": round((s.review_volume_score or 0) * w.get("review_volume", 0), 2),
                 "review_velocity": round((s.review_velocity_score or 0) * w.get("review_velocity", 0), 2),
-                "engagement_growth": round((s.engagement_growth_score or 0) * w.get("engagement_growth", 0), 2),
+                "response_rate": round((s.response_rate_score or 0) * w.get("response_rate", 0), 2),
             }
         
         item = {
@@ -104,6 +109,9 @@ def get_leaderboard(
             "rank": s.rank,
             "previous_rank": s.previous_rank,
             "rank_movement": s.rank_movement,
+            "cohort": s.cohort,
+            "cohort_rank": s.cohort_rank,
+            "cohort_size": s.cohort_size,
             "streak_count": s.streak_count,
             "most_improved_flag": s.most_improved_flag,
             "average_rating_raw": round(s.average_rating_raw, 2) if s.average_rating_raw is not None else None,
@@ -126,7 +134,13 @@ def get_leaderboard(
             ineligible.append(item)
             
     reverse = sort_order.lower() == "desc"
-    sort_key = sort_by if (eligible and sort_by in eligible[0]) else "composite_score"
+    # Whitelist numeric sort fields only — sorting on a string field (e.g. location_name)
+    # mixed with the `or 0.0` fallback would compare str vs float and 500.
+    SORTABLE = {
+        "composite_score", "rank", "cohort_rank", "average_rating_raw", "health_score_raw",
+        "review_volume_raw", "review_velocity_raw", "response_rate_raw", "streak_count",
+    }
+    sort_key = sort_by if sort_by in SORTABLE else "composite_score"
     eligible.sort(key=lambda x: x.get(sort_key) or 0.0, reverse=reverse)
     
     avg_rating = 0
@@ -150,8 +164,7 @@ def get_leaderboard(
     most_improved = next((e for e in eligible if e.get("most_improved_flag")), None)
     highest_rated = max(eligible, key=lambda x: x.get("average_rating_raw") or 0.0, default=None) if eligible else None
     highest_review_velocity = max(eligible, key=lambda x: x.get("review_velocity_raw") or 0, default=None) if eligible else None
-    highest_growth = max(eligible, key=lambda x: x.get("engagement_growth_raw") or -float('inf'), default=None) if eligible else None
-    
+
     def _format_award(loc, value_key=None):
         if not loc: return None
         res = {"location_id": loc["location_id"], "location_name": loc["location_name"]}
@@ -163,10 +176,16 @@ def get_leaderboard(
         "top_performer": _format_award(top_performer, "composite_score"),
         "most_improved": _format_award(most_improved, "rank_movement"),
         "highest_rated": _format_award(highest_rated, "average_rating_raw"),
-        "highest_review_velocity": _format_award(highest_review_velocity, "review_velocity_raw"),
-        "highest_growth": _format_award(highest_growth, "engagement_growth_raw")
+        "highest_review_velocity": _format_award(highest_review_velocity, "review_velocity_raw")
     }
     
+    # Awards/benchmark above are computed over the full set; only the returned rows are
+    # paged so the payload stays bounded for large orgs (top-1000 cap, offset to page).
+    total_eligible = len(eligible)
+    total_ineligible = len(ineligible)
+    eligible_page = eligible[offset:offset + limit]
+    ineligible_page = ineligible[offset:offset + limit]
+
     return {
         "has_data": True,
         "period": period,
@@ -174,8 +193,11 @@ def get_leaderboard(
         "generated_at": generated_at,
         "organization_benchmark": benchmark,
         "awards": awards,
-        "eligible_locations": eligible,
-        "ineligible_locations": ineligible
+        "eligible_locations": eligible_page,
+        "ineligible_locations": ineligible_page,
+        "total_eligible": total_eligible,
+        "total_ineligible": total_ineligible,
+        "has_more": (offset + limit) < max(total_eligible, total_ineligible),
     }
 
 @router.get("/periods")
@@ -274,7 +296,7 @@ def get_explain(
         "health_score_raw": _delta("health_score_raw"),
         "review_volume_raw": _delta("review_volume_raw"),
         "review_velocity_raw": _delta("review_velocity_raw"),
-        "engagement_growth_raw": _delta("engagement_growth_raw")
+        "response_rate_raw": _delta("response_rate_raw")
     }
     
     w = leaderboard_config.LEADERBOARD_METRIC_WEIGHTS
@@ -288,7 +310,7 @@ def get_explain(
         "health_score": _score_delta("health_score_input", "health_score"),
         "review_volume": _score_delta("review_volume_score", "review_volume"),
         "review_velocity": _score_delta("review_velocity_score", "review_velocity"),
-        "engagement_growth": _score_delta("engagement_growth_score", "engagement_growth")
+        "response_rate": _score_delta("response_rate_score", "response_rate")
     }
     
     return {
@@ -300,6 +322,48 @@ def get_explain(
         "to_rank": current.rank,
         "deltas": deltas,
         "score_contribution_deltas": contrib_deltas
+    }
+
+@router.get("/{location_id}/next-action")
+def get_next_action(
+    location_id: int = Depends(deps.require_location_access),
+    period: Optional[str] = Query(None),
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db)
+):
+    if not period:
+        latest = db.query(LeaderboardSnapshot.period_label).filter(
+            LeaderboardSnapshot.organization_id == current_user.organization_id,
+            LeaderboardSnapshot.location_id == location_id
+        ).order_by(LeaderboardSnapshot.period_label.desc()).first()
+        if not latest:
+            return {"has_data": False, "next_action": None}
+        period = latest[0]
+
+    current = db.query(LeaderboardSnapshot).filter(
+        LeaderboardSnapshot.organization_id == current_user.organization_id,
+        LeaderboardSnapshot.location_id == location_id,
+        LeaderboardSnapshot.period_label == period
+    ).first()
+    if not current:
+        return {"has_data": False, "next_action": None}
+
+    from app.services.leaderboard_service import LeaderboardService
+    # Cohort peers = same org/period/cohort (the within-band group used for projected rank).
+    peers = db.query(LeaderboardSnapshot).filter(
+        LeaderboardSnapshot.organization_id == current_user.organization_id,
+        LeaderboardSnapshot.period_label == period,
+        LeaderboardSnapshot.cohort == current.cohort
+    ).all()
+
+    return {
+        "has_data": True,
+        "location_id": location_id,
+        "period": period,
+        "cohort": current.cohort,
+        "is_eligible": current.is_eligible,
+        "ineligibility_reason": current.ineligibility_reason,
+        "next_action": LeaderboardService.compute_next_action(current, peers)
     }
 
 @router.get("/export")
@@ -322,11 +386,13 @@ def export_leaderboard(
             
     query = db.query(LeaderboardSnapshot).join(
         Location, Location.id == LeaderboardSnapshot.location_id
+    ).options(
+        joinedload(LeaderboardSnapshot.location)
     ).filter(
         LeaderboardSnapshot.organization_id == current_user.organization_id,
         LeaderboardSnapshot.period_label == period
     )
-    
+
     if allowed_ids is not None:
         query = query.filter(LeaderboardSnapshot.location_id.in_(allowed_ids))
         
@@ -334,11 +400,19 @@ def export_leaderboard(
         LeaderboardSnapshot.is_eligible.desc(),
         LeaderboardSnapshot.rank.asc()
     )
+
+    # ponytail: hard cap on export size; if an org ever exceeds this, raise the cap or paginate.
+    EXPORT_ROW_CAP = 50000
+    if query.count() > EXPORT_ROW_CAP:
+        logger.warning(
+            f"Leaderboard export for org {current_user.organization_id} period {period} "
+            f"exceeds {EXPORT_ROW_CAP} rows; output truncated."
+        )
     
     headers = [
         "Location Name", "Period", "Eligible", "Rank", "Composite Score", 
         "Rating (Raw)", "Response Rate (Raw)", "Health Score (Raw)", 
-        "Review Volume (Raw)", "Growth (Raw)", "Ineligibility Reason"
+        "Review Volume (Raw)", "Ineligibility Reason"
     ]
     
     if format == "xlsx" and HAS_OPENPYXL:
@@ -347,7 +421,7 @@ def export_leaderboard(
         ws.title = "Leaderboard"
         ws.append(headers)
         
-        for s in query.yield_per(1000).limit(50000):
+        for s in query.yield_per(1000).limit(EXPORT_ROW_CAP):
             ws.append([
                 s.location.location_name,
                 s.period_label,
@@ -357,9 +431,7 @@ def export_leaderboard(
                 round(s.average_rating_raw, 2) if s.average_rating_raw is not None else "",
                 round(s.response_rate_raw, 2) if s.response_rate_raw is not None else "",
                 round(s.health_score_raw, 2) if s.health_score_raw is not None else "",
-                s.review_volume_raw if s.review_volume_raw is not None else "",
-                round(s.engagement_growth_raw, 2) if s.engagement_growth_raw is not None else "",
-                s.ineligibility_reason or ""
+                s.review_volume_raw if s.review_volume_raw is not None else "",                s.ineligibility_reason or ""
             ])
             
         buf = io.BytesIO()
@@ -378,7 +450,7 @@ def export_leaderboard(
             yield buf.getvalue()
             buf.seek(0); buf.truncate(0)
             
-            for s in query.yield_per(1000).limit(50000):
+            for s in query.yield_per(1000).limit(EXPORT_ROW_CAP):
                 writer.writerow([
                     s.location.location_name,
                     s.period_label,
@@ -388,9 +460,7 @@ def export_leaderboard(
                     round(s.average_rating_raw, 2) if s.average_rating_raw is not None else "",
                     round(s.response_rate_raw, 2) if s.response_rate_raw is not None else "",
                     round(s.health_score_raw, 2) if s.health_score_raw is not None else "",
-                    s.review_volume_raw if s.review_volume_raw is not None else "",
-                    round(s.engagement_growth_raw, 2) if s.engagement_growth_raw is not None else "",
-                    s.ineligibility_reason or ""
+                    s.review_volume_raw if s.review_volume_raw is not None else "",                    s.ineligibility_reason or ""
                 ])
                 yield buf.getvalue()
                 buf.seek(0); buf.truncate(0)
@@ -413,22 +483,25 @@ def generate_leaderboard(
     if not period:
         now = datetime.datetime.now(datetime.timezone.utc)
         period = f"{now.year}-{now.month:02d}"
-        
-    try:
-        year_int, month_int = map(int, period.split("-"))
-        period_start = datetime.date(year_int, month_int, 1)
-        if month_int == 12:
-            next_month_start = datetime.date(year_int + 1, 1, 1)
-        else:
-            next_month_start = datetime.date(year_int, month_int + 1, 1)
-        period_end = next_month_start - datetime.timedelta(days=1)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid period format. Expected YYYY-MM.")
-        
+
     from app.services.leaderboard_service import LeaderboardService
     try:
+        period_start, period_end = LeaderboardService.period_to_range(period)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Same lock the monthly beat task uses, so a manual "Sync Now" can't race another
+    # admin or the scheduled run (concurrent delete+insert would hit the unique constraint).
+    from app.tasks import _get_redis
+    lock = _get_redis().lock(
+        f"lock:leaderboard_snapshot:{current_user.organization_id}:{period}", timeout=600
+    )
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="A generation for this period is already running. Try again shortly.")
+
+    try:
         snapshots = LeaderboardService.generate_snapshots_for_period(
-            db, 
+            db,
             organization_id=current_user.organization_id,
             period_label=period,
             period_start=period_start,
@@ -444,4 +517,9 @@ def generate_leaderboard(
     except Exception as e:
         logger.error(f"Failed to force generate snapshots: {e}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Snapshot generation failed.")
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass

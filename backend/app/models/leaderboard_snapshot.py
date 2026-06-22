@@ -37,7 +37,12 @@ class LeaderboardSnapshot(Base):
     rank = Column(Integer, nullable=True)
     previous_rank = Column(Integer, nullable=True)
     rank_movement = Column(Integer, nullable=True)
-    
+
+    # Cohort ranking (within review-volume band). Global rank above stays org-wide.
+    cohort = Column(String, nullable=True)
+    cohort_rank = Column(Integer, nullable=True)
+    cohort_size = Column(Integer, nullable=True)
+
     # Eligibility and status
     is_eligible = Column(Boolean, nullable=False, default=True)
     ineligibility_reason = Column(String, nullable=True)  # Populated with values from IneligibilityReason enum

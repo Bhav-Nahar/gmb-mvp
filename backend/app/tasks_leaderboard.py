@@ -25,13 +25,7 @@ def generate_monthly_leaderboard_snapshots_task(organization_id: int = None, per
         period_label = f"{year}-{month:02d}"
         
     try:
-        year_int, month_int = map(int, period_label.split("-"))
-        period_start = datetime.date(year_int, month_int, 1)
-        if month_int == 12:
-            next_month_start = datetime.date(year_int + 1, 1, 1)
-        else:
-            next_month_start = datetime.date(year_int, month_int + 1, 1)
-        period_end = next_month_start - datetime.timedelta(days=1)
+        period_start, period_end = LeaderboardService.period_to_range(period_label)
     except ValueError:
         return {"status": "error", "reason": "Invalid period_label format, expected YYYY-MM"}
         
@@ -73,6 +67,14 @@ def generate_monthly_leaderboard_snapshots_task(organization_id: int = None, per
                 except Exception:
                     pass
                     
+        # Alert: the beat run is otherwise silent, so a per-org failure would only
+        # surface as an empty leaderboard. Log loudly so monitoring can catch it.
+        if results["error"] > 0:
+            logger.critical(
+                f"Leaderboard snapshot generation had {results['error']} org failure(s) "
+                f"for period {period_label}: {results}"
+            )
+
         return {"status": "completed", "details": results, "period": period_label}
     finally:
         db.close()

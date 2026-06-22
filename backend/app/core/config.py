@@ -35,12 +35,13 @@ class Settings(BaseSettings):
         url = self.DATABASE_URL
         parsed = urlparse(url)
         scheme = parsed.scheme
-        # Normalise bare 'postgres' or 'postgresql' to 'postgresql+psycopg2'
+        # Only Postgres needs scheme normalisation; leave others (e.g. sqlite, used in
+        # tests) untouched — urlunparse collapses sqlite's empty-netloc triple slash
+        # ('sqlite:///x' -> 'sqlite:/x') into something SQLAlchemy can't parse.
         if scheme in ("postgres", "postgresql"):
-            scheme = "postgresql+psycopg2"
+            return urlunparse(parsed._replace(scheme="postgresql+psycopg2"))
         # If driver is already present (e.g. postgresql+asyncpg) leave it alone
-        rebuilt = urlunparse(parsed._replace(scheme=scheme))
-        return rebuilt
+        return url
 
     # Redis & Celery
     REDIS_URL: str = "redis://redis:6379/0"

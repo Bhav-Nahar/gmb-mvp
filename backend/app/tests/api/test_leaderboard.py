@@ -149,7 +149,7 @@ def test_get_explain_with_history(client, db):
     assert data["to_rank"] == 1
     assert data["deltas"]["average_rating_raw"]["change"] == 0.5
     
-    # 90.0 - 80.0 = 10.0 change. Weight is 0.30
+    # 90.0 - 80.0 = 10.0 change. average_rating weight is 0.30
     # 10.0 * 0.30 = 3.0 contribution
     assert data["score_contribution_deltas"]["average_rating"] == 3.0
 

@@ -96,7 +96,9 @@ celery.conf.beat_schedule = {
     },
     "generate-monthly-leaderboard-snapshots": {
         "task": "app.tasks_leaderboard.generate_monthly_leaderboard_snapshots_task",
-        "schedule": crontab(day_of_month='1', hour=3, minute=0), # Monthly on the 1st at 3AM UTC
+        "schedule": crontab(day_of_month='3', hour=3, minute=0), # Monthly on the 3rd at 3AM UTC —
+                            # generates the *previous* month; the 3rd (vs 1st) lets late-arriving
+                            # daily-insights/review data settle before the snapshot is taken.
     }
 }
 
