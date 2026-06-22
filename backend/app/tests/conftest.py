@@ -20,7 +20,7 @@ def db():
     from app.db.session import Base
     import app.models  # noqa: F401 — ensure all models are registered on Base.metadata
 
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine("sqlite:///file:testdb?mode=memory&cache=shared", connect_args={"check_same_thread": False, "uri": True})
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     try:

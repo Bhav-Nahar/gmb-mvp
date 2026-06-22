@@ -49,6 +49,7 @@ if settings.REDIS_URL.startswith("rediss://"):
 
 # Auto-discover tasks in app.tasks
 celery.autodiscover_tasks(["app"])
+import app.tasks_leaderboard # Explicitly import to register tasks
 
 # Periodic Celery Beat Scheduling
 celery.conf.beat_schedule = {
@@ -92,6 +93,12 @@ celery.conf.beat_schedule = {
     "enforce-upi-remandate-grace-daily": {
         "task": "app.tasks.enforce_upi_remandate_grace_task",
         "schedule": crontab(hour=4, minute=0), # Daily at 4AM UTC — re-lock past-grace UPI orgs
+    },
+    "generate-monthly-leaderboard-snapshots": {
+        "task": "app.tasks_leaderboard.generate_monthly_leaderboard_snapshots_task",
+        "schedule": crontab(day_of_month='3', hour=3, minute=0), # Monthly on the 3rd at 3AM UTC —
+                            # generates the *previous* month; the 3rd (vs 1st) lets late-arriving
+                            # daily-insights/review data settle before the snapshot is taken.
     }
 }
 

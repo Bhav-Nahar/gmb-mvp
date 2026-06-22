@@ -56,3 +56,4 @@ class Organization(Base):
     posts = relationship("Post", back_populates="organization", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="organization", cascade="all, delete-orphan")
     brand_terms = relationship("OrganizationBrandTerm", back_populates="organization", cascade="all, delete-orphan")
+    leaderboard_snapshots = relationship("LeaderboardSnapshot", back_populates="organization", cascade="all, delete-orphan")

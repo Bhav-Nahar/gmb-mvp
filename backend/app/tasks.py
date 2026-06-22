@@ -3575,3 +3575,4 @@ def publish_location_attributes_task(location_id: int) -> dict:
             logger.error(f"Failed to invalidate cache in publish task finally block for location {location_id}: {cache_err}")
         db.close()
 
+
