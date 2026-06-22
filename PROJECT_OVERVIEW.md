@@ -23,6 +23,10 @@ Documentation Version: 1.2
   * **Location Media & Gallery Management:** Standardized management, uploading, formatting, and synchronizing of photo/video media assets directly to location-specific Google Business Profile galleries.
   * **Search Intelligence & Brand Terms:** Automated harvesting of keyword monthly metrics and optimization tools for organization-level brand terms to track local SEO search visibility.
   * **Location Health Score:** System that calculates a location profile's data completeness and optimization level based on categories, photos, description, attributes, and reviews, providing actionable recommendations.
+  * **AI Description Generation & Validation:** Policy-compliant business description generation utilizing tone nudges and automated validation rules (e.g. clinic safety checks, locality checks, and character length limits).
+  * **Geo-grid Local Rank Scanner:** Interactive N×N grid rank scanner integrated with Google Maps SERP APIs to visualize local search engine visibility and track top competitor rankings.
+  * **Reply Templates:** Custom response templates grouped by star ratings, supporting automated variable interpolation (e.g., reviewer and location names).
+  * **Operational Activity Logs:** Comprehensive audit trails capturing system changes, API interactions, and manual overrides mapped to organizations.
   * **Subscription Billing & Location Quota Enforcement:** Tiered, graduated pricing integrated with Razorpay. Includes location quota limits, automatic grandfathering of pre-existing locations, mid-cycle proration calculations, immediate AI credit adjustments, UPI remandate billing fields, status banner warnings, and secure webhook event parsing with idempotency tracking.
 
 ---
@@ -122,6 +126,10 @@ project/
   * `listing_edits.py`: Location details modification and moderation
   * `media.py`: Photo/video assets validation and upload
   * `billing.py`: Razorpay subscriptions creation, addon billing, proration pricing, and webhook handling
+  * `descriptions.py`: AI description generation and policy validation
+  * `local_rank.py`: Geo-grid local rank search tracking and competitor mapping
+  * `reply_templates.py`: CRUD endpoints for custom review reply templates
+  * `admin.py`: Administration operations and system stats check
 
 ## backend/app/core
 * **Purpose:** Core application configurations.
@@ -147,6 +155,10 @@ project/
   * `ai_reply_service.py` & `sentiment_service.py`: Runs LLM-based interactions.
   * `post_service.py`: Handles campaigns and post publishing.
   * `invite_service.py`: Handles secure organization signup flows.
+  * `description_generator_service.py` & `description_validation.py`: LLM business description generation and safety policy verification.
+  * `local_rank_service.py`: Computes geo-grid coordinate layouts and coordinates Maps SERP grid queries.
+  * `reply_template_service.py`: Manages saved templates and performs variable interpolation.
+  * `activity_log_service.py`: Stages atomic database audit logs.
   * `billing/`: Sub-module with pricing calculations (`pricing_service.py`), entitlement validations (`entitlement_service.py`), credit allocation (`credit_service.py`), subscription lifecycles (`subscription_service.py`), and webhook events processing (`webhook_service.py`).
 
 ---
@@ -184,6 +196,9 @@ PostgreSQL 15
 * `location_health_scores`: Storage for location health calculations, scores, labels, breakdowns, and recommendations.
 * `keyword_monthly_metrics`: Storage for monthly keyword performance metrics (impressions, period, keywords) tied to locations.
 * `organization_brand_terms`: Storage for organization-level brand terms used to filter search intelligence metrics.
+* `reply_templates`: Saved templates for review responses.
+* `local_rank_scan`, `local_rank_scan_cell`: Results of geo-grid local SEO rank scans.
+* `description_generation`: History of generated description variants, selected descriptions, and policy validation logs.
 * `activity_log`, `activity_log_archive`: Persistent operational audit logs.
 * `razorpay_plans`: Available billing plans and pricing templates.
 * `billing_transaction`: Log of all processed payment transactions and subscription operations.

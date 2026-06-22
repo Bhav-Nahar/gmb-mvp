@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck } from 'lucide-react'
+import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -31,6 +31,7 @@ export default function Sidebar({
   const menuItems = [
     { label: 'Dashboard', href: '/dashboard', icon: MapPin },
     { label: 'Insights', href: '/dashboard/insights', icon: TrendingUp },
+    { label: 'Leaderboard', href: '/dashboard/compare', icon: Trophy },
     { label: 'Search Intelligence', href: '/dashboard/insights/search-intelligence', icon: Search },
     { label: 'Local Rank', href: '/dashboard/local-rank', icon: Grid3x3 },
     { label: 'Reviews', href: '/dashboard/reviews', icon: MessageSquare },

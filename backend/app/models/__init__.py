@@ -33,6 +33,8 @@ from app.models.location_media import LocationMedia
 from app.models.reply_template import ReplyTemplate
 from app.models.description_generation import DescriptionGeneration
 from app.models.local_rank_scan import LocalRankScan
+from app.models.leaderboard_snapshot import LeaderboardSnapshot
+from app.models.enums import IneligibilityReason
 
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location",
@@ -42,6 +44,7 @@ __all__ = [
     "LocationDailyInsight", "OrganizationSyncState", "GbpAttributeMetadata", "GbpAttributeDefinition",
     "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction",
     "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm",
-    "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan"
+    "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan", "LeaderboardSnapshot",
+    "IneligibilityReason"
 ]
 
