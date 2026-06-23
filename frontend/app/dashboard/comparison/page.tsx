@@ -185,8 +185,11 @@ export default function ComparisonDashboardPage() {
           <p className="text-muted-foreground mt-1">Compare {noun}s side by side — metrics, trends and what needs attention.</p>
         </div>
         <div className="flex items-center gap-2 self-start">
-          <button onClick={refresh} disabled={loading} title="Recompute from the latest synced data" className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm font-semibold hover:bg-muted/40 disabled:opacity-50">
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          <button
+            onClick={async () => { const { synced } = await refresh(); if (synced) alert('Sync started — Google data is being pulled in the background. Reload in a minute to see updated numbers.'); }}
+            disabled={loading} title="Pull the latest data from Google and recompute"
+            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm font-semibold hover:bg-muted/40 disabled:opacity-50">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Sync &amp; Refresh
           </button>
           <button onClick={handleExport} disabled={exporting} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50">
             {exporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export CSV

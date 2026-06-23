@@ -69,10 +69,18 @@ export function useComparisonDashboard(
   const [availableGroups, setAvailableGroups] = useState<ComparisonGroup[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Bust the server-side cache, then refetch.
-  const refresh = async () => {
+  // Kick a real insight sync (populates location_daily_insights), bust the
+  // comparison cache, then refetch. Returns whether a sync was queued so the UI
+  // can tell the user data will land shortly (sync is async).
+  const refresh = async (): Promise<{ synced: boolean }> => {
+    let synced = false;
+    try {
+      const r = await api.post<any>('/insights/sync-all?force=true');
+      synced = r?.status === 'Queued';
+    } catch { /* restricted users (403) or offline — still bust cache below */ }
     try { await api.post('/comparison/refresh'); } catch { /* refetch anyway */ }
     setRefreshKey(k => k + 1);
+    return { synced };
   };
 
   useEffect(() => {
