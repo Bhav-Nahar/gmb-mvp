@@ -13,6 +13,10 @@ class Location(Base):
     location_name = Column(String, nullable=False)
     primary_category = Column(String, nullable=True)
     address = Column(String, nullable=True)
+    city = Column(String, index=True, nullable=True)
+    state = Column(String, index=True, nullable=True)
+    country = Column(String, nullable=True)
+    postal_code = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     website = Column(String, nullable=True)
     description = Column(String, nullable=True)
@@ -82,4 +86,6 @@ class Location(Base):
     __table_args__ = (
         Index("ix_locations_sla_tracking_started_at", "sla_tracking_started_at"),
         Index("ix_locations_org_billing_status", "organization_id", "billing_status"),
+        Index("ix_locations_org_city", "organization_id", "city"),
+        Index("ix_locations_org_state", "organization_id", "state"),
     )

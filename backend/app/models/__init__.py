@@ -35,7 +35,12 @@ from app.models.description_generation import DescriptionGeneration
 from app.models.local_rank_scan import LocalRankScan
 from app.models.leaderboard_snapshot import LeaderboardSnapshot
 from app.models.enums import IneligibilityReason
-
+from app.models.region import Region
+from app.models.region_location import RegionLocation
+from app.models.custom_group import CustomGroup
+from app.models.custom_group_location import CustomGroupLocation
+from app.models.group_daily_insight import GroupDailyInsight
+from app.models.saved_comparison_view import SavedComparisonView
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location",
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
@@ -45,6 +50,7 @@ __all__ = [
     "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction",
     "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm",
     "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan", "LeaderboardSnapshot",
-    "IneligibilityReason"
+    "IneligibilityReason", "Region", "RegionLocation", "CustomGroup", "CustomGroupLocation",
+    "GroupDailyInsight", "SavedComparisonView"
 ]
 

@@ -10,6 +10,7 @@ from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
 from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard
+from app.api.endpoints import comparison
 from app.api.deps import check_csrf, check_billing_lock
 from fastapi.staticfiles import StaticFiles
 
@@ -129,6 +130,7 @@ app.include_router(billing.webhook_router, prefix="/api/v1/webhooks", tags=["Web
 app.include_router(reply_templates.router, prefix="/api/v1/reply-templates", tags=["Reply Templates"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(leaderboard.router, prefix="/api/v1/leaderboard", tags=["Leaderboard"])
+app.include_router(comparison.router, prefix="/api/v1/comparison", tags=["Comparison"])
 
 @app.on_event("startup")
 async def on_startup():

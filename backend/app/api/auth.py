@@ -55,14 +55,14 @@ SYNC_STUCK_THRESHOLD = timedelta(hours=2)
 router = APIRouter()
 
 @router.get("/google/login")
-def google_login(response: Response, invite_token: str | None = None):
+def google_login(response: Response, invite_token: str | None = None, prompt: str = "select_account"):
     """
     Initiate Google-first OAuth login.
     Generates a secure random state for CSRF protection and returns the redirect URL.
     """
     csrf_token = secrets.token_urlsafe(32)
     state = f"{csrf_token}:{invite_token or ''}"
-    oauth_url = ProviderFactory.get_oauth_url("gbp", state=state)
+    oauth_url = ProviderFactory.get_oauth_url("gbp", state=state, prompt=prompt)
 
     # Primary CSRF store: server-side in Redis. Works regardless of the user's
     # browser third-party-cookie policy (frontend/backend are cross-domain).
