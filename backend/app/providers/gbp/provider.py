@@ -30,7 +30,7 @@ class GBPProvider(BaseProvider):
     provider_name = "gbp"
 
     @classmethod
-    def get_oauth_url(cls, state: str) -> str:
+    def get_oauth_url(cls, state: str, prompt: str = "select_account") -> str:
         base_url = "https://accounts.google.com/o/oauth2/v2/auth"
         params = {
             "client_id": settings.GOOGLE_CLIENT_ID,
@@ -38,11 +38,12 @@ class GBPProvider(BaseProvider):
             "response_type": "code",
             "scope": "https://www.googleapis.com/auth/business.manage openid email profile",
             "access_type": "offline",
-            "prompt": "consent",
+            "prompt": prompt,
             "state": state
         }
         query_string = "&".join(f"{k}={v}" for k, v in params.items())
         return f"{base_url}?{query_string}"
+
 
     @classmethod
     def exchange_code_for_tokens(cls, code: str) -> Dict[str, Any]:

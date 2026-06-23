@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy } from 'lucide-react'
+import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2 } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -30,12 +30,17 @@ export default function Sidebar({
 
   const menuItems = [
     { label: 'Dashboard', href: '/dashboard', icon: MapPin },
-    { label: 'Insights', href: '/dashboard/insights', icon: TrendingUp },
     { label: 'Leaderboard', href: '/dashboard/compare', icon: Trophy },
-    { label: 'Search Intelligence', href: '/dashboard/insights/search-intelligence', icon: Search },
     { label: 'Local Rank', href: '/dashboard/local-rank', icon: Grid3x3 },
     { label: 'Reviews', href: '/dashboard/reviews', icon: MessageSquare },
     { label: 'Posts & Media', href: '/dashboard/posts', icon: Calendar },
+  ]
+
+  // Insights is a collapsible group: Overview / Search Intelligence / Comparison.
+  const insightsChildren = [
+    { label: 'Overview', href: '/dashboard/insights', icon: TrendingUp },
+    { label: 'Search Intelligence', href: '/dashboard/insights/search-intelligence', icon: Search },
+    { label: 'Comparison', href: '/dashboard/comparison', icon: BarChart2 },
   ]
 
   // Settings is a collapsible group: Profile / Team / Billing / Activity Logs.
@@ -55,6 +60,9 @@ export default function Sidebar({
 
   const inSettings = pathname === '/dashboard/team' || pathname?.startsWith('/dashboard/settings')
   const [settingsOpen, setSettingsOpen] = useState<boolean>(!!inSettings)
+
+  const inInsights = pathname?.startsWith('/dashboard/insights') || pathname === '/dashboard/comparison'
+  const [insightsOpen, setInsightsOpen] = useState<boolean>(!!inInsights)
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {
@@ -118,6 +126,42 @@ export default function Sidebar({
             </Link>
           )
         })}
+
+        {/* Insights group */}
+        <div>
+          <button
+            onClick={() => setInsightsOpen(o => !o)}
+            className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${inInsights ? 'text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}
+          >
+            <span className="flex items-center gap-3">
+              <TrendingUp className={`h-4 w-4 shrink-0 ${inInsights ? 'text-primary' : 'text-muted-foreground/60'}`} />
+              Insights
+            </span>
+            <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${insightsOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {insightsOpen && (
+            <div className="mt-1 ml-3 pl-3 border-l border-border/60 space-y-1">
+              {insightsChildren.map((item) => {
+                const active = isActive(item.href)
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={onClose}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                      active
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                    }`}
+                  >
+                    <item.icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground/60'}`} />
+                    <span>{item.label}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
         {user?.is_superuser && (
           <Link

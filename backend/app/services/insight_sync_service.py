@@ -43,16 +43,16 @@ class InsightSyncService:
                     DATE(review_created_at) AS date,
                     COUNT(*) AS reviews_received,
                     AVG(rating) AS avg_rating,
-                    SUM(CASE WHEN sentiment = 'positive' THEN 1 ELSE 0 END) AS positive_review_count,
-                    SUM(CASE WHEN sentiment = 'neutral' THEN 1 ELSE 0 END) AS neutral_review_count,
-                    SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative_review_count,
+                    SUM(CASE WHEN LOWER(sentiment) = 'positive' THEN 1 ELSE 0 END) AS positive_review_count,
+                    SUM(CASE WHEN LOWER(sentiment) = 'neutral' THEN 1 ELSE 0 END) AS neutral_review_count,
+                    SUM(CASE WHEN LOWER(sentiment) IN ('negative', 'angry') THEN 1 ELSE 0 END) AS negative_review_count,
                     CAST(SUM(CASE WHEN is_replied = 1 THEN 1 ELSE 0 END) AS float) / NULLIF(COUNT(*), 0) * 100 AS response_rate,
                     AVG((julianday(reply_created_at) - julianday(review_created_at)) * 24) AS avg_response_time_hours,
-                    AVG(CASE 
-                        WHEN sentiment = 'positive' THEN 1.0 
-                        WHEN sentiment = 'neutral' THEN 0.0 
-                        WHEN sentiment = 'negative' THEN -1.0 
-                        ELSE NULL 
+                    AVG(CASE
+                        WHEN LOWER(sentiment) = 'positive' THEN 1.0
+                        WHEN LOWER(sentiment) = 'neutral' THEN 0.0
+                        WHEN LOWER(sentiment) IN ('negative', 'angry') THEN -1.0
+                        ELSE NULL
                     END) AS avg_sentiment_score
                 FROM reviews
                 WHERE location_id = :location_id
@@ -66,18 +66,18 @@ class InsightSyncService:
                     DATE(review_created_at) AS date,
                     COUNT(*) AS reviews_received,
                     AVG(rating) AS avg_rating,
-                    COUNT(*) FILTER (WHERE sentiment = 'positive') AS positive_review_count,
-                    COUNT(*) FILTER (WHERE sentiment = 'neutral') AS neutral_review_count,
-                    COUNT(*) FILTER (WHERE sentiment = 'negative') AS negative_review_count,
+                    COUNT(*) FILTER (WHERE LOWER(sentiment) = 'positive') AS positive_review_count,
+                    COUNT(*) FILTER (WHERE LOWER(sentiment) = 'neutral') AS neutral_review_count,
+                    COUNT(*) FILTER (WHERE LOWER(sentiment) IN ('negative', 'angry')) AS negative_review_count,
                     CAST(COUNT(*) FILTER (WHERE is_replied = TRUE) AS float) / NULLIF(COUNT(*), 0) * 100 AS response_rate,
                     AVG(EXTRACT(EPOCH FROM (reply_created_at - review_created_at)) / 3600) FILTER (
                         WHERE is_replied = TRUE AND reply_created_at IS NOT NULL
                     ) AS avg_response_time_hours,
-                    AVG(CASE 
-                        WHEN sentiment = 'positive' THEN 1.0 
-                        WHEN sentiment = 'neutral' THEN 0.0 
-                        WHEN sentiment = 'negative' THEN -1.0 
-                        ELSE NULL 
+                    AVG(CASE
+                        WHEN LOWER(sentiment) = 'positive' THEN 1.0
+                        WHEN LOWER(sentiment) = 'neutral' THEN 0.0
+                        WHEN LOWER(sentiment) IN ('negative', 'angry') THEN -1.0
+                        ELSE NULL
                     END) AS avg_sentiment_score
                 FROM reviews
                 WHERE location_id = :location_id

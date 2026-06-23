@@ -17,8 +17,8 @@ def _resolve_provider(provider_name: str) -> type:
 
 class ProviderFactory:
     @staticmethod
-    def get_oauth_url(provider_name: str, state: str) -> str:
-        return _resolve_provider(provider_name).get_oauth_url(state)
+    def get_oauth_url(provider_name: str, state: str, prompt: str = "select_account") -> str:
+        return _resolve_provider(provider_name).get_oauth_url(state, prompt=prompt)
 
     @staticmethod
     def exchange_code_for_tokens(provider_name: str, code: str) -> dict:

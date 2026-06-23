@@ -498,9 +498,9 @@ def test_razorpay_mode_isolation(db):
             assert org.razorpay_customer_id == "test:cust_mock_user@mode.com"
 
             plan_id = SubscriptionService._get_or_create_plan(db, 1, "monthly")
-            assert plan_id == "plan_mock_250000"  # Per-location graduated: 1 loc = 2500 INR = 250000 paise
+            assert plan_id == "plan_mock_295000"  # Per-location graduated: 1 loc = 2500 INR = 250000 paise + 18% GST = 295000 paise
             plan_row = db.query(RazorpayPlan).filter_by(location_count=1, interval="monthly").first()
-            assert plan_row.razorpay_plan_id == "test:plan_mock_250000"
+            assert plan_row.razorpay_plan_id == "test:plan_mock_295000"
 
         # 2. Transition to live environment: should create new live records and ignore test ones
         fake_client.customer.create.side_effect = lambda data: {"id": "cust_live_123"}
@@ -518,7 +518,7 @@ def test_razorpay_mode_isolation(db):
             plans = db.query(RazorpayPlan).filter_by(location_count=1, interval="monthly").all()
             assert len(plans) == 2
             plan_ids = [p.razorpay_plan_id for p in plans]
-            assert "test:plan_mock_250000" in plan_ids
+            assert "test:plan_mock_295000" in plan_ids
             assert "live:plan_live_123" in plan_ids
 
         # 3. Transition back to test: plans are stored durably per-mode (razorpay_plans
@@ -528,4 +528,4 @@ def test_razorpay_mode_isolation(db):
         # happens for a real org, so we only assert plan-level isolation here.
         with patch.object(settings, "RAZORPAY_KEY_ID", "rzp_test_key"):
             plan_id_test2 = SubscriptionService._get_or_create_plan(db, 1, "monthly")
-            assert plan_id_test2 == "plan_mock_250000"
+            assert plan_id_test2 == "plan_mock_295000"

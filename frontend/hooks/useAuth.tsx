@@ -10,6 +10,7 @@ export interface User {
   role: string
   avatar?: string
   is_superuser?: boolean
+  organization_id: number
 }
 
 interface AuthContextType {

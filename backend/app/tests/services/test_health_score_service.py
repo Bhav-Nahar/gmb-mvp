@@ -15,7 +15,7 @@ def test_health_score_perfect_profile(db: Session):
         phone="555-1234",
         website="https://example.com",
         business_hours={"periods": []},
-        description="A great place.",
+        description="This is a perfect description for our business which has to be extremely long to satisfy the health score system. We are a premier provider of high quality services in our local area, and we strive to offer the absolute best experience for all of our customers. Our team is dedicated, experienced, and always ready to help you with your needs. Come visit us today or check our website to learn more about what we do, how we can help you, and why we are the best choice for you. We have been in business for many years and have built a strong reputation for excellence and reliability in the community.",
         average_rating=4.8,
         total_reviews=150,
         last_published_at=datetime.now(timezone.utc) - timedelta(days=2)
