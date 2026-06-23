@@ -34,6 +34,13 @@ class GBPLocationMapper:
             except Exception as e:
                 logger.warning("Failed to JSON-serialize address %r: %s", addr, e)
 
+        # Geography fields drive City/State/Region comparison grouping — populate them
+        # on every sync so they're never NULL (was previously only via a manual backfill).
+        city = addr.get("locality")
+        state = addr.get("administrativeArea")
+        country = addr.get("regionCode")
+        postal_code = addr.get("postalCode")
+
         category = None
         google_category_resource_name = None
         additional_categories: list = []
@@ -82,6 +89,10 @@ class GBPLocationMapper:
             name=raw.title or "Unnamed Location",
             category=category,
             address=full_address,
+            city=city,
+            state=state,
+            country=country,
+            postal_code=postal_code,
             phone=phone,
             website=raw.websiteUri,
             description=raw.profile.get("description") if raw.profile else None,
