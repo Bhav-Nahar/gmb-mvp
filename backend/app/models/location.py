@@ -82,6 +82,7 @@ class Location(Base):
     # schema field, which breaks LocationOut.model_validate(location).
     health_score_record = relationship("LocationHealthScore", back_populates="location", uselist=False, cascade="all, delete-orphan")
     leaderboard_snapshots = relationship("LeaderboardSnapshot", back_populates="location", cascade="all, delete-orphan")
+    microsite = relationship("Microsite", back_populates="location", uselist=False, cascade="all, delete-orphan")
     
     __table_args__ = (
         Index("ix_locations_sla_tracking_started_at", "sla_tracking_started_at"),

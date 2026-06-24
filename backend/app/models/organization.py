@@ -7,6 +7,7 @@ class Organization(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    slug = Column(String, nullable=True, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Billing Fields
@@ -57,3 +58,4 @@ class Organization(Base):
     publish_jobs = relationship("PublishJob", back_populates="organization", cascade="all, delete-orphan")
     brand_terms = relationship("OrganizationBrandTerm", back_populates="organization", cascade="all, delete-orphan")
     leaderboard_snapshots = relationship("LeaderboardSnapshot", back_populates="organization", cascade="all, delete-orphan")
+    microsites = relationship("Microsite", back_populates="organization", cascade="all, delete-orphan")
