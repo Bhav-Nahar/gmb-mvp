@@ -71,7 +71,10 @@ function getCookie(name: string): string | null {
 }
 
 function isPublicPath(path: string): boolean {
-  return path === '/login' || path.startsWith('/invite/') || path === '/login/success' || path === '/' || path === '/privacy' || path === '/terms' || path === '/refund' || path === '/contact'
+  // Only the dashboard and admin panel are authenticated areas. Everything else
+  // — marketing pages AND public microsites at /{slug} — is public and must never
+  // be redirected to /login on a 401 (public visitors have no session).
+  return !path.startsWith('/dashboard') && !path.startsWith('/admin')
 }
 
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
@@ -91,6 +94,13 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     } else {
       console.warn(`[API] CSRF token missing for ${method} request to ${endpoint}.`)
     }
+  }
+
+  // Super-admin "view as workspace": when set, every request acts inside that org.
+  // Backend ignores it for non-super-admins. Set via actAsOrg() below.
+  if (typeof window !== 'undefined') {
+    const actingOrg = sessionStorage.getItem('actingOrg')
+    if (actingOrg) headers.set('X-Acting-Org', actingOrg)
   }
 
   let url = `${API_BASE_URL}${endpoint}`
@@ -195,4 +205,10 @@ export const api = {
 
   delete: <T>(endpoint: string, options?: RequestInit) => 
     request<T>(endpoint, { method: 'DELETE', ...options }),
+}
+
+// Super-admin workspace impersonation. actAsOrg(42) then reload; actAsOrg(null) to exit.
+export function actAsOrg(orgId: number | string | null) {
+  if (orgId == null) sessionStorage.removeItem('actingOrg')
+  else sessionStorage.setItem('actingOrg', String(orgId))
 }

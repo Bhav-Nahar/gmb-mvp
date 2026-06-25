@@ -1,6 +1,6 @@
-Last Updated: 2026-06-14T23:08:00Z
+Last Updated: 2026-06-25T20:35:00Z
 Based On Commit: ab8573e
-Documentation Version: 1.2
+Documentation Version: 1.3
 
 # Project Overview
 
@@ -96,18 +96,34 @@ The repository contains two main subprojects that communicate over HTTP REST:
 * **backend:** The Python/FastAPI service. Runs on port 8000. Handles business logic, database connections, background tasks.
 * **frontend:** The TypeScript/Next.js application. Runs on port 3000. Consumes the backend API.
 
+```
 project/
 ├── backend/
-│   ├── alembic/        # Database migrations
-│   ├── app/            # FastAPI application source
-│   ├── Dockerfile      # Backend and worker container definition
-│   └── requirements.txt
+│   ├── alembic/                    # Database migrations
+│   ├── app/                        # FastAPI application source
+│   │   ├── api/                    # API routes & dependency injection
+│   │   │   └── endpoints/          # Sub-routes (e.g. comparison)
+│   │   ├── core/                   # Security, config, JWT tokens, plans
+│   │   ├── models/                 # SQLAlchemy database models
+│   │   ├── schemas/                # Pydantic validation schemas
+│   │   ├── services/               # Core business logic services
+│   │   │   └── billing/            # Entitlements, pricing, subscriptions
+│   │   └── main.py                 # FastAPI application root
+│   ├── Dockerfile                  # Container definition (api & workers)
+│   ├── requirements.txt            # Python backend dependencies
+│   └── tests/                      # Automated unit/integration tests
 ├── frontend/
-│   ├── app/            # Next.js App Router pages
-│   ├── components/     # UI Components (shadcn/ui)
-│   ├── lib/            # Client-side API utilities
-│   └── package.json
-└── docker-compose.yml  # Local development infrastructure
+│   ├── app/                        # Next.js App Router pages & layouts
+│   │   ├── [slug]/                 # Public microsites rendering
+│   │   ├── admin/                  # Superadmin panel
+│   │   ├── dashboard/              # User workspace panel (insights, rank, etc)
+│   │   └── login/                  # Authentication & OAuth landing
+│   ├── components/                 # Shared UI elements & features
+│   ├── hooks/                      # Custom React hooks (React Query integrations)
+│   ├── lib/                        # Client API and helper modules
+│   └── package.json                # Frontend configuration & dependencies
+└── docker-compose.yml              # Multi-container orchestration definition
+```
 
 ---
 
@@ -116,20 +132,24 @@ project/
 ## backend/app/api
 * **Purpose:** HTTP endpoints definition.
 * **Responsibilities:** Route handling, dependency injection (auth), input validation via Pydantic. Key endpoints include:
-  * `auth.py`: Onboarding and credentials
-  * `locations.py`: Location management
-  * `reviews.py`: Review listing, replies, and sentiment retagging
-  * `posts.py`: GBP campaigns, variants, and scheduling
-  * `insights.py`: Performance insights and search intelligence metrics
-  * `location_media.py`: Location media gallery upload, sync, and deletion
-  * `dynamic_attributes.py`: Business attribute retrieval and management
-  * `listing_edits.py`: Location details modification and moderation
-  * `media.py`: Photo/video assets validation and upload
-  * `billing.py`: Razorpay subscriptions creation, addon billing, proration pricing, and webhook handling
-  * `descriptions.py`: AI description generation and policy validation
-  * `local_rank.py`: Geo-grid local rank search tracking and competitor mapping
-  * `reply_templates.py`: CRUD endpoints for custom review reply templates
-  * `admin.py`: Administration operations and system stats check
+  * `auth.py`: Onboarding, Google OAuth handshake, and registration credentials.
+  * `locations.py`: Location CRUD and configuration details.
+  * `reviews.py`: Review listing, AI generation of reply text, and sentiment retagging.
+  * `posts.py`: GBP campaign generation, post scheduling, and pacing.
+  * `insights.py`: Performance analytics and keyword monthly metrics.
+  * `location_media.py`: Photo/video media asset uploads and sync actions.
+  * `dynamic_attributes.py`: Synchronized attributes configuration.
+  * `listing_edits.py`: User-initiated Google profile edits moderation.
+  * `media.py`: Directly validated temporary media asset actions.
+  * `billing.py`: Razorpay session endpoints, subscription orders, and webhook intake.
+  * `descriptions.py`: AI-assisted profile descriptions generation and policy validations.
+  * `local_rank.py`: SERP Geo-grid local search trackers.
+  * `reply_templates.py`: Templates CRUD grouped by star ratings.
+  * `microsites.py` / `public_microsites.py`: Dashboard settings and public landing views for microsites.
+  * `leaderboard.py`: Location leaderboard dashboard rankings.
+  * `endpoints/comparison.py`: Side-by-side location comparisons.
+  * `users.py`: User-specific metadata, profiles, and administration.
+  * `admin.py`: Super-admin monitoring controls.
 
 ## backend/app/core
 * **Purpose:** Core application configurations.
@@ -159,6 +179,11 @@ project/
   * `local_rank_service.py`: Computes geo-grid coordinate layouts and coordinates Maps SERP grid queries.
   * `reply_template_service.py`: Manages saved templates and performs variable interpolation.
   * `activity_log_service.py`: Stages atomic database audit logs.
+  * `microsite_service.py`: Logic for creating and modifying location public microsites.
+  * `leaderboard_service.py`: Calculates location ranking scorecards and snapshots.
+  * `slug_service.py`: Helper for generating URL slugs for organizations & microsites.
+  * `sla_service.py`: Calculates review responses SLA targets and durations.
+  * `comparison_aggregation_service.py`, `comparison_cache_service.py` & `comparison_snapshot_service.py`: Manages aggregated compare views, caches, and snapshots.
   * `billing/`: Sub-module with pricing calculations (`pricing_service.py`), entitlement validations (`entitlement_service.py`), credit allocation (`credit_service.py`), subscription lifecycles (`subscription_service.py`), and webhook events processing (`webhook_service.py`).
 
 ---
@@ -181,7 +206,7 @@ project/
 PostgreSQL 15
 
 ## Important Tables
-* `organizations`: Multi-tenant boundary. Holds subscription details (billing plan, status, reset dates, quotas, and credit balances).
+* `organizations`: Multi-tenant boundary. Holds subscription details (billing plan, status, reset dates, quotas, credit balances, and unique `slug`).
 * `users`: System accounts, linked to organizations.
 * `oauth_accounts`: Encrypted third-party tokens.
 * `locations`: Synchronized GBP locations. Includes `billing_status` ('active', 'pending_payment') to enforce quota gates.
@@ -203,6 +228,13 @@ PostgreSQL 15
 * `razorpay_plans`: Available billing plans and pricing templates.
 * `billing_transaction`: Log of all processed payment transactions and subscription operations.
 * `billing_webhook_event`: Event log with status checking to ensure idempotent processing of webhook payloads.
+* `microsites`: Storage for microsite customization configurations, layouts, and public flags.
+* `leaderboard_snapshots`: Historical location metrics aggregates for monthly leaderboard computations.
+* `saved_comparison_views`: Configurations for compared location subsets.
+* `custom_groups` & `custom_group_location`: Tag-based customized location folders.
+* `campaigns` & `campaign_audit_logs`: Bulk posting campaign records.
+* `organization_sync_states`: Organization-wide sync logs and states.
+
 
 ## Relationships
 * Users belong to Organizations.

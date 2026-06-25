@@ -107,6 +107,9 @@ class LocationOut(BaseModel):
     health_score: Optional[int] = None
     health_score_label: Optional[str] = None
 
+    # Embedded Microsite Status
+    microsite_status: Optional[str] = None
+
     class Config:
         from_attributes = True
 

@@ -41,6 +41,9 @@ from app.models.custom_group import CustomGroup
 from app.models.custom_group_location import CustomGroupLocation
 from app.models.group_daily_insight import GroupDailyInsight
 from app.models.saved_comparison_view import SavedComparisonView
+from app.models.microsite import Microsite
+from app.models.lead import Lead
+from app.models.push_subscription import PushSubscription
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location",
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
@@ -51,6 +54,6 @@ __all__ = [
     "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm",
     "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan", "LeaderboardSnapshot",
     "IneligibilityReason", "Region", "RegionLocation", "CustomGroup", "CustomGroupLocation",
-    "GroupDailyInsight", "SavedComparisonView"
+    "GroupDailyInsight", "SavedComparisonView", "Microsite", "Lead", "PushSubscription"
 ]
 

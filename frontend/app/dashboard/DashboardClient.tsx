@@ -59,6 +59,8 @@ interface Location {
   // Embedded Health Score
   health_score?: number | null
   health_score_label?: string | null
+  // Embedded Microsite Status
+  microsite_status?: string | null
 }
 
 interface SyncLog {
@@ -457,6 +459,19 @@ function DashboardContent() {
     }
     if (loc.is_verified === true) {
       return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">Verified</span>;
+    }
+    return null;
+  };
+
+  const renderMicrositeBadge = (status?: string | null) => {
+    if (status === 'published') {
+      return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">Microsite: Live</span>;
+    }
+    if (status === 'draft') {
+      return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30">Microsite: Draft</span>;
+    }
+    if (status === 'unpublished') {
+      return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 border border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/30">Microsite: Offline</span>;
     }
     return null;
   };
@@ -1089,6 +1104,7 @@ function DashboardContent() {
                       <th className="px-4 py-3 font-bold">Rating</th>
                       <th className="px-4 py-3 font-bold hidden md:table-cell">To reply</th>
                       <th className="px-4 py-3 font-bold">Status</th>
+                      <th className="px-4 py-3 font-bold">Microsite</th>
                       <th className="px-4 py-3 font-bold text-right hidden md:table-cell">Last sync</th>
                     </tr>
                   </thead>
@@ -1139,6 +1155,9 @@ function DashboardContent() {
                                 <Lock className="h-3 w-3" /> Locked
                               </span>
                             ) : (renderStateBadge(loc) ?? <span className="text-muted-foreground/50 text-xs">—</span>)}
+                          </td>
+                          <td className="px-4 py-3">
+                            {!isBlocked && renderMicrositeBadge(loc.microsite_status)}
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap text-xs text-muted-foreground hidden md:table-cell" title={loc.last_synced_at ? new Date(loc.last_synced_at).toLocaleString() : ''}>
                             {relativeTime(loc.last_synced_at) ?? 'never'}
@@ -1210,7 +1229,12 @@ function DashboardContent() {
                                   <Sparkles className="h-3 w-3" />
                                   Upgrade to Reactivate
                                 </button>
-                              ) : renderStateBadge(loc)}
+                              ) : (
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {renderStateBadge(loc)}
+                                  {renderMicrositeBadge(loc.microsite_status)}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>

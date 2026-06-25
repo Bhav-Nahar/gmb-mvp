@@ -40,16 +40,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
-    const isPublicPage = window.location.pathname === '/login' || 
-                         window.location.pathname.startsWith('/invite/') ||
-                         window.location.pathname === '/login/success' ||
-                         window.location.pathname === '/' ||
-                         window.location.pathname === '/privacy' ||
-                         window.location.pathname === '/terms' ||
-                         window.location.pathname === '/refund' ||
-                         window.location.pathname === '/contact'
-                         
-    if (isPublicPage) {
+    // Only fetch the session inside the authenticated app (dashboard/admin).
+    // Public pages — marketing AND microsites at /{slug} — must not call
+    // /users/me, which would 401 for visitors and bounce them to /login.
+    const path = window.location.pathname
+    const isAppArea = path.startsWith('/dashboard') || path.startsWith('/admin')
+    if (!isAppArea) {
       setLoading(false)
       return
     }
@@ -57,6 +53,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const logout = async () => {
+    // Note: we intentionally KEEP the push subscription across logout so the
+    // device keeps receiving lead alerts (it "remembers"). Notification payloads
+    // carry no customer PII, so this is safe even on shared devices.
     try {
       await api.post('/auth/logout')
     } catch (e) {
