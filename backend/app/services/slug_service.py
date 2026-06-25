@@ -71,28 +71,41 @@ def generate_org_slug(db: Session, organization: Organization) -> str:
     
     return slug
 
-def generate_location_slug(db: Session, location: Location, org_id: int) -> str:
+def generate_location_slug(db: Session, location: Location, org_id: int = None) -> str:
     """
-    Generates a slug for a location. Uniqueness is scoped to the organization slug.
-    This function does NOT persist the generated slug to the database; it simply returns 
-    the string to the caller to use when creating a Microsite row.
+    Generates a GLOBALLY-unique, single-segment SEO slug for a location.
+
+    The public URL is single-level (e.g. pinzo.io/{location_slug}), so uniqueness
+    is global across all microsites — NOT org-scoped. (org_id is kept for call-site
+    compatibility but no longer used for scoping.)
+
+    Slug = slugify(location_name), with city appended only if the name doesn't
+    already contain it (so "Rupesh Jewellers in Malad, Mumbai" + city "Mumbai"
+    yields "rupesh-jewellers-in-malad-mumbai", not "...-mumbai-mumbai").
+
+    Does NOT persist; returns the string for the caller to store on the Microsite.
     """
-    components = [location.location_name]
+    base_slug = slugify(location.location_name, fallback_prefix="location", row_id=location.id)
+
     if location.city:
-        components.append(location.city)
-        
-    raw_name = "-".join(components)
-    base_slug = slugify(raw_name, fallback_prefix="location", row_id=location.id)
-    
-    # Check for uniqueness within the organization.
-    # We check against microsites.location_slug where organization_id == org_id
+        city_slug = slugify(location.city)
+        if city_slug and city_slug not in base_slug:
+            base_slug = f"{base_slug}-{city_slug}"
+
+    # Single-segment URL shares the root namespace with top-level routes; never
+    # let a slug collide with one (e.g. a location literally named "Dashboard").
+    if base_slug in RESERVED_SLUGS:
+        base_slug = f"{base_slug}-{location.id}"
+
+    # Global uniqueness across every microsite (exclude this location's own row
+    # so re-generation is stable).
     existing = db.query(Microsite).filter(
-        Microsite.organization_id == org_id, 
-        Microsite.location_slug == base_slug
+        Microsite.location_slug == base_slug,
+        Microsite.location_id != location.id,
     ).first()
-    
+
     if existing:
-        # On collision, append the location.id rather than an incrementing counter
+        # Deterministic one-step disambiguation.
         return f"{base_slug}-{location.id}"
-        
+
     return base_slug

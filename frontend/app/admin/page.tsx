@@ -2,8 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { api } from '@/lib/api'
-import { Search, RefreshCw, ChevronRight } from 'lucide-react'
+import { api, actAsOrg } from '@/lib/api'
+import { Search, RefreshCw, ChevronRight, LogIn } from 'lucide-react'
+
+function enterWorkspace(org: { id: number; name: string }) {
+  actAsOrg(org.id)
+  // Full nav (not router.push) so every cached query refetches with the new header.
+  window.location.href = '/dashboard'
+}
 
 interface OrgRow {
   id: number
@@ -172,7 +178,16 @@ export default function AdminOrgsPage() {
                   <td className="px-4 py-3">{o.user_count}</td>
                   <td className="px-4 py-3">{(o.monthly_ai_credits_balance ?? 0) + (o.topup_ai_credits_balance ?? 0)}</td>
                   <td className="px-4 py-3 text-right">
-                    <Link href={`/admin/${o.id}`} className="inline-flex items-center text-muted-foreground hover:text-primary"><ChevronRight className="h-4 w-4" /></Link>
+                    <div className="inline-flex items-center gap-2">
+                      <button
+                        onClick={() => enterWorkspace(o)}
+                        title={`Enter ${o.name}'s workspace`}
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-semibold hover:bg-muted/40"
+                      >
+                        <LogIn className="h-3.5 w-3.5" /> Enter
+                      </button>
+                      <Link href={`/admin/${o.id}`} className="inline-flex items-center text-muted-foreground hover:text-primary"><ChevronRight className="h-4 w-4" /></Link>
+                    </div>
                   </td>
                 </tr>
               ))}

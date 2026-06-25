@@ -17,6 +17,7 @@ import redis
 from app.core.config import settings
 from app.core.roles import Role, ADMIN_ROLES, STAFF_ROLES, TEAM_VIEWER_ROLES
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import set_committed_value
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
@@ -60,7 +61,26 @@ def get_current_user(
         
     if user.token_version != token_version:
         raise credentials_exception
-        
+
+    # Super-admin workspace impersonation: a super-admin may operate inside another
+    # org by sending X-Acting-Org. We override organization_id at the source so every
+    # downstream query (which all read current_user.organization_id) follows along —
+    # no per-endpoint changes. set_committed_value writes it as if loaded from the DB,
+    # so the change is NOT dirty and can never be flushed back onto the admin's own
+    # row, while the user stays bound to the session (lazy relationships still load).
+    acting_org = request.headers.get("X-Acting-Org")
+    if acting_org and settings.is_superadmin(user.email):
+        try:
+            target_org_id = int(acting_org)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid X-Acting-Org")
+        if target_org_id != user.organization_id:
+            logger.warning(
+                "SUPERADMIN_IMPERSONATION admin=%s acting_org=%s path=%s method=%s",
+                user.email, target_org_id, request.url.path, request.method,
+            )
+            set_committed_value(user, "organization_id", target_org_id)
+
     return user
 
 class RoleChecker:
@@ -233,6 +253,11 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
     # The platform super-admin panel acts cross-org as staff; never gate it on the
     # acting admin's own organization lock.
     if request.url.path.startswith("/api/v1/admin/"):
+        return
+
+    # Public, unauthenticated endpoints (e.g. microsite lead capture) have no user
+    # and must never be gated by org billing lock.
+    if request.url.path.startswith("/api/v1/public/"):
         return
 
     _WHITELIST = frozenset({

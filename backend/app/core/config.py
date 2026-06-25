@@ -103,6 +103,18 @@ class Settings(BaseSettings):
 
     # Backend
     BACKEND_URL: str = "http://localhost:8000"
+    REVALIDATE_SECRET: str = ""
+
+    # Lead-notification email (Resend). Empty key => email silently skipped (leads
+    # are still stored and shown in the dashboard).
+    RESEND_API_KEY: str = ""
+    LEAD_EMAIL_FROM: str = "Pinzo Leads <leads@pinzo.io>"
+
+    # Web Push (VAPID). Dev defaults below; OVERRIDE in production via env and keep
+    # the private key secret. Empty private key => push silently skipped.
+    VAPID_PUBLIC_KEY: str = "BAP6iNtANNGg0NHuPbpgwEhcRJrogJnFhQ_V22wVmbKT6_C2TAJehuMplEeF9eh8dev_HIuAkJPNvQdNGxqCdmg"
+    VAPID_PRIVATE_KEY: str = "Fn5whJh_EjnOCnsOtLiPdV0Eniypj4aoONcP3byQQfU"
+    VAPID_SUBJECT: str = "mailto:leads@pinzo.io"
 
     # Shared cookie domain. When the frontend and API are served from sibling
     # subdomains of ONE registrable domain (e.g. app.pinzo.io + api.pinzo.io),

@@ -105,7 +105,15 @@ export function useLocationWorkspace(locationId: string | number) {
     enabled: !!id,
   });
 
-  // 4. Mutations
+  // 5. Fetch Microsite Status
+  const { data: microsite, isLoading: isMicrositeLoading, isError: isMicrositeError, error: micrositeError, refetch: refetchMicrosite } = useQuery<any>({
+    queryKey: ['microsite', id],
+    queryFn: () => api.get(`/locations/${id}/microsite`),
+    enabled: !!id,
+    retry: false,
+  });
+
+  // 6. Mutations
   const approveMutation = useMutation({
     mutationFn: ({ editId, version }: { editId: number, version: number }) => 
       api.post(`/edits/${editId}/approve`, { version }),
@@ -211,6 +219,39 @@ export function useLocationWorkspace(locationId: string | number) {
     }
   });
 
+  const generateMicrositeMutation = useMutation({
+    mutationFn: () => api.post(`/locations/${id}/microsite/generate`),
+    onSuccess: () => {
+      toast.success('Microsite generated successfully');
+      queryClient.invalidateQueries({ queryKey: ['microsite', id] });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to generate microsite');
+    }
+  });
+
+  const publishMicrositeMutation = useMutation({
+    mutationFn: () => api.post(`/locations/${id}/microsite/publish`),
+    onSuccess: () => {
+      toast.success('Microsite published successfully');
+      queryClient.invalidateQueries({ queryKey: ['microsite', id] });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to publish microsite');
+    }
+  });
+
+  const unpublishMicrositeMutation = useMutation({
+    mutationFn: () => api.post(`/locations/${id}/microsite/unpublish`),
+    onSuccess: () => {
+      toast.success('Microsite taken offline');
+      queryClient.invalidateQueries({ queryKey: ['microsite', id] });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to unpublish microsite');
+    }
+  });
+
   return {
     location,
     isLocationLoading,
@@ -224,10 +265,18 @@ export function useLocationWorkspace(locationId: string | number) {
     isHealthScoreLoading,
     isHealthScoreError,
     refetchHealthScore,
+    microsite,
+    isMicrositeLoading,
+    isMicrositeError,
+    micrositeError,
+    refetchMicrosite,
     approveMutation,
     rejectMutation,
     publishMutation,
     createEditMutation,
     submitMutation,
+    generateMicrositeMutation,
+    publishMicrositeMutation,
+    unpublishMicrositeMutation,
   };
 }

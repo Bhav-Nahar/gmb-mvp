@@ -16,6 +16,10 @@ class LocationModel(BaseModel):
     name: str
     category: Optional[str] = None
     address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    postal_code: Optional[str] = None
     phone: Optional[str] = None
     website: Optional[str] = None
     description: Optional[str] = None

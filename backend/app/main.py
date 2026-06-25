@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
-from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard
+from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push
 from app.api.endpoints import comparison
 from app.api.deps import check_csrf, check_billing_lock
 from fastapi.staticfiles import StaticFiles
@@ -61,7 +61,7 @@ app.add_middleware(
     allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With", "Accept"],
+    allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With", "Accept", "X-Acting-Org"],
     expose_headers=["X-CSRF-Token"],
 )
 
@@ -115,6 +115,10 @@ app.mount("/static/uploads", StaticFiles(directory=static_uploads_path), name="s
 # Register routers under api/v1 prefix
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(locations.router, prefix="/api/v1/locations", tags=["Locations"])
+app.include_router(microsites.router, prefix="/api/v1/locations", tags=["Microsites"])
+app.include_router(public_microsites.router, prefix="/api/v1/public/microsites", tags=["Public Microsites"])
+app.include_router(leads.router, prefix="/api/v1/locations", tags=["Leads"])
+app.include_router(push.router, prefix="/api/v1/push", tags=["Push"])
 app.include_router(dynamic_attributes.router, prefix="/api/v1/locations", tags=["Dynamic Attributes"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(reviews.router, prefix="/api/v1/reviews", tags=["Reviews"])

@@ -223,6 +223,9 @@ def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: in
             
             result = run_async(ReviewSyncService.sync_location_reviews(db, location_id, run_type, sync_log_id=sync_log.id))
 
+            from app.services.revalidation_service import trigger_bulk_microsite_revalidation
+            trigger_bulk_microsite_revalidation([location_id])
+
             return {"status": "success", "result": result}
         except Exception as e:
             db.rollback()
@@ -341,6 +344,11 @@ def sync_reviews_chunk_task(self, location_ids: list, organization_id: int, run_
                 
                 # Rate limiting / Sleep in chunk
                 time.sleep(getattr(settings, "REVIEW_SYNC_SLEEP_SECONDS", 0.2))
+
+        successful_loc_ids = [res["location_id"] for res in results if res.get("status") == "success"]
+        if successful_loc_ids:
+            from app.services.revalidation_service import trigger_bulk_microsite_revalidation
+            trigger_bulk_microsite_revalidation(successful_loc_ids)
 
         return {"status": "completed", "results": results}
     finally:
@@ -2443,6 +2451,10 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
                 db.commit()
             except Exception as hs_err:
                 logger.warning("Health score recalc failed after listing-edit publish %s: %s", edit.id, hs_err)
+                
+            from app.services.revalidation_service import trigger_bulk_microsite_revalidation
+            trigger_bulk_microsite_revalidation([location.id])
+            
             return {"status": "completed"}
             
         except Exception as e:
@@ -3188,6 +3200,9 @@ def sync_location_media_task(location_id: int) -> dict:
             db.commit()
         except Exception as hs_err:
             logger.warning(f"Health score recalc failed after media sync {location_id}: {hs_err}")
+
+        from app.services.revalidation_service import trigger_bulk_microsite_revalidation
+        trigger_bulk_microsite_revalidation([location_id])
 
         return {"status": "success", "inserted": inserted, "updated": updated, "removed": removed}
     finally:

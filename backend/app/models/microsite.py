@@ -30,7 +30,8 @@ class Microsite(Base):
 
     __table_args__ = (
         UniqueConstraint("location_id", name="uq_microsite_location"),
-        UniqueConstraint("org_slug", "location_slug", name="uq_microsite_org_slug"),
+        # Single-level public URL (pinzo.io/{location_slug}) -> slug must be globally unique.
+        UniqueConstraint("location_slug", name="uq_microsite_location_slug"),
         Index("ix_microsites_status", "status"),
     )
 

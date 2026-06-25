@@ -16,6 +16,7 @@ from app.schemas.sla import LocationSLAMetrics, LocationSLASummary
 from app.services.sla_service import get_location_sla_metrics, get_organization_sla_summary
 from app.services.health_score_service import HealthScoreService
 from app.models.location_health_score import LocationHealthScore
+from app.models.microsite import Microsite
 from app.worker import celery
 from app.api.posts import get_redis
 import logging
@@ -47,9 +48,11 @@ def get_locations(
             SyncLog.error_message.label("latest_sync_error"),
             LocationHealthScore.score.label("health_score"),
             LocationHealthScore.label.label("health_score_label"),
+            Microsite.status.label("microsite_status"),
         )
         .outerjoin(SyncLog, SyncLog.id == latest_log_id_sq)
         .outerjoin(LocationHealthScore, LocationHealthScore.location_id == Location.id)
+        .outerjoin(Microsite, Microsite.location_id == Location.id)
         .filter(Location.organization_id == current_user.organization_id)
     )
 
@@ -60,12 +63,13 @@ def get_locations(
     results = query.all()
 
     out = []
-    for location, latest_sync_status, latest_sync_error, health_score, health_score_label in results:
+    for location, latest_sync_status, latest_sync_error, health_score, health_score_label, microsite_status in results:
         loc_out = LocationOut.model_validate(location)
         loc_out.latest_sync_status = latest_sync_status
         loc_out.latest_sync_error = latest_sync_error
         loc_out.health_score = health_score
         loc_out.health_score_label = health_score_label
+        loc_out.microsite_status = microsite_status
         out.append(loc_out)
     return out
 

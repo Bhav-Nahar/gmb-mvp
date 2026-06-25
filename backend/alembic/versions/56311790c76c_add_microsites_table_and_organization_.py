@@ -27,7 +27,7 @@ def upgrade() -> None:
     sa.Column('status', sa.String(), nullable=False),
     sa.Column('published_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('unpublished_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('view_count', sa.Integer(), nullable=False),
+    sa.Column('view_count', sa.Integer(), nullable=False, server_default=sa.text('0')),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['location_id'], ['locations.id'], ondelete='CASCADE'),

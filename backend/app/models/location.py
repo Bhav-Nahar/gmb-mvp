@@ -61,6 +61,8 @@ class Location(Base):
     attention_reason = Column(Text, nullable=True)
     attention_updated_at = Column(DateTime(timezone=True), nullable=True)
     sla_tracking_started_at = Column(DateTime(timezone=True), nullable=True)
+    # Optional extra recipient for microsite lead-form notifications (besides org admins).
+    lead_email = Column(String, nullable=True)
     
     # State tracking
     is_verified = Column(Boolean, nullable=True)
