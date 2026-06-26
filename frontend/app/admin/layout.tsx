@@ -16,6 +16,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter()
   const pathname = usePathname()
   const onAudit = !!pathname?.startsWith('/admin/audit')
+  const onHolidays = !!pathname?.startsWith('/admin/holidays')
 
   useEffect(() => {
     if (loading) return
@@ -46,8 +47,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <span className="text-sm font-bold uppercase tracking-wider">Super Admin</span>
           </div>
           <nav className="hidden sm:flex items-center gap-1">
-            <Link href="/admin" className={navCls(!onAudit)}>Accounts</Link>
+            <Link href="/admin" className={navCls(!onAudit && !onHolidays)}>Accounts</Link>
             <Link href="/admin/audit" className={navCls(onAudit)}>Audit log</Link>
+            <Link href="/admin/holidays" className={navCls(onHolidays)}>Holidays</Link>
           </nav>
         </div>
         <div className="flex items-center gap-4">

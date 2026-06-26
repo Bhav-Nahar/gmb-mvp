@@ -44,6 +44,7 @@ from app.models.saved_comparison_view import SavedComparisonView
 from app.models.microsite import Microsite
 from app.models.lead import Lead
 from app.models.push_subscription import PushSubscription
+from app.models.holiday import Holiday
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location",
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
@@ -54,6 +55,7 @@ __all__ = [
     "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm",
     "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan", "LeaderboardSnapshot",
     "IneligibilityReason", "Region", "RegionLocation", "CustomGroup", "CustomGroupLocation",
-    "GroupDailyInsight", "SavedComparisonView", "Microsite", "Lead", "PushSubscription"
+    "GroupDailyInsight", "SavedComparisonView", "Microsite", "Lead", "PushSubscription",
+    "Holiday"
 ]
 

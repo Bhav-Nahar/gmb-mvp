@@ -19,7 +19,10 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCw,
+  List,
+  CalendarDays,
 } from 'lucide-react'
+import PostsCalendar from '@/components/posts/PostsCalendar'
 
 interface Location {
   id: number
@@ -179,6 +182,8 @@ export default function PostsPage(props: any) {
   const [locations, setLocations] = useState<Location[]>([])
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loadError, setLoadError] = useState('')
+  const [view, setView] = useState<'list' | 'calendar'>('list')
+  const [holidays, setHolidays] = useState<any[]>([])
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -399,8 +404,16 @@ export default function PostsPage(props: any) {
     loadLocations()
     loadCampaigns()
     return () => { isMounted.current = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Fetch holiday overlays once, the first time the calendar view is opened.
+  useEffect(() => {
+    if (view !== 'calendar' || holidays.length > 0) return
+    api.get<any>('/holidays')
+      .then(d => setHolidays(d.holidays || []))
+      .catch(() => {/* overlay is non-critical; calendar still works */})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view])
 
   useEffect(() => {
     if (locationId) setSelectedLocationIds([locationId])
@@ -534,6 +547,28 @@ export default function PostsPage(props: any) {
   }
 
   const openModal = () => { resetForm(); setErrorAlert(''); setIsModalOpen(true) }
+
+  // Calendar "+" on a day: open the composer prefilled to schedule on that date.
+  const openModalForDate = (isoDate: string) => {
+    resetForm()
+    setErrorAlert('')
+    setPublishMode('SCHEDULED')
+    setScheduledDate(isoDate)
+    setScheduledTime('09:00')
+    setIsModalOpen(true)
+  }
+
+  // Click a holiday chip: open the composer prefilled with a festive draft on that day.
+  const openModalForHoliday = (h: { name: string; date: string }) => {
+    resetForm()
+    setErrorAlert('')
+    setCampaignName(`${h.name} ${h.date.slice(0, 4)}`)
+    setSummary(`🎉 Happy ${h.name}! Wishing all our customers a joyful celebration. Visit us today and make the day special. #${h.name.replace(/[^a-zA-Z0-9]/g, '')}`)
+    setPublishMode('SCHEDULED')
+    setScheduledDate(h.date)
+    setScheduledTime('09:00')
+    setIsModalOpen(true)
+  }
 
   const handleCreateCampaign = async () => {
     if (!campaignName || !summary || selectedLocationIds.length === 0) {
@@ -674,6 +709,31 @@ export default function PostsPage(props: any) {
           </div>
         )}
 
+        {/* View toggle: list (campaign monitor) vs calendar (schedule + holidays) */}
+        <div className="inline-flex items-center gap-1 bg-muted/40 p-1 rounded-lg">
+          <button
+            onClick={() => setView('list')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer ${view === 'list' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <List className="h-3.5 w-3.5" /> List
+          </button>
+          <button
+            onClick={() => setView('calendar')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer ${view === 'calendar' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <CalendarDays className="h-3.5 w-3.5" /> Calendar
+          </button>
+        </div>
+
+        {view === 'calendar' ? (
+          <PostsCalendar
+            campaigns={campaigns}
+            holidays={holidays}
+            onPickDate={openModalForDate}
+            onPickHoliday={openModalForHoliday}
+            onSelectCampaign={(id) => { setSelectedCampaignId(id); setView('list') }}
+          />
+        ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Campaign list — richer scannable cards */}
           <div className="lg:col-span-1 bg-card shadow-sm border border-border rounded-2xl p-5 h-fit">
@@ -872,6 +932,7 @@ export default function PostsPage(props: any) {
             )}
           </div>
         </div>
+        )}
       </main>
 
       {/* New Campaign — stepper modal with sticky live preview */}
