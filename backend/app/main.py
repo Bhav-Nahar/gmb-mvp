@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
-from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push
+from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays
 from app.api.endpoints import comparison
 from app.api.deps import check_csrf, check_billing_lock
 from fastapi.staticfiles import StaticFiles
@@ -123,6 +123,7 @@ app.include_router(dynamic_attributes.router, prefix="/api/v1/locations", tags=[
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(reviews.router, prefix="/api/v1/reviews", tags=["Reviews"])
 app.include_router(posts.router, prefix="/api/v1/posts", tags=["Posts"])
+app.include_router(holidays.router, prefix="/api/v1/holidays", tags=["Holidays"])
 app.include_router(media.router, prefix="/api/v1/media", tags=["Media"])
 app.include_router(listing_edits.router, prefix="/api/v1", tags=["Listing Edits"])
 app.include_router(descriptions.router, prefix="/api/v1", tags=["Descriptions"])

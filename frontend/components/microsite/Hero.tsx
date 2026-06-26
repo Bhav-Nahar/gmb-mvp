@@ -41,7 +41,7 @@ export default function Hero({ name, category, rating, totalReviews, logo, cover
           />
         </div>
 
-        <h1 className="animate-fade-up text-5xl sm:text-7xl font-extrabold tracking-tight drop-shadow-2xl max-w-4xl text-balance leading-tight" style={{ animationDelay: '200ms', opacity: 0 }}>
+        <h1 className="animate-fade-up text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight drop-shadow-2xl max-w-4xl text-balance leading-tight" style={{ animationDelay: '200ms', opacity: 0 }}>
           {name}
         </h1>
 
@@ -68,21 +68,26 @@ export default function Hero({ name, category, rating, totalReviews, logo, cover
         )}
 
         {/* Primary CTAs */}
-        <div className="animate-fade-up mt-12 flex flex-wrap justify-center gap-4 w-full sm:w-auto" style={{ animationDelay: '500ms', opacity: 0 }}>
+        <div className="animate-fade-up mt-12 flex flex-col sm:flex-row flex-wrap justify-center gap-3 sm:gap-4 w-full sm:w-auto" style={{ animationDelay: '500ms', opacity: 0 }}>
+          {whatsapp ? (
+            <a href={whatsapp} target="_blank" rel="noopener noreferrer" className="w-full sm:w-auto inline-flex justify-center items-center gap-2 bg-[#25D366] text-white font-bold px-4 sm:px-8 py-3.5 sm:py-4 rounded-full shadow-[0_8px_30px_rgba(37,211,102,0.3)] hover:scale-105 transition-transform duration-300">
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.15-1.77-.87-2.04-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.95 1.17-.17.2-.35.22-.65.07-.3-.15-1.26-.46-2.4-1.48-.9-.8-1.5-1.78-1.67-2.08-.17-.3-.02-.46.13-.6.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.62-.92-2.22-.24-.58-.49-.5-.67-.5-.17-.01-.37-.01-.57-.01-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.48 0 1.46 1.07 2.88 1.22 3.08.15.2 2.1 3.2 5.08 4.49.71.3 1.26.49 1.7.63.71.22 1.36.19 1.87.12.57-.09 1.77-.72 2.02-1.42.25-.7.25-1.3.17-1.42-.07-.13-.27-.2-.57-.35zM12 2a10 10 0 00-8.5 15.3L2 22l4.8-1.5A10 10 0 1012 2z"/></svg>
+              WhatsApp
+            </a>
+          ) : (
+            <a href="#enquiry" className="w-full sm:w-auto inline-flex justify-center items-center gap-2 bg-indigo-600 text-white font-bold px-4 sm:px-8 py-3.5 sm:py-4 rounded-full shadow-[0_8px_30px_rgba(79,70,229,0.3)] hover:scale-105 hover:bg-indigo-700 transition-all duration-300">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+              Enquiry
+            </a>
+          )}
           {phone && (
-            <a href={`tel:${phone}`} className="flex-1 sm:flex-none inline-flex justify-center items-center gap-2 bg-white text-slate-900 font-bold px-8 py-4 rounded-full shadow-[0_8px_30px_rgb(255,255,255,0.12)] hover:scale-105 transition-transform duration-300">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>
+            <a href={`tel:${phone}`} className="w-full sm:w-auto inline-flex justify-center items-center gap-2 bg-white text-slate-900 font-bold px-4 sm:px-8 py-3.5 sm:py-4 rounded-full shadow-[0_8px_30px_rgb(255,255,255,0.12)] hover:scale-105 transition-transform duration-300">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>
               Call Now
             </a>
           )}
-          {whatsapp && (
-            <a href={whatsapp} target="_blank" rel="noopener noreferrer" className="flex-1 sm:flex-none inline-flex justify-center items-center gap-2 bg-[#25D366] text-white font-bold px-8 py-4 rounded-full shadow-[0_8px_30px_rgba(37,211,102,0.3)] hover:scale-105 transition-transform duration-300">
-              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.15-1.77-.87-2.04-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.95 1.17-.17.2-.35.22-.65.07-.3-.15-1.26-.46-2.4-1.48-.9-.8-1.5-1.78-1.67-2.08-.17-.3-.02-.46.13-.6.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.62-.92-2.22-.24-.58-.49-.5-.67-.5-.17-.01-.37-.01-.57-.01-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.48 0 1.46 1.07 2.88 1.22 3.08.15.2 2.1 3.2 5.08 4.49.71.3 1.26.49 1.7.63.71.22 1.36.19 1.87.12.57-.09 1.77-.72 2.02-1.42.25-.7.25-1.3.17-1.42-.07-.13-.27-.2-.57-.35zM12 2a10 10 0 00-8.5 15.3L2 22l4.8-1.5A10 10 0 1012 2z"/></svg>
-              WhatsApp
-            </a>
-          )}
           {mapLink && (
-            <a href={mapLink} target="_blank" rel="noopener noreferrer" className="flex-1 sm:flex-none inline-flex justify-center items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 text-white font-bold px-8 py-4 rounded-full hover:bg-white/20 hover:scale-105 transition-all duration-300">
+            <a href={mapLink} target="_blank" rel="noopener noreferrer" className="w-full sm:w-auto inline-flex justify-center items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 text-white font-bold px-4 sm:px-8 py-3.5 sm:py-4 rounded-full hover:bg-white/20 hover:scale-105 transition-all duration-300">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
               Directions
             </a>

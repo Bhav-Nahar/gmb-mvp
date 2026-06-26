@@ -71,7 +71,7 @@ export default function ServicesSection({ serviceItems }: ServicesSectionProps) 
   if (parsedServices.length === 0) return null
 
   return (
-    <section id="services" className="py-24 px-6 sm:px-12 bg-background scroll-mt-20 relative">
+    <section id="services" className="py-24 px-6 sm:px-12 bg-background scroll-mt-20 relative overflow-hidden">
       {/* Decorative background element */}
       <div className="absolute top-0 right-0 -mt-20 -mr-20 w-96 h-96 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       
@@ -80,7 +80,7 @@ export default function ServicesSection({ serviceItems }: ServicesSectionProps) 
           <span className="text-sm font-bold tracking-[0.2em] text-primary uppercase">
             Our Offerings
           </span>
-          <h2 className="text-4xl sm:text-5xl font-black text-foreground tracking-tight mt-4 mb-6">
+          <h2 className="text-3xl sm:text-4xl md:text-5xl font-black text-foreground tracking-tight mt-4 mb-6 leading-tight text-balance">
             Services & Solutions
           </h2>
           <p className="text-muted-foreground max-w-2xl mx-auto text-lg leading-relaxed">
