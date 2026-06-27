@@ -88,6 +88,13 @@ def trigger_bulk_microsite_revalidation(location_ids: List[int]) -> None:
         r = _get_redis()
         slugs = []
         for ms in microsites:
+            # Drop the backend response cache (api/public_microsites.py) for every
+            # affected microsite regardless of the debounce below — a stale cache
+            # after an unpublish is a correctness issue, and deletion is cheap.
+            try:
+                r.delete(f"public_microsite:{ms.location_slug}")
+            except Exception:
+                pass
             # 60-second debounce lock to prevent double-triggering for the same location
             # (e.g., when review sync and photo sync finish back-to-back). 60s is long
             # enough to absorb rapid successive background task completions, but short

@@ -6,10 +6,24 @@ from app.api.deps import admin_required, staff_required, require_location_access
 from app.models.user import User
 from app.models.location import Location
 from app.models.microsite import Microsite
+from app.models.organization import Organization
 from app.schemas.microsite import MicrositeResponse
 from app.services import microsite_service
+from app.core import plan_config
 
 router = APIRouter()
+
+
+def _require_microsite_feature(db: Session, organization_id: int) -> None:
+    """Microsites are a Pro-tier feature. Gates the value-creating actions
+    (generate/publish). GET and unpublish stay open so the dashboard can show an
+    upgrade prompt and a downgraded org can still take an existing site offline."""
+    org = db.query(Organization).filter(Organization.id == organization_id).first()
+    if not org or not plan_config.plan_has_feature(org.plan_tier, "microsite"):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Microsites are available on the Pro plan. Upgrade to unlock them.",
+        )
 
 def _get_location_or_404(db: Session, location_id: int, organization_id: int) -> Location:
     """Helper to verify location exists and belongs to the requesting org."""
@@ -41,6 +55,7 @@ def generate_microsite(
     Generate or retrieve a draft microsite for a location.
     Idempotent.
     """
+    _require_microsite_feature(db, current_user.organization_id)
     location = _get_location_or_404(db, location_id, current_user.organization_id)
     return microsite_service.generate_microsite(db, current_user.organization, location)
 
@@ -53,6 +68,7 @@ def publish_microsite(
     """
     Publish a microsite, making it publicly accessible.
     """
+    _require_microsite_feature(db, current_user.organization_id)
     # Defensive check: ensure location exists
     _get_location_or_404(db, location_id, current_user.organization_id)
     microsite = _get_microsite_or_404(db, location_id, current_user.organization_id)

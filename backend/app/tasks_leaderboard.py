@@ -56,6 +56,11 @@ def generate_monthly_leaderboard_snapshots_task(organization_id: int = None, per
                 LeaderboardService.generate_snapshots_for_period(
                     db, org.id, period_label, period_start, period_end, force=force
                 )
+                # Invalidate the read-endpoint cache for this org (see api/leaderboard.py).
+                try:
+                    r.incr(f"leaderboard:gen:{org.id}")
+                except Exception:
+                    pass
                 results["success"] += 1
             except Exception as e:
                 logger.error(f"Failed to generate leaderboard snapshot for org {org.id}: {e}")

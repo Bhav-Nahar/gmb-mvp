@@ -2,11 +2,11 @@
 
 For each point of an N×N grid around a location we run the keyword as if a searcher
 were standing there, then read the business's Maps rank. One vendor (DataForSEO),
-one endpoint (serp/google/maps/live/advanced), called once per grid point.
+one endpoint family (serp/google/maps).
 
-Cost lever lives here: we use the *live* endpoint (1 task/request) with a small
-concurrency cap. ponytail: live is the simplest (no POST+poll). To cut cost at scale,
-switch to the standard/task endpoint (up to 100 points per POST, cheaper per point).
+Cost lever: we use the *queued task* endpoints (task_post up to 100 points per POST,
+then tasks_ready + task_get), which are markedly cheaper per point than the live
+endpoint. The trade is latency — results aren't instant, so we poll until ready.
 """
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ LOCAL_GRID_SCAN_ACTION = "run_local_grid_scan"  # must be in plan_config.USER_AI
 _ZOOM = 13      # Maps zoom for each point's search
 _DEPTH = 20     # how many results to pull per point (rank window: top 20)
 _MILES_PER_DEG_LAT = 69.0
+_TASK_POLL_INTERVAL = 5.0   # seconds between tasks_ready polls
+_TASK_MAX_WAIT = 540.0      # give up waiting on queued tasks (under the 600s scan lock)
 
 
 def scan_price(grid_size: int) -> int:
@@ -102,27 +104,74 @@ def parse_cell(items: list[dict], business_name: str, business_place_id: str | N
     return rank, top_competitor, top_results, business_coords
 
 
-async def _fetch_cell(client: httpx.AsyncClient, base: str, keyword: str,
-                      lat: float, lng: float, language_code: str) -> list[dict]:
-    payload = [{
-        "keyword": keyword,
-        "location_coordinate": f"{lat},{lng},{_ZOOM}",
-        "language_code": language_code,
-        "device": "mobile",
-        "os": "android",
-        "depth": _DEPTH,
-    }]
-    resp = await client.post(f"{base}/v3/serp/google/maps/live/advanced", json=payload)
+async def _post_tasks(client, base: str, keyword: str, points: list[dict],
+                      language_code: str) -> dict[str, dict]:
+    """Submit every grid point as a queued task (cheaper than live). Up to 100
+    points per POST. Returns a mapping of DataForSEO task id -> grid point."""
+    tag_to_point = {f"{p['row']}_{p['col']}": p for p in points}
+    id_to_point: dict[str, dict] = {}
+    for i in range(0, len(points), 100):
+        chunk = points[i:i + 100]
+        payload = [{
+            "keyword": keyword,
+            "location_coordinate": f"{p['lat']},{p['lng']},{_ZOOM}",
+            "language_code": language_code,
+            "device": "mobile",
+            "os": "android",
+            "depth": _DEPTH,
+            "tag": f"{p['row']}_{p['col']}",
+        } for p in chunk]
+        resp = await client.post(f"{base}/v3/serp/google/maps/task_post", json=payload)
+        resp.raise_for_status()
+        for task in (resp.json().get("tasks") or []):
+            # 20100 = "Task Created", 20000 = OK. Anything else is a hard failure.
+            if task.get("status_code") not in (20000, 20100):
+                raise RuntimeError(f"DataForSEO task_post error {task.get('status_code')}: {task.get('status_message')}")
+            tag = (task.get("data") or {}).get("tag")
+            point = tag_to_point.get(tag)
+            if task.get("id") and point is not None:
+                id_to_point[task["id"]] = point
+    return id_to_point
+
+
+async def _get_task_items(client, base: str, task_id: str) -> list[dict]:
+    """Fetch one completed task's result rows."""
+    resp = await client.get(f"{base}/v3/serp/google/maps/task_get/advanced/{task_id}")
     resp.raise_for_status()
-    data = resp.json()
-    tasks = data.get("tasks") or []
-    if not tasks:
-        return []
-    task = tasks[0]
+    tasks = resp.json().get("tasks") or []
+    task = tasks[0] if tasks else {}
     if task.get("status_code") != 20000:
-        raise RuntimeError(f"DataForSEO task error {task.get('status_code')}: {task.get('status_message')}")
+        return []
     result = task.get("result") or []
     return (result[0].get("items") if result and result[0] else None) or []
+
+
+async def _collect_tasks(client, base: str, id_to_point: dict[str, dict]) -> list[tuple[dict, list[dict]]]:
+    """Poll tasks_ready until all our queued tasks complete, pulling each result as
+    it becomes ready. If any task is still pending at the deadline we raise, so the
+    scan fails cleanly (and is not charged) rather than silently returning a grid
+    full of false 'not found' cells."""
+    pending = dict(id_to_point)
+    out: list[tuple[dict, list[dict]]] = []
+    waited = 0.0
+    while pending and waited < _TASK_MAX_WAIT:
+        await asyncio.sleep(_TASK_POLL_INTERVAL)
+        waited += _TASK_POLL_INTERVAL
+        resp = await client.get(f"{base}/v3/serp/google/maps/tasks_ready")
+        resp.raise_for_status()
+        ready_ids = {
+            r.get("id")
+            for t in (resp.json().get("tasks") or [])
+            for r in (t.get("result") or [])
+            if r.get("id")
+        }
+        for tid in [t for t in pending if t in ready_ids]:
+            items = await _get_task_items(client, base, tid)
+            out.append((pending.pop(tid), items))
+    if pending:
+        raise RuntimeError(f"DataForSEO: {len(pending)}/{len(id_to_point)} grid tasks "
+                           f"did not complete within {_TASK_MAX_WAIT:.0f}s")
+    return out
 
 
 async def run_scan(*, lat: float, lng: float, keyword: str, grid_size: int,
@@ -136,17 +185,18 @@ async def run_scan(*, lat: float, lng: float, keyword: str, grid_size: int,
 
     points = build_grid(lat, lng, grid_size, radius_miles)
     base = settings.DATAFORSEO_BASE_URL.rstrip("/")
-    sem = asyncio.Semaphore(settings.LOCAL_RANK_MAX_CONCURRENCY)
 
     async with httpx.AsyncClient(timeout=90.0, auth=(login, password)) as client:
-        async def run_point(p: dict):
-            async with sem:
-                items = await _fetch_cell(client, base, keyword, p["lat"], p["lng"], language_code)
-            rank, top, top_results, bcoords = parse_cell(items, business_name, business_place_id)
-            return {**p, "rank": rank, "top_competitor": top, "top_results": top_results}, bcoords
+        id_to_point = await _post_tasks(client, base, keyword, points, language_code)
+        collected = await _collect_tasks(client, base, id_to_point)
 
-        results = await asyncio.gather(*[run_point(p) for p in points])
+    results = []
+    for p, items in collected:
+        rank, top, top_results, bcoords = parse_cell(items, business_name, business_place_id)
+        results.append(({**p, "rank": rank, "top_competitor": top, "top_results": top_results}, bcoords))
 
+    # restore row-major order (collection order follows task readiness, not the grid)
+    results.sort(key=lambda r: (r[0]["row"], r[0]["col"]))
     cells = [cell for cell, _ in results]
     business_coords = next((bc for _, bc in results if bc), None)
     ranks = [c["rank"] for c in cells if c["rank"]]

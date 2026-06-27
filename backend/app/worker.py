@@ -67,9 +67,13 @@ celery.conf.beat_schedule = {
                              # previously provided by the (now 12h) location sync, so
                              # trial/grace/expiry transitions are NOT delayed.
     },
-    "check-scheduled-posts-every-minute": {
+    "check-scheduled-posts": {
         "task": "app.tasks.check_scheduled_posts_task",
-        "schedule": 60.0, # Every 60 seconds
+        "schedule": 180.0, # Every 3 minutes. The task publishes everything with
+                           # scheduled_at <= now (oldest-first, batched), so cadence
+                           # only sets max publish lag, not correctness. 3 min (vs 60s)
+                           # cuts this — the most frequent beat job — ~3x in Redis
+                           # commands + DB checks, at up to ~3 min publish delay.
     },
     "archive-activity-logs-daily": {
         "task": "app.tasks.archive_old_activity_logs_task",
