@@ -14,6 +14,8 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     token_version = Column(Integer, default=1, nullable=False)
     viewer_scope = Column(String, default="assigned", nullable=True) # "assigned" or "organization"
+    weekly_report_email = Column(Boolean, default=True, nullable=False) # opt-out of the weekly report email
+    lead_email_notifications = Column(Boolean, default=True, nullable=False) # opt-out of per-lead email notifications
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

@@ -51,6 +51,7 @@ if settings.REDIS_URL.startswith("rediss://"):
 celery.autodiscover_tasks(["app"])
 import app.tasks_leaderboard # Explicitly import to register tasks
 import app.tasks_comparison # Explicitly import to register tasks
+import app.tasks_reports # Explicitly import to register tasks
 
 # Periodic Celery Beat Scheduling
 celery.conf.beat_schedule = {
@@ -108,6 +109,12 @@ celery.conf.beat_schedule = {
     "aggregate-comparison-insights-daily": {
         "task": "app.tasks_comparison.aggregate_comparison_insights_task",
         "schedule": crontab(hour=2, minute=0), # Daily at 2AM UTC, after sync-insights-daily
+    },
+    "send-weekly-reports": {
+        "task": "app.tasks_reports.send_weekly_reports_task",
+        "schedule": crontab(day_of_week="mon", hour=4, minute=0), # Mondays 4AM UTC —
+                            # after the daily insights (1AM) + comparison (2AM) jobs have
+                            # populated last week's metrics. Reports the prior 7 days.
     }
 }
 

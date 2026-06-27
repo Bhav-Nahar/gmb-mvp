@@ -247,13 +247,29 @@ def get_public_microsite(location_slug: str, db: Session = Depends(get_db)):
 
 
 def _notify_recipients(db: Session, location: Location) -> list:
-    """Org Owner/Admin emails + the optional per-location lead_email."""
-    emails = [
-        u.email for u in db.query(User).filter(
-            User.organization_id == location.organization_id,
-            User.role.in_(["Owner", "Admin"]),
-        ).all() if u.email
-    ]
+    """Lead-email recipients (all respecting the per-user opt-out):
+      • org Owners/Admins (org-wide access), plus
+      • Regional/Store Managers assigned to THIS location, plus
+      • the optional per-location lead_email override.
+    """
+    from app.models.user_location_access import UserLocationAccess
+
+    org_wide = db.query(User).filter(
+        User.organization_id == location.organization_id,
+        User.role.in_(["Owner", "Admin"]),
+        User.lead_email_notifications == True,  # noqa: E712 — respect per-user opt-out
+    )
+    # Managers (Regional/Store) only for the location the lead came in on.
+    assigned = db.query(User).join(
+        UserLocationAccess, UserLocationAccess.user_id == User.id
+    ).filter(
+        User.organization_id == location.organization_id,
+        User.role.in_(["Regional Manager", "Store Manager"]),
+        User.lead_email_notifications == True,  # noqa: E712
+        UserLocationAccess.location_id == location.id,
+    )
+    emails = [u.email for u in org_wide.all() if u.email]
+    emails += [u.email for u in assigned.all() if u.email]
     if location.lead_email:
         emails.append(location.lead_email)
     # de-dupe, preserve order

@@ -629,6 +629,12 @@ export default function HomeClient() {
         <Reveal className="mx-auto max-w-3xl space-y-4 text-center">
           <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Simple pricing that scales with you</h2>
           <p className="text-muted-foreground">Pay only for the locations you manage. Every location includes AI credits. Start with a 7-day free trial, no credit card required.</p>
+          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 pt-2 text-xs font-semibold text-muted-foreground">
+            <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />Cancel anytime</span>
+            <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />No lock-in contracts</span>
+            <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />GST invoice included</span>
+            <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />Setup in minutes</span>
+          </div>
         </Reveal>
 
         <div className="flex items-center justify-center gap-2">
@@ -650,11 +656,12 @@ export default function HomeClient() {
           <div className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-8 shadow-sm">
             <div className="space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Basic</span>
+              <p className="text-xs font-medium text-muted-foreground">Everything you need to manage Google reviews & posts.</p>
               <div className="flex items-baseline gap-1 text-foreground">
                 <span className="text-4xl font-extrabold">{basicQuote ? `₹${Math.round(basicQuote.price_paise / 100).toLocaleString('en-IN')}` : '...'}</span>
                 <span className="text-sm font-semibold text-muted-foreground">/{pricingInterval === 'monthly' ? 'mo' : 'yr'}</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{basicQuote ? `+ ${Math.round(basicQuote.gst_rate * 100)}% GST · ` : ''}for {pricingLocations} {pricingLocations === 1 ? 'location' : 'locations'}</p>
+              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ₹${Math.round(basicQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)).toLocaleString('en-IN')} per location / month · + ${Math.round(basicQuote.gst_rate * 100)}% GST` : ''}</p>
             </div>
             <button onClick={handleContinueWithGoogle} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-border pt-5 text-xs font-semibold text-muted-foreground">
@@ -669,11 +676,12 @@ export default function HomeClient() {
             <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-primary px-3 py-0.5 text-[9px] font-extrabold uppercase tracking-widest text-primary-foreground">Most popular</span>
             <div className="space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
+              <p className="text-xs font-medium text-foreground/70">Rank higher on Maps & turn searches into leads.</p>
               <div className="flex items-baseline gap-1 text-foreground">
                 <span className="text-4xl font-extrabold">{proQuote ? `₹${Math.round(proQuote.price_paise / 100).toLocaleString('en-IN')}` : '...'}</span>
                 <span className="text-sm font-semibold text-muted-foreground">/{pricingInterval === 'monthly' ? 'mo' : 'yr'}</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{proQuote ? `+ ${Math.round(proQuote.gst_rate * 100)}% GST · ` : ''}for {pricingLocations} {pricingLocations === 1 ? 'location' : 'locations'}</p>
+              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ₹${Math.round(proQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)).toLocaleString('en-IN')} per location / month · + ${Math.round(proQuote.gst_rate * 100)}% GST` : ''}</p>
             </div>
             <button onClick={handleContinueWithGoogle} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-primary/20 pt-5 text-xs font-semibold text-foreground">
