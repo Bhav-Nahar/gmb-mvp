@@ -13,6 +13,8 @@ import { useRazorpay } from '@/hooks/useRazorpay';
 import { toast } from 'sonner';
 import { useState } from 'react';
 import { isPaymentVerificationError, PAYMENT_VERIFICATION_FAILED_MSG } from '@/lib/payment';
+import { trackSelectPlan, trackPurchase } from '@/lib/analytics';
+import { useAuth } from '@/hooks/useAuth';
 
 interface UpgradeModalProps {
   open: boolean;
@@ -20,6 +22,7 @@ interface UpgradeModalProps {
 }
 
 export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
+  const { user } = useAuth();
   const { mutateAsync: checkoutSubscription, isPending } = useCheckoutSubscription();
   const { mutateAsync: confirmPayment } = useConfirmPayment();
   const { mutateAsync: unlockLocations, isPending: unlockPending } = useUnlockLocations();
@@ -134,6 +137,14 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
       return;
     }
     setSubmitting(true);
+    const planName = planTier === 'pro' ? 'Pro' : 'Basic';
+    trackSelectPlan({
+      plan_name: planName,
+      paymentTerm,
+      value: baseRupees ?? 0,
+      locations_included: locationCount,
+      user_id: user?.id,
+    });
     try {
       const response = await checkoutSubscription({
         location_count: locationCount,
@@ -157,6 +168,13 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
               razorpay_subscription_id: res.razorpay_subscription_id,
             });
             if (result?.activated) {
+              trackPurchase({
+                transaction_id: res.razorpay_payment_id,
+                plan_name: planName,
+                paymentTerm,
+                value: totalRupees ?? baseRupees ?? 0, // amount actually charged (incl. GST)
+                user_id: user?.id,
+              });
               toast.success('Subscription activated!');
             } else {
               toast.info('Payment received! Confirming activation shortly...');

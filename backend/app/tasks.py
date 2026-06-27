@@ -3600,3 +3600,19 @@ def publish_location_attributes_task(location_id: int) -> dict:
         db.close()
 
 
+
+
+@shared_task(name="app.tasks.fire_purchase_conversion_task")
+def fire_purchase_conversion_task(payment_id: str, amount_paise: int, currency: str,
+                                  email: str = None, attribution: dict = None) -> str:
+    """Send server-side Purchase conversions (Meta CAPI + Google Ads) out-of-band, so
+    the Razorpay webhook never holds the org lock during external HTTP. Best-effort."""
+    from app.services.marketing_service import fire_purchase_conversion
+    fire_purchase_conversion(
+        payment_id=payment_id,
+        amount_paise=amount_paise,
+        currency=currency,
+        email=email,
+        attribution=attribution or {},
+    )
+    return f"conversion dispatched for payment {payment_id}"

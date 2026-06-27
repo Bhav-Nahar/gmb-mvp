@@ -187,6 +187,21 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: str = ""
     RAZORPAY_WEBHOOK_SECRET: str = ""
 
+    # Server-side conversions (fired from the Razorpay webhook). All blank by default —
+    # each integration stays inert until its credentials are provided.
+    # Meta Conversions API
+    META_PIXEL_ID: str = ""
+    META_CAPI_ACCESS_TOKEN: str = ""
+    META_CAPI_API_VERSION: str = "v21.0"
+    # Google Ads offline click-conversion upload
+    GOOGLE_ADS_DEVELOPER_TOKEN: str = ""
+    GOOGLE_ADS_CLIENT_ID: str = ""
+    GOOGLE_ADS_CLIENT_SECRET: str = ""
+    GOOGLE_ADS_REFRESH_TOKEN: str = ""
+    GOOGLE_ADS_CUSTOMER_ID: str = ""          # digits only, no dashes
+    GOOGLE_ADS_LOGIN_CUSTOMER_ID: str = ""    # optional, for manager accounts
+    GOOGLE_ADS_CONVERSION_ACTION_ID: str = ""
+
     @model_validator(mode="after")
     def _validate_razorpay(self) -> "Settings":
         import os

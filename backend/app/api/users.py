@@ -11,7 +11,9 @@ from app.api.deps import (
     team_viewer_required,
     regional_manager_plus,
 )
+from pydantic import BaseModel, Field, ConfigDict
 from app.models.user import User
+from app.models.organization import Organization
 from app.models.oauth_account import OAuthAccount
 from app.models.sync_log import SyncLog
 from app.models.location import Location
@@ -26,6 +28,49 @@ from app.core.authorization import validate_location_access, validate_user_acces
 from app.core.roles import Role, ADMIN_ROLES
 
 router = APIRouter()
+
+class AttributionIn(BaseModel):
+    # Browser sends _fbp/_fbc; accept those aliases but store on plain columns.
+    model_config = ConfigDict(populate_by_name=True)
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    utm_content: str | None = None
+    utm_term: str | None = None
+    gclid: str | None = None
+    gbraid: str | None = None
+    wbraid: str | None = None
+    fbclid: str | None = None
+    fbp: str | None = Field(default=None, alias="_fbp")
+    fbc: str | None = Field(default=None, alias="_fbc")
+    landing_page: str | None = None
+    referrer: str | None = None
+
+
+@router.post("/me/attribution", status_code=status.HTTP_204_NO_CONTENT)
+def save_attribution(
+    body: AttributionIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Persist first-touch marketing attribution on the org. First-touch wins: only
+    columns that are still NULL are written, so a later visit can't overwrite the
+    original source. Used later for server-side Meta/Google conversions."""
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    wrote = False
+    for col, val in body.model_dump().items():  # field names already match columns
+        if val and getattr(org, col, None) is None:
+            setattr(org, col, val)
+            wrote = True
+    if wrote and org.attribution_captured_at is None:
+        org.attribution_captured_at = datetime.now(timezone.utc)
+    if wrote:
+        db.commit()
+    return None
+
 
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):

@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { RefreshCw, AlertTriangle, ArrowRight } from 'lucide-react'
-import { api } from '@/lib/api'
+import { beginGoogleLogin } from '@/lib/oauth'
 
 function LoginContent() {
   const searchParams = useSearchParams()
@@ -39,14 +39,7 @@ function LoginContent() {
     setError('')
     setLoading(true)
     try {
-      // Trigger Google authorize URL fetch
-      const response: any = await api.get('/auth/google/login')
-      if (response && response.url) {
-        // Redirect browser to Google Consent Page
-        window.location.href = response.url
-      } else {
-        throw new Error('Failed to retrieve authorization URL')
-      }
+      await beginGoogleLogin('login_page')
     } catch (err: any) {
       setError(err.message || 'Failed to initiate Google Authentication flow.')
       setLoading(false)
