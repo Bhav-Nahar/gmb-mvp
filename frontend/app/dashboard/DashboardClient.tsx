@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { useBillingStatus } from '@/hooks/useBilling'
 import { api } from '@/lib/api'
+import { trackTrialStart } from '@/lib/analytics'
 import {
   RefreshCw,
   AlertTriangle,
@@ -197,6 +198,7 @@ function DashboardContent() {
 
   // Refs for interval tracking to prevent memory leaks
   const onboardingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const trialStartFiredRef = useRef(false)
   const locationPollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Parse URL params (onboarding flag, success/error alerts). Cheap & idempotent,
@@ -278,6 +280,18 @@ function DashboardContent() {
           (log.status === 'Success' || log.status === 'Failed')
         )
         const hasFinished = !!terminalLog
+
+        // First GBP sync succeeded -> fire trial_start once, now that we have locations.
+        // business_category = most common primary_category (blank if none came back).
+        if (terminalLog?.status === 'Success' && !trialStartFiredRef.current && user?.id) {
+          trialStartFiredRef.current = true
+          const counts = new Map<string, number>()
+          for (const l of locationsData) {
+            if (l.primary_category) counts.set(l.primary_category, (counts.get(l.primary_category) || 0) + 1)
+          }
+          const business_category = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0]
+          trackTrialStart({ user_id: user.id, locationsCount: locationsData.length, business_category })
+        }
 
         // If succeeded or failed, or max poll duration (30 seconds) reached, resolve onboarding overlay
         if (hasFinished || pollCount >= 15) {

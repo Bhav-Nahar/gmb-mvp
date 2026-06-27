@@ -13,6 +13,7 @@ import { BillingSkeleton } from '@/components/billing/BillingSkeletons';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { UpgradeModal } from '@/components/modals/UpgradeModal';
+import { trackBeginCheckout } from '@/lib/analytics';
 import { TopUpModal } from '@/components/modals/TopUpModal';
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
@@ -317,7 +318,7 @@ export default function BillingPage() {
             <Button variant="outline" className="w-full h-11 sm:w-auto sm:h-8" onClick={() => setShowTopUpModal(true)}>
               Buy Credits
             </Button>
-            <Button className="w-full h-11 sm:w-auto sm:h-8" onClick={() => setShowUpgradeModal(true)}>Upgrade Plan</Button>
+            <Button className="w-full h-11 sm:w-auto sm:h-8" onClick={() => { trackBeginCheckout({ user_id: user?.id }); setShowUpgradeModal(true); }}>Upgrade Plan</Button>
           </div>
         </div>
       </div>

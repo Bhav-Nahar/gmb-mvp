@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { RefreshCw, CheckCircle2 } from 'lucide-react'
 import { api, storeCsrfToken } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
+import { trackSignUpStart } from '@/lib/analytics'
+import { getAttribution } from '@/lib/attribution'
 
 function LoginSuccessContent() {
   const router = useRouter()
@@ -34,7 +36,22 @@ function LoginSuccessContent() {
         }
         await refresh()
 
+        // Hand the browser's first-touch attribution to the backend so it's stamped on
+        // the org (first-touch wins server-side) and available for Meta/Google conversions.
+        // Best-effort: never block the dashboard redirect on this.
+        try {
+          const attribution = getAttribution()
+          if (Object.keys(attribution).length > 0) {
+            await api.post('/users/me/attribution', attribution)
+          }
+        } catch (e) {
+          console.warn('attribution post failed', e)
+        }
+
         const isOnboarding = onboarding === 'true'
+        // New user just completed OAuth -> the real signup. Fires once (consumes
+        // the stored cta_location); returning users don't trigger it.
+        if (isOnboarding) trackSignUpStart()
         setStatusMessage(isOnboarding ? 'Onboarding workspace...' : 'Loading your dashboard...')
         // Brief delay only for new-user onboarding; existing users redirect immediately
         setTimeout(() => {

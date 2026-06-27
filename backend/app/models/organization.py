@@ -44,6 +44,24 @@ class Organization(Base):
     paid_location_quota = Column(Integer, nullable=True)
     remandate_due_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Marketing attribution, captured first-touch from the browser at signup and used
+    # for server-side conversions (Meta CAPI / Google Ads). First-touch wins: a column
+    # is only written if currently NULL (see /users/me/attribution).
+    utm_source = Column(String, nullable=True)
+    utm_medium = Column(String, nullable=True)
+    utm_campaign = Column(String, nullable=True)
+    utm_content = Column(String, nullable=True)
+    utm_term = Column(String, nullable=True)
+    gclid = Column(String, nullable=True)
+    gbraid = Column(String, nullable=True)
+    wbraid = Column(String, nullable=True)
+    fbclid = Column(String, nullable=True)
+    fbp = Column(String, nullable=True)
+    fbc = Column(String, nullable=True)
+    landing_page = Column(String, nullable=True)
+    referrer = Column(String, nullable=True)
+    attribution_captured_at = Column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         Index("idx_org_subscription_status_ends_at", "subscription_status", "subscription_ends_at"),
     )

@@ -264,6 +264,37 @@ class WebhookService:
             invoice_url=(invoice or {}).get("short_url"),
         ))
 
+        # First paid charge = acquisition -> fire server-side ad conversions (Meta CAPI +
+        # Google Ads). Renewals are excluded so we don't inflate ad conversions. Enqueued
+        # to Celery so external HTTP never runs while we hold the org row lock; best-effort.
+        if not is_renewal:
+            try:
+                from app.models.user import User
+                owner = (
+                    db.query(User)
+                    .filter(User.organization_id == org.id)
+                    .order_by(User.id.asc())
+                    .first()
+                )
+                attribution = {
+                    k: getattr(org, k) for k in
+                    ("gclid", "gbraid", "wbraid", "fbclid", "fbp", "fbc", "landing_page")
+                    if getattr(org, k, None)
+                }
+                from app.worker import celery as celery_app
+                celery_app.send_task(
+                    "app.tasks.fire_purchase_conversion_task",
+                    kwargs={
+                        "payment_id": payment_id,
+                        "amount_paise": payment.get("amount", 0),
+                        "currency": payment.get("currency", "INR"),
+                        "email": owner.email if owner else None,
+                        "attribution": attribution,
+                    },
+                )
+            except Exception as e:
+                logger.error("Failed to enqueue purchase conversion for org %s: %s", org.id, e)
+
     @staticmethod
     def _is_current_subscription(org: Organization, subscription: Dict[str, Any]) -> bool:
         """Whether this subscription event targets the org's CURRENT mandate. Lifecycle

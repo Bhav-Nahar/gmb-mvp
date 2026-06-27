@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
+import { beginGoogleLogin } from '@/lib/oauth'
+import type { CtaLocation } from '@/lib/analytics'
 import {
   RefreshCw,
   ArrowRight,
@@ -326,16 +328,11 @@ export default function HomeClient() {
     }
   }, [user, authLoading, router])
 
-  const handleContinueWithGoogle = async () => {
+  const handleContinueWithGoogle = async (ctaLocation: CtaLocation = 'header') => {
     setError('')
     setLoading(true)
     try {
-      const response: any = await api.get('/auth/google/login')
-      if (response && response.url) {
-        window.location.href = response.url
-      } else {
-        throw new Error('Failed to retrieve authorization URL')
-      }
+      await beginGoogleLogin(ctaLocation)
     } catch (err: any) {
       setError(err.message || 'Failed to initiate Google Authentication flow.')
       setLoading(false)
@@ -377,10 +374,10 @@ export default function HomeClient() {
           </nav>
 
           <div className="hidden items-center gap-4 md:flex">
-            <button onClick={handleContinueWithGoogle} disabled={loading} className="text-xs font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50">
+            <button onClick={() => handleContinueWithGoogle('navbar')} disabled={loading} className="text-xs font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50">
               Login
             </button>
-            <button onClick={handleContinueWithGoogle} disabled={loading} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:opacity-50">
+            <button onClick={() => handleContinueWithGoogle('navbar')} disabled={loading} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:opacity-50">
               {loading ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" /> : <><GoogleIcon className="h-4 w-4" /> Continue with Google</>}
             </button>
           </div>
@@ -400,7 +397,7 @@ export default function HomeClient() {
                 {label}
               </button>
             ))}
-            <button onClick={handleContinueWithGoogle} disabled={loading} className="mt-4 flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-950 disabled:opacity-50">
+            <button onClick={() => handleContinueWithGoogle('mobile_menu')} disabled={loading} className="mt-4 flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-950 disabled:opacity-50">
               {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> Continue with Google</>}
             </button>
           </div>
@@ -429,7 +426,7 @@ export default function HomeClient() {
           </Reveal>
           <Reveal delay={240}>
             <div className="flex flex-col items-center gap-4 pt-2 sm:flex-row lg:justify-start">
-              <button onClick={handleContinueWithGoogle} disabled={loading} className="flex w-full min-w-[220px] items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50 sm:w-auto">
+              <button onClick={() => handleContinueWithGoogle('hero')} disabled={loading} className="flex w-full min-w-[220px] items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50 sm:w-auto">
                 {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> Continue with Google</>}
               </button>
               <button onClick={() => scrollToSection('pricing')} className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
@@ -654,7 +651,7 @@ export default function HomeClient() {
               </div>
               <p className="text-[11px] text-muted-foreground">{basicQuote ? `+ ${Math.round(basicQuote.gst_rate * 100)}% GST · ` : ''}for {pricingLocations} {pricingLocations === 1 ? 'location' : 'locations'}</p>
             </div>
-            <button onClick={handleContinueWithGoogle} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">Start Free Trial</button>
+            <button onClick={() => handleContinueWithGoogle('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-border pt-5 text-xs font-semibold text-muted-foreground">
               {[`${basicQuote ? basicQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 30} AI credits / month`, '30 AI credits per location', 'Unified review inbox + AI replies', 'Google Posts scheduler', 'Multi-location analytics & audits', 'Team roles & permissions'].map((t) => (
                 <li key={t} className="flex items-center gap-2"><Check className="h-3.5 w-3.5 shrink-0 text-primary" />{t}</li>
@@ -673,7 +670,7 @@ export default function HomeClient() {
               </div>
               <p className="text-[11px] text-muted-foreground">{proQuote ? `+ ${Math.round(proQuote.gst_rate * 100)}% GST · ` : ''}for {pricingLocations} {pricingLocations === 1 ? 'location' : 'locations'}</p>
             </div>
-            <button onClick={handleContinueWithGoogle} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50">Start Free Trial</button>
+            <button onClick={() => handleContinueWithGoogle('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-primary/20 pt-5 text-xs font-semibold text-foreground">
               {['Everything in Basic, plus:', `${proQuote ? proQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 45} AI credits / month`, '45 AI credits per location', 'Local Rank heatmaps (geo-grid)', 'Location leaderboard + cohort ranking', 'Search intelligence'].map((t, i) => (
                 <li key={t} className="flex items-center gap-2">{i === 0 ? <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" /> : <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}{t}</li>
@@ -740,7 +737,7 @@ export default function HomeClient() {
             <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Start syncing your storefronts today</h2>
             <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">Join local SEO directors, franchise owners, and agency operators who have abandoned manual spreadsheets. Connect your locations and start automating.</p>
             <div className="flex justify-center pt-6">
-              <button onClick={handleContinueWithGoogle} disabled={loading} className="flex items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50">
+              <button onClick={() => handleContinueWithGoogle('footer')} disabled={loading} className="flex items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50">
                 {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> Continue with Google</>}
               </button>
             </div>
