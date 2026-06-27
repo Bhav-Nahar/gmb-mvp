@@ -12,13 +12,13 @@ export default function CTASection({ phone, website, mapLink, whatsapp, reviewUr
   if (!phone && !website && !whatsapp && !mapLink && !reviewUrl) return null
 
   return (
-    <section className="py-24 px-6 sm:px-12 bg-slate-950 text-white relative overflow-hidden">
+    <section className="py-16 px-8 bg-slate-950 text-white rounded-[2rem] relative overflow-hidden shadow-2xl border border-slate-800">
       {/* Decorative radial gradients */}
       <div className="absolute inset-0 opacity-60 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-primary/30 via-transparent to-transparent"></div>
       <div className="absolute inset-0 opacity-40 bg-[radial-gradient(ellipse_at_bottom_left,_var(--tw-gradient-stops))] from-indigo-900/40 via-transparent to-transparent"></div>
       
-      <div className="max-w-5xl mx-auto text-center relative z-10 animate-fade-up">
-        <h2 className="text-4xl md:text-6xl font-black mb-12 tracking-tight drop-shadow-lg">Ready to visit us?</h2>
+      <div className="mx-auto text-center relative z-10 animate-fade-up">
+        <h2 className="text-3xl md:text-4xl font-black mb-10 tracking-tight drop-shadow-lg">Ready to visit us?</h2>
         
         <div className="flex flex-col sm:flex-row flex-wrap justify-center items-center gap-4 sm:gap-5">
           {phone && (

@@ -1,5 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, EmailStr
+from app.schemas.base import ORMBase
 
 class InviteCreate(BaseModel):
     email: EmailStr
@@ -7,7 +8,7 @@ class InviteCreate(BaseModel):
     location_ids: list[int] | None = None
     viewer_scope: str | None = "assigned"
 
-class InviteOut(BaseModel):
+class InviteOut(ORMBase):
     id: int
     email: EmailStr
     role: str
@@ -18,9 +19,6 @@ class InviteOut(BaseModel):
     status: str
     location_ids: list[int] | None = None
     viewer_scope: str | None = "assigned"
-
-    class Config:
-        from_attributes = True
 
 class InviteWithTokenOut(InviteOut):
     token: str

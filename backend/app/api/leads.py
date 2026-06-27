@@ -18,40 +18,35 @@ class LeadEmailUpdate(BaseModel):
 
 @router.get("/{location_id}/lead-email")
 def get_lead_email(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     current_user: User = Depends(staff_required),
     db: Session = Depends(get_db),
 ):
-    loc = db.query(Location).filter(Location.id == location_id).first()
-    return {"lead_email": loc.lead_email if loc else None}
+    return {"lead_email": location.lead_email}
 
 
 @router.put("/{location_id}/lead-email")
 def set_lead_email(
     payload: LeadEmailUpdate,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     current_user: User = Depends(admin_required),
     db: Session = Depends(get_db),
 ):
-    loc = db.query(Location).filter(
-        Location.id == location_id, Location.organization_id == current_user.organization_id
-    ).first()
-    if not loc:
-        raise HTTPException(status_code=404, detail="Location not found")
     val = (payload.lead_email or "").strip() or None
     if val and "@" not in val:
         raise HTTPException(status_code=400, detail="Invalid email")
-    loc.lead_email = val
+    location.lead_email = val
     db.commit()
     return {"lead_email": val}
 
 
 @router.get("/{location_id}/leads", response_model=List[LeadResponse])
 def list_leads(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     current_user: User = Depends(staff_required),
     db: Session = Depends(get_db),
 ):
+    location_id = location.id
     return (
         db.query(Lead)
         .filter(Lead.location_id == location_id, Lead.organization_id == current_user.organization_id)
@@ -65,10 +60,11 @@ def list_leads(
 def update_lead_status(
     lead_id: int,
     status_value: str,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     current_user: User = Depends(admin_required),
     db: Session = Depends(get_db),
 ):
+    location_id = location.id
     if status_value not in ("new", "contacted", "closed"):
         raise HTTPException(status_code=400, detail="Invalid status")
     lead = db.query(Lead).filter(

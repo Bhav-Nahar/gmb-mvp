@@ -1,6 +1,8 @@
 import datetime
 import io
 import csv
+import json
+import hashlib
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -13,8 +15,32 @@ from app.models.user import User
 from app.models.location import Location
 from app.models.leaderboard_snapshot import LeaderboardSnapshot
 from app.core import leaderboard_config
+from app.core.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
+
+# Snapshots change only when the daily generation job runs, but the read endpoint is
+# hit constantly by dashboards. Cache the assembled response keyed by org + period +
+# RBAC scope + sort/page, plus a per-org generation token that the job bumps so a
+# regeneration invalidates instantly. The TTL is a backstop for out-of-band regens.
+_LEADERBOARD_CACHE_TTL = 6 * 60 * 60
+
+
+def _leaderboard_gen(r, org_id: int) -> str:
+    """Per-org generation token; bumped by the snapshot job. Missing -> '0'."""
+    try:
+        val = r.get(f"leaderboard:gen:{org_id}")
+        return val.decode() if isinstance(val, bytes) else (val or "0")
+    except Exception:
+        return "0"
+
+
+def _leaderboard_cache_key(org_id, period, gen, allowed_ids, sort_by, sort_order, limit, offset) -> str:
+    if allowed_ids is None:
+        scope = "all"
+    else:
+        scope = hashlib.sha1(",".join(map(str, sorted(allowed_ids))).encode()).hexdigest()[:12]
+    return f"leaderboard:resp:{org_id}:{period}:{gen}:{scope}:{sort_by}:{sort_order}:{limit}:{offset}"
 
 try:
     import openpyxl
@@ -48,7 +74,7 @@ def get_leaderboard(
     db: Session = Depends(deps.get_db)
 ):
     allowed_ids = deps.get_user_location_ids(current_user, db)
-    
+
     if not period:
         latest_period = db.query(LeaderboardSnapshot.period_label).filter(
             LeaderboardSnapshot.organization_id == current_user.organization_id
@@ -66,7 +92,20 @@ def get_leaderboard(
                 "eligible_locations": [],
                 "ineligible_locations": []
             }
-            
+
+    # Serve from cache when present. Key includes RBAC scope + sort/page so users
+    # never see each other's slice. A Redis miss/outage falls through to the DB.
+    r = get_redis()
+    gen = _leaderboard_gen(r, current_user.organization_id)
+    cache_key = _leaderboard_cache_key(current_user.organization_id, period, gen,
+                                       allowed_ids, sort_by, sort_order, limit, offset)
+    try:
+        cached = r.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
     snapshots = get_scoped_snapshots(db, current_user.organization_id, period, allowed_ids)
     
     if not snapshots:
@@ -186,7 +225,7 @@ def get_leaderboard(
     eligible_page = eligible[offset:offset + limit]
     ineligible_page = ineligible[offset:offset + limit]
 
-    return {
+    response = {
         "has_data": True,
         "period": period,
         "snapshot_version": snapshot_version,
@@ -199,6 +238,11 @@ def get_leaderboard(
         "total_ineligible": total_ineligible,
         "has_more": (offset + limit) < max(total_eligible, total_ineligible),
     }
+    try:
+        r.setex(cache_key, _LEADERBOARD_CACHE_TTL, json.dumps(response))
+    except Exception:
+        pass
+    return response
 
 @router.get("/periods")
 def get_periods(
@@ -212,11 +256,12 @@ def get_periods(
 
 @router.get("/{location_id}/history")
 def get_history(
-    location_id: int = Depends(deps.require_location_access),
+    location: Location = Depends(deps.require_location_access),
     limit: int = Query(12, ge=1, le=24),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
+    location_id = location.id
     history = db.query(LeaderboardSnapshot).filter(
         LeaderboardSnapshot.organization_id == current_user.organization_id,
         LeaderboardSnapshot.location_id == location_id
@@ -236,11 +281,12 @@ def get_history(
 
 @router.get("/{location_id}/explain")
 def get_explain(
-    location_id: int = Depends(deps.require_location_access),
+    location: Location = Depends(deps.require_location_access),
     period: Optional[str] = Query(None),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
+    location_id = location.id
     if not period:
         latest_period = db.query(LeaderboardSnapshot.period_label).filter(
             LeaderboardSnapshot.organization_id == current_user.organization_id,
@@ -326,11 +372,12 @@ def get_explain(
 
 @router.get("/{location_id}/next-action")
 def get_next_action(
-    location_id: int = Depends(deps.require_location_access),
+    location: Location = Depends(deps.require_location_access),
     period: Optional[str] = Query(None),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
+    location_id = location.id
     if not period:
         latest = db.query(LeaderboardSnapshot.period_label).filter(
             LeaderboardSnapshot.organization_id == current_user.organization_id,

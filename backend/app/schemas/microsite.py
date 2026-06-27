@@ -1,9 +1,10 @@
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import computed_field
 from app.core.config import settings
+from app.schemas.base import ORMBase
 
-class MicrositeResponse(BaseModel):
+class MicrositeResponse(ORMBase):
     id: int
     location_id: int
     organization_id: int
@@ -21,5 +22,3 @@ class MicrositeResponse(BaseModel):
         # Single-level public URL, e.g. "https://pinzo.io/rupesh-jewellers-in-malad-mumbai"
         base = settings.FRONTEND_URL.rstrip('/')
         return f"{base}/{self.location_slug}"
-
-    model_config = ConfigDict(from_attributes=True)

@@ -31,7 +31,8 @@ import {
   Search,
   ArrowRight,
   MessageSquare,
-  MessageCircle
+  MessageCircle,
+  Clock
 } from 'lucide-react'
 import Link from 'next/link'
 import { UpgradeModal } from '@/components/modals/UpgradeModal'
@@ -862,41 +863,56 @@ function DashboardContent() {
 
           {/* Health Score + storefront status — top section, clickable to filter the grid */}
           <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
-            <div className="text-left bg-card border border-border rounded-xl p-5 shadow-sm">
-              <div className="text-sm font-medium text-muted-foreground mb-1">Avg Health Score</div>
-              <div className={`text-2xl font-bold ${healthSummary?.average_score ? (healthSummary.average_score >= 75 ? 'text-emerald-600' : healthSummary.average_score >= 60 ? 'text-amber-600' : 'text-red-600') : 'text-muted-foreground'}`}>
+            <div className="relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm">
+              <div className="absolute -right-4 -top-4 opacity-[0.03] pointer-events-none">
+                <Sparkles className="w-24 h-24 text-foreground" />
+              </div>
+              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">Avg Health Score</div>
+              <div className={`text-3xl font-black relative z-10 ${healthSummary?.average_score ? (healthSummary.average_score >= 75 ? 'text-emerald-600 dark:text-emerald-400' : healthSummary.average_score >= 60 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400') : 'text-muted-foreground'}`}>
                 {healthSummary ? healthSummary.average_score : '--'}
               </div>
             </div>
             <button
               onClick={() => focusStorefronts('all')}
-              className="text-left bg-card border border-border rounded-xl p-5 shadow-sm hover:border-primary/50 transition-colors cursor-pointer"
+              className="group relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm hover:border-primary/50 hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
             >
-              <div className="text-sm font-medium text-muted-foreground mb-1">Total Locations</div>
-              <div className="text-2xl font-bold text-foreground">{totalLocations}</div>
+              <div className="absolute -right-4 -top-4 opacity-[0.03] group-hover:opacity-10 group-hover:scale-110 transition-all pointer-events-none">
+                <MapPin className="w-24 h-24 text-primary" />
+              </div>
+              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">Total Locations</div>
+              <div className="text-3xl font-black text-foreground relative z-10 group-hover:text-primary transition-colors">{totalLocations}</div>
             </button>
             <button
               onClick={() => focusStorefronts('unverified')}
               disabled={unverifiedCount === 0}
-              className={`text-left bg-card border border-border rounded-xl p-5 shadow-sm transition-colors ${unverifiedCount === 0 ? 'opacity-50 cursor-default' : 'hover:border-amber-500/50 cursor-pointer'}`}
+              className={`group relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm transition-all ${unverifiedCount === 0 ? 'opacity-50 cursor-default' : 'hover:border-amber-500/50 hover:shadow-md hover:-translate-y-0.5 cursor-pointer'}`}
             >
-              <div className="text-sm font-medium text-muted-foreground mb-1">Unverified</div>
-              <div className={`text-2xl font-bold ${unverifiedCount === 0 ? 'text-muted-foreground' : 'text-amber-600'}`}>{unverifiedCount}</div>
+              <div className={`absolute -right-4 -top-4 opacity-[0.03] transition-all pointer-events-none ${unverifiedCount > 0 ? 'group-hover:opacity-10 group-hover:scale-110 text-amber-500' : ''}`}>
+                <AlertTriangle className="w-24 h-24" />
+              </div>
+              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">Unverified</div>
+              <div className={`text-3xl font-black relative z-10 transition-colors ${unverifiedCount === 0 ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}>{unverifiedCount}</div>
             </button>
             <button
               onClick={() => focusStorefronts('suspended')}
               disabled={suspendedCount === 0}
-              className={`text-left bg-card border border-border rounded-xl p-5 shadow-sm transition-colors ${suspendedCount === 0 ? 'opacity-50 cursor-default' : 'hover:border-destructive/50 cursor-pointer'}`}
+              className={`group relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm transition-all ${suspendedCount === 0 ? 'opacity-50 cursor-default' : 'hover:border-rose-500/50 hover:shadow-md hover:-translate-y-0.5 cursor-pointer'}`}
             >
-              <div className="text-sm font-medium text-muted-foreground mb-1">Suspended</div>
-              <div className={`text-2xl font-bold ${suspendedCount === 0 ? 'text-muted-foreground' : 'text-destructive'}`}>{suspendedCount}</div>
+              <div className={`absolute -right-4 -top-4 opacity-[0.03] transition-all pointer-events-none ${suspendedCount > 0 ? 'group-hover:opacity-10 group-hover:scale-110 text-rose-500' : ''}`}>
+                <XCircle className="w-24 h-24" />
+              </div>
+              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">Suspended</div>
+              <div className={`text-3xl font-black relative z-10 transition-colors ${suspendedCount === 0 ? 'text-muted-foreground' : 'text-rose-600 dark:text-rose-400'}`}>{suspendedCount}</div>
             </button>
             <button
               onClick={() => focusStorefronts('all')}
-              className="text-left bg-card border border-border rounded-xl p-5 shadow-sm hover:border-indigo-500/50 transition-colors cursor-pointer"
+              className="group relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm hover:border-indigo-500/50 hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
             >
-              <div className="text-sm font-medium text-muted-foreground mb-1">SLA Needs Response</div>
-              <div className={`text-2xl font-bold ${slaNeedsResponseCount === 0 ? 'text-muted-foreground' : 'text-indigo-600'}`}>{slaNeedsResponseCount}</div>
+              <div className="absolute -right-4 -top-4 opacity-[0.03] group-hover:opacity-10 group-hover:scale-110 transition-all pointer-events-none">
+                <Clock className="w-24 h-24 text-indigo-500" />
+              </div>
+              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">SLA Needs Response</div>
+              <div className={`text-3xl font-black relative z-10 transition-colors ${slaNeedsResponseCount === 0 ? 'text-muted-foreground' : 'text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-500'}`}>{slaNeedsResponseCount}</div>
             </button>
           </section>
 
@@ -1108,21 +1124,21 @@ function DashboardContent() {
                 </p>
               </div>
             ) : viewMode === 'table' ? (
-              /* Dense table view — scales past ~10 storefronts, scannable & comparable */
-              <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-sm">
-                <table className="w-full text-sm">
+              /* Upgraded Premium Table View */
+              <div className="overflow-x-auto rounded-xl glass-panel shadow-sm">
+                <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="border-b border-border text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                      <th className="px-4 py-3 font-bold">Storefront</th>
-                      <th className="px-4 py-3 font-bold">Health</th>
-                      <th className="px-4 py-3 font-bold">Rating</th>
-                      <th className="px-4 py-3 font-bold hidden md:table-cell">To reply</th>
-                      <th className="px-4 py-3 font-bold">Status</th>
-                      <th className="px-4 py-3 font-bold">Microsite</th>
-                      <th className="px-4 py-3 font-bold text-right hidden md:table-cell">Last sync</th>
+                    <tr className="border-b border-border/60 text-left text-[10px] uppercase tracking-wider text-muted-foreground bg-muted/30">
+                      <th className="px-5 py-4 font-extrabold">Storefront</th>
+                      <th className="px-4 py-4 font-extrabold">Health</th>
+                      <th className="px-4 py-4 font-extrabold">Rating</th>
+                      <th className="px-4 py-4 font-extrabold hidden md:table-cell">To reply</th>
+                      <th className="px-4 py-4 font-extrabold">Status</th>
+                      <th className="px-4 py-4 font-extrabold">Microsite</th>
+                      <th className="px-5 py-4 font-extrabold text-right hidden md:table-cell">Last sync</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-border/40 font-medium bg-card/40 backdrop-blur-sm">
                     {sortedLocations.map((loc, index) => {
                       const isBlocked = loc.billing_status
                         ? loc.billing_status === 'pending_payment'
@@ -1133,47 +1149,51 @@ function DashboardContent() {
                         <tr
                           key={loc.id}
                           onClick={() => isBlocked ? setShowUpgrade(true) : router.push(`/dashboard/locations/${loc.id}`)}
-                          className={`border-b border-border/50 last:border-0 transition-colors cursor-pointer ${isBlocked ? 'opacity-60 hover:bg-amber-500/5 active:bg-amber-500/10' : 'hover:bg-muted/30 active:bg-muted/50'}`}
+                          className={`group transition-all duration-200 cursor-pointer ${isBlocked ? 'opacity-60 hover:bg-amber-500/5 active:bg-amber-500/10' : 'hover:bg-muted/40 hover:shadow-[inset_4px_0_0_0_hsl(var(--primary))] active:bg-muted/60'}`}
                         >
-                          <td className="px-4 py-3 max-w-xs">
-                            <div className="font-bold text-foreground truncate">{loc.location_name}</div>
-                            <div className="text-xs sm:text-[11px] text-muted-foreground truncate">
+                          <td className="px-5 py-3.5 max-w-xs">
+                            <div className={`font-bold truncate transition-colors ${isBlocked ? 'text-foreground' : 'text-foreground group-hover:text-primary'}`}>{loc.location_name}</div>
+                            <div className="text-xs sm:text-[11px] text-muted-foreground truncate mt-0.5">
                               <span className="uppercase font-semibold tracking-wide text-primary/80">{loc.primary_category || 'Storefront'}</span>
                               {addr && <span> &middot; {addr}</span>}
                             </div>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3.5">
                             {loc.health_score != null ? (
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold border ${healthClasses(loc.health_score)}`}>
+                              <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-bold border shadow-sm ${healthClasses(loc.health_score)}`}>
                                 {loc.health_score}
                               </span>
                             ) : <span className="text-muted-foreground/50">—</span>}
                           </td>
-                          <td className="px-4 py-3 whitespace-nowrap">
+                          <td className="px-4 py-3.5 whitespace-nowrap">
                             {loc.average_rating != null ? (
-                              <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400">
-                                <Star className="h-3.5 w-3.5 fill-current" />
+                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border shadow-sm ${
+                                loc.average_rating >= 4.5 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 
+                                loc.average_rating >= 3.5 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20' : 
+                                'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
+                              }`}>
+                                <Star className="h-3.5 w-3.5 fill-current drop-shadow-sm" />
                                 {Number(loc.average_rating).toFixed(1)}
-                                {loc.total_reviews != null && <span className="text-muted-foreground font-normal">({loc.total_reviews})</span>}
+                                {loc.total_reviews != null && <span className="opacity-70 font-semibold ml-0.5">({loc.total_reviews})</span>}
                               </span>
                             ) : <span className="text-muted-foreground/50">—</span>}
                           </td>
-                          <td className="px-4 py-3 hidden md:table-cell">
+                          <td className="px-4 py-3.5 hidden md:table-cell">
                             {pending > 0 ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 border border-indigo-300 dark:bg-indigo-500/15 dark:text-indigo-300 dark:border-indigo-500/30">{pending}</span>
-                            ) : <span className="text-muted-foreground/50">0</span>}
+                              <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 shadow-sm">{pending} pending</span>
+                            ) : <span className="text-muted-foreground/50">—</span>}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3.5">
                             {isBlocked ? (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30">
+                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-sm">
                                 <Lock className="h-3 w-3" /> Locked
                               </span>
                             ) : (renderStateBadge(loc) ?? <span className="text-muted-foreground/50 text-xs">—</span>)}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3.5">
                             {!isBlocked && renderMicrositeBadge(loc.microsite_status)}
                           </td>
-                          <td className="px-4 py-3 text-right whitespace-nowrap text-xs text-muted-foreground hidden md:table-cell" title={loc.last_synced_at ? new Date(loc.last_synced_at).toLocaleString() : ''}>
+                          <td className="px-5 py-3.5 text-right whitespace-nowrap text-xs font-medium text-muted-foreground hidden md:table-cell" title={loc.last_synced_at ? new Date(loc.last_synced_at).toLocaleString() : ''}>
                             {relativeTime(loc.last_synced_at) ?? 'never'}
                           </td>
                         </tr>
@@ -1202,7 +1222,7 @@ function DashboardContent() {
                     onClick={(e) => {
                       if (isBlocked) e.preventDefault();
                     }}
-                    className={`bg-card text-card-foreground border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 transition-colors shadow-sm group block ${isBlocked ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:border-primary/50 hover:shadow-md'}`}
+                    className={`glass-panel text-card-foreground border border-border rounded-2xl p-6 flex flex-col justify-between space-y-5 transition-all duration-300 shadow-sm group block ${isBlocked ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:border-primary/50 hover:shadow-lg hover:-translate-y-0.5'}`}
                   >
                     <div className="space-y-3">
                       {/* Title row: health anchor · name + category + one state badge · sync */}

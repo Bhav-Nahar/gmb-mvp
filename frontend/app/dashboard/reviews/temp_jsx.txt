@@ -1,388 +1,3 @@
-'use client'
-
-import { useEffect, useState } from 'react'
-import { useAuth } from '@/hooks/useAuth'
-import { api } from '@/lib/api'
-import {
-  Star,
-  RefreshCw,
-  MessageCircle,
-  MessageSquare,
-  AlertTriangle,
-  CheckCircle2,
-  Send,
-  User as UserIcon,
-  Sparkles,
-  Clock,
-  ThumbsUp,
-  Inbox,
-  Filter
-} from 'lucide-react'
-
-import { resolveTemplateVariables } from '@/lib/utils/template-utils'
-
-interface ReplyTemplate {
-  id: number;
-  title: string;
-  body: string;
-}
-
-interface Location {
-  id: number
-  location_name: string
-}
-
-interface Review {
-  id: number
-  location_id: number
-  reviewer_name: string
-  reviewer_profile_photo?: string
-  rating?: number
-  comment?: string
-  is_replied: boolean
-  reply_text?: string
-  reply_created_at?: string | null
-  review_created_at: string
-  sentiment?: string | null
-  issue_category?: string | null
-  sentiment_tagged_at?: string | null
-  location_name: string
-  suggested_templates?: ReplyTemplate[]
-}
-
-interface SLAMetrics {
-  sla_enabled: boolean
-  sla_tracking_started_at: string | null
-  total_replied: number
-  avg_response_hours: number | null
-  avg_sla_tier: string | null
-  pending_count: number
-  overdue_count: number
-}
-
-interface ReviewListResponse {
-  reviews: Review[]
-  total: number
-  page: number
-  pages: number
-}
-
-interface ReviewSummary {
-  avg_rating: number | null
-  rated_location_count: number
-  total_reviews: number
-  total_reviews_all_time: number
-  response_rate: number | null
-}
-
-export default function ReviewsPage(props: any) {
-  const locationId = props.locationId;
-  const [reviews, setReviews] = useState<Review[]>([])
-  const [locations, setLocations] = useState<Location[]>([])
-  const [loading, setLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
-  const [selectedReviewId, setSelectedReviewId] = useState<number | null>(null)
-  
-  // Pagination
-  const [currentPage, setCurrentPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  
-  // Filters
-  const [filterRating, setFilterRating] = useState<number | ''>('')
-  const [filterReplied, setFilterReplied] = useState<'all' | 'replied' | 'unreplied'>('all')
-  const [filterLocation, setFilterLocation] = useState<number | ''>(locationId || '')
-  const [filterSentiment, setFilterSentiment] = useState<string>('')
-  const [filterCategory, setFilterCategory] = useState<string>('')
-  const [filterSlaTier, setFilterSlaTier] = useState<string>('')
-  const [filterOverdue, setFilterOverdue] = useState<boolean>(false)
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
-
-  // SLA State
-  const [slaMetrics, setSlaMetrics] = useState<SLAMetrics | null>(null)
-  const [reviewSummary, setReviewSummary] = useState<ReviewSummary | null>(null)
-  const [showSlaModal, setShowSlaModal] = useState(false)
-  const [enablingSla, setEnablingSla] = useState(false)
-
-  // Reply state
-  const [replyingTo, setReplyingTo] = useState<number | null>(null)
-  const [replyText, setReplyText] = useState('')
-  const [replyingTemplateId, setReplyingTemplateId] = useState<number | null>(null)
-  const [replying, setReplying] = useState(false)
-  // Pending template selection awaiting overwrite confirmation
-  const [pendingTemplate, setPendingTemplate] = useState<{ id: number; text: string } | null>(null)
-
-  // AI Generation state
-  const [generatingFor, setGeneratingFor] = useState<number | null>(null)
-  const [generatedReplies, setGeneratedReplies] = useState<Record<number, {
-    reply: string
-    tone: string
-    variants?: { recommended: string; short: string; warm_or_professional: string }
-    manualReviewRequired?: boolean
-    riskLevel?: string
-  }>>({})
-  const [generationError, setGenerationError] = useState<Record<number, string>>({})
-
-  // Retag state
-  const [retagging, setRetagging] = useState(false)
-  const [retagDisabled, setRetagDisabled] = useState(false)
-
-  // Alerts
-  const [errorAlert, setErrorAlert] = useState('')
-  const [successAlert, setSuccessAlert] = useState('')
-  
-  const { user } = useAuth()
-  const userRole = user?.role || 'Viewer'
-
-  useEffect(() => {
-    loadLocations()
-  }, [])
-
-  useEffect(() => {
-    if (locationId) {
-      setFilterLocation(locationId)
-    }
-  }, [locationId])
-
-  useEffect(() => {
-    if (filterLocation !== '') {
-      loadSlaMetrics(filterLocation)
-    } else {
-      setSlaMetrics(null)
-    }
-  }, [filterLocation])
-
-  // Reputation KPIs (avg rating, total reviews, response rate) — scoped to the
-  // selected location, or org-wide when no location filter is applied.
-  useEffect(() => {
-    const loadReviewSummary = async () => {
-      try {
-        const qs = filterLocation !== '' ? `?location_id=${filterLocation}` : ''
-        const data = await api.get<ReviewSummary>(`/insights/summary${qs}`)
-        setReviewSummary(data)
-      } catch (e: any) {
-        console.error('Failed to load review summary', e)
-      }
-    }
-    loadReviewSummary()
-  }, [filterLocation])
-
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [filterRating, filterReplied, filterLocation, filterSentiment, filterCategory, filterSlaTier, filterOverdue])
-
-  useEffect(() => {
-    loadReviews()
-  }, [currentPage, filterRating, filterReplied, filterLocation, filterSentiment, filterCategory, filterSlaTier, filterOverdue])
-
-  const loadSlaMetrics = async (locId: number) => {
-    try {
-      const data = await api.get<SLAMetrics>(`/locations/${locId}/sla`)
-      setSlaMetrics(data)
-    } catch (e: any) {
-      console.error('Failed to load SLA metrics', e)
-    }
-  }
-
-  const loadLocations = async () => {
-    try {
-      const data = await api.get<Location[]>('/locations/')
-      setLocations(data)
-    } catch (e: any) {
-      console.error('Failed to load locations', e)
-    }
-  }
-
-  const loadReviews = async () => {
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      params.append('page', currentPage.toString())
-      if (filterRating !== '') params.append('rating', filterRating.toString())
-      if (filterReplied === 'replied') params.append('is_replied', 'true')
-      if (filterReplied === 'unreplied') params.append('is_replied', 'false')
-      if (filterLocation !== '') params.append('location_id', filterLocation.toString())
-      if (filterSentiment !== '') params.append('sentiment', filterSentiment)
-      if (filterCategory !== '') params.append('issue_category', filterCategory)
-      if (filterSlaTier !== '') params.append('sla_tier', filterSlaTier)
-      if (filterOverdue) params.append('overdue_only', 'true')
-
-      const data = await api.get<ReviewListResponse>(`/reviews/?${params.toString()}`)
-      setReviews(data.reviews || [])
-      setTotalPages(data.pages || 1)
-    } catch (e: any) {
-      console.error(e)
-      setErrorAlert(e.message || 'Failed to load reviews.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Auto-select first review on load
-  useEffect(() => {
-    if (reviews.length > 0 && !selectedReviewId) {
-      setSelectedReviewId(reviews[0].id)
-    } else if (reviews.length === 0) {
-      setSelectedReviewId(null)
-    }
-  }, [reviews])
-
-  const handleTriggerSync = async () => {
-    setSyncing(true)
-    setErrorAlert('')
-    setSuccessAlert('')
-    try {
-      const response: any = await api.post('/reviews/sync')
-      setSuccessAlert(response.message || 'Reviews sync queued successfully.')
-      setTimeout(() => {
-        loadReviews()
-        setSyncing(false)
-      }, 3000)
-    } catch (err: any) {
-      setErrorAlert(err.message || 'Failed to trigger background synchronization.')
-      setSyncing(false)
-    }
-  }
-
-  const handleRetag = async () => {
-    if (!filterLocation || retagDisabled) return
-    setRetagging(true)
-    setRetagDisabled(true)
-    setErrorAlert('')
-    try {
-      await api.post(`/reviews/locations/${filterLocation}/retag-sentiment`)
-      setSuccessAlert('Sentiment retagging queued.')
-    } catch (err: any) {
-      setErrorAlert(err.message || 'Failed to queue sentiment retagging.')
-    } finally {
-      setRetagging(false)
-      // Disable the button for 5 seconds to prevent spam
-      setTimeout(() => setRetagDisabled(false), 5000)
-    }
-  }
-
-  const handleEnableSla = async () => {
-    if (!filterLocation) return
-    setEnablingSla(true)
-    setErrorAlert('')
-    try {
-      await api.post(`/locations/${filterLocation}/sla/enable`)
-      setSuccessAlert('SLA Tracking enabled successfully!')
-      setShowSlaModal(false)
-      loadSlaMetrics(filterLocation)
-    } catch (err: any) {
-      setErrorAlert(err.message || 'Failed to enable SLA tracking.')
-    } finally {
-      setEnablingSla(false)
-    }
-  }
-
-  const renderSlaBadge = (review: Review) => {
-    if (!slaMetrics?.sla_enabled || !slaMetrics.sla_tracking_started_at) return null
-    if (new Date(review.review_created_at) < new Date(slaMetrics.sla_tracking_started_at)) return null
-
-    if (review.is_replied && review.reply_created_at) {
-      const hours = (new Date(review.reply_created_at).getTime() - new Date(review.review_created_at).getTime()) / 3600000
-      if (hours <= 12) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">⚡ Best</span>
-      if (hours <= 24) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30">✓ Good</span>
-      if (hours <= 72) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">~ Avg</span>
-      return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30">✗ Poor</span>
-    } else if (!review.is_replied) {
-      const hours = (new Date().getTime() - new Date(review.review_created_at).getTime()) / 3600000
-      if (hours > 72) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30">Overdue</span>
-      if (hours > 24) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">Pending</span>
-      return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-muted/20 text-muted-foreground border border-border">Awaiting</span>
-    }
-    return null
-  }
-
-  const handlePostReply = async (reviewId: number) => {
-    if (!replyText.trim()) return
-
-    setReplying(true)
-    setErrorAlert('')
-    try {
-      await api.post(`/reviews/${reviewId}/reply`, {
-        reply_text: replyText,
-        template_id: replyingTemplateId || undefined
-      })
-      setSuccessAlert('Reply posted successfully.')
-      setReplyingTo(null)
-      setReplyText('')
-      setReplyingTemplateId(null)
-      loadReviews()
-    } catch (err: any) {
-      setErrorAlert(err.message || 'Failed to post reply.')
-    } finally {
-      setReplying(false)
-    }
-  }
-
-  const handleGenerateReply = async (reviewId: number) => {
-    setGeneratingFor(reviewId)
-    setGenerationError(prev => {
-      const copy = { ...prev }
-      delete copy[reviewId]
-      return copy
-    })
-    try {
-      const response = await api.post<{
-        review_id: number; generated_reply: string; tone: string
-        recommended_reply?: string; short_reply?: string; warm_or_professional_reply?: string
-        manual_review_required?: boolean; risk_level?: string
-      }>(`/reviews/${reviewId}/generate-reply`)
-      setGeneratedReplies(prev => ({
-        ...prev,
-        [reviewId]: {
-          reply: response.recommended_reply ?? response.generated_reply,
-          tone: response.tone,
-          variants: response.recommended_reply ? {
-            recommended: response.recommended_reply,
-            short: response.short_reply ?? response.recommended_reply,
-            warm_or_professional: response.warm_or_professional_reply ?? response.recommended_reply,
-          } : undefined,
-          manualReviewRequired: response.manual_review_required,
-          riskLevel: response.risk_level,
-        }
-      }))
-    } catch (err: any) {
-      console.error('Failed to generate reply:', err)
-      setGenerationError(prev => ({
-        ...prev,
-        [reviewId]: 'Could not generate reply. Please try again.'
-      }))
-    } finally {
-      setGeneratingFor(null)
-    }
-  }
-
-  const handlePostAiReply = async (reviewId: number) => {
-    const aiReply = generatedReplies[reviewId]
-    if (!aiReply || !aiReply.reply.trim()) return
-
-    setReplying(true)
-    setErrorAlert('')
-    try {
-      const updatedReview = await api.post<Review>(`/reviews/${reviewId}/reply`, {
-        reply_text: aiReply.reply
-      })
-      
-      setReviews(reviews.map(r => r.id === reviewId ? updatedReview : r))
-      setSuccessAlert('Reply posted successfully!')
-      
-      setGeneratedReplies(prev => {
-        const copy = { ...prev }
-        delete copy[reviewId]
-        return copy
-      })
-      setReplyingTo(null)
-    } catch (err: any) {
-      setErrorAlert(err.message || 'Failed to post reply.')
-    } finally {
-      setReplying(false)
-    }
-  }
-
-
   const selectedReview = reviews.find(r => r.id === selectedReviewId)
 
   return (
@@ -527,7 +142,7 @@ export default function ReviewsPage(props: any) {
                      <button onClick={() => setFilterReplied('replied')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${filterReplied === 'replied' ? 'bg-foreground text-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Replied</button>
                    </div>
                    
-                   <div className="flex items-center gap-2 flex-wrap pb-1">
+                   <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-1">
                      <select
                        className="bg-background border border-border rounded-lg text-xs font-semibold px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary shrink-0 text-foreground cursor-pointer"
                        value={filterRating}
@@ -541,87 +156,28 @@ export default function ReviewsPage(props: any) {
                        <option value="1">1 Star</option>
                      </select>
                      
-                     <button 
-                       onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${showAdvancedFilters ? 'bg-primary/10 text-primary border-primary/30' : 'bg-background text-muted-foreground border-border hover:bg-muted/50 hover:text-foreground'}`}
+                     <select
+                       className="bg-background border border-border rounded-lg text-xs font-semibold px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary shrink-0 text-foreground cursor-pointer"
+                       value={filterSentiment}
+                       onChange={e => setFilterSentiment(e.target.value)}
                      >
-                       <Filter className="w-3.5 h-3.5" />
-                       Filters
-                       {(filterSentiment || filterLocation !== '' || filterCategory || filterSlaTier || filterOverdue) ? (
-                         <span className="bg-primary text-primary-foreground text-[9px] px-1.5 py-0.5 rounded-full ml-1">
-                           {[!!filterSentiment, filterLocation !== '', !!filterCategory, !!filterSlaTier, filterOverdue].filter(Boolean).length}
-                         </span>
-                       ) : null}
-                     </button>
+                       <option value="">Sentiment</option>
+                       <option value="Positive">Positive</option>
+                       <option value="Neutral">Neutral</option>
+                       <option value="Negative">Negative</option>
+                       <option value="Angry">Angry</option>
+                     </select>
+
+                     <label className="text-xs font-bold text-foreground flex items-center gap-1.5 cursor-pointer whitespace-nowrap bg-background border border-border rounded-lg px-2 py-1.5 shrink-0 transition-colors hover:bg-muted/50">
+                        <input
+                          type="checkbox"
+                          className="rounded border-input text-primary focus:ring-primary h-3 w-3"
+                          checked={filterOverdue}
+                          onChange={e => { setFilterOverdue(e.target.checked); setCurrentPage(1); }}
+                        />
+                        Overdue Only
+                     </label>
                    </div>
-                   
-                   {/* Advanced Filters Container */}
-                   {showAdvancedFilters && (
-                     <div className="flex items-center gap-2 flex-wrap bg-muted/30 p-2.5 rounded-xl border border-border mt-1 animate-fade-in">
-                       <select
-                         className="bg-background border border-border rounded-lg text-xs font-semibold px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary shrink-0 text-foreground cursor-pointer"
-                         value={filterSentiment}
-                         onChange={e => setFilterSentiment(e.target.value)}
-                       >
-                         <option value="">Sentiment</option>
-                         <option value="Positive">Positive</option>
-                         <option value="Neutral">Neutral</option>
-                         <option value="Negative">Negative</option>
-                         <option value="Angry">Angry</option>
-                       </select>
-
-                       {!locationId && (
-                         <select
-                           className="bg-background border border-border rounded-lg text-xs font-semibold px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary shrink-0 text-foreground cursor-pointer max-w-[120px] truncate"
-                           value={filterLocation}
-                           onChange={e => setFilterLocation(e.target.value ? Number(e.target.value) : '')}
-                         >
-                           <option value="">All Locations</option>
-                           {locations.map(loc => (
-                             <option key={loc.id} value={loc.id}>{loc.location_name}</option>
-                           ))}
-                         </select>
-                       )}
-
-                       <select
-                         className="bg-background border border-border rounded-lg text-xs font-semibold px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary shrink-0 text-foreground cursor-pointer"
-                         value={filterCategory}
-                         onChange={e => { setFilterCategory(e.target.value); setCurrentPage(1); }}
-                       >
-                         <option value="">Category</option>
-                         <option value="Staff Praise">Staff Praise</option>
-                         <option value="Service Issue">Service Issue</option>
-                         <option value="Pricing Concern">Pricing Concern</option>
-                         <option value="Cleanliness">Cleanliness</option>
-                         <option value="Delivery Issue">Delivery Issue</option>
-                         <option value="Wait Time">Wait Time</option>
-                         <option value="Product Quality">Product Quality</option>
-                         <option value="General Feedback">General Feedback</option>
-                       </select>
-
-                       <select
-                         className="bg-background border border-border rounded-lg text-xs font-semibold px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary shrink-0 text-foreground cursor-pointer"
-                         value={filterSlaTier}
-                         onChange={e => { setFilterSlaTier(e.target.value); setCurrentPage(1); }}
-                       >
-                         <option value="">SLA Tier</option>
-                         <option value="Best">Best</option>
-                         <option value="Good">Good</option>
-                         <option value="Average">Average</option>
-                         <option value="Poor">Poor</option>
-                       </select>
-
-                       <label className="text-xs font-bold text-foreground flex items-center gap-1.5 cursor-pointer whitespace-nowrap bg-background border border-border rounded-lg px-2 py-1.5 shrink-0 transition-colors hover:bg-muted/50">
-                          <input
-                            type="checkbox"
-                            className="rounded border-input text-primary focus:ring-primary h-3 w-3"
-                            checked={filterOverdue}
-                            onChange={e => { setFilterOverdue(e.target.checked); setCurrentPage(1); }}
-                          />
-                          Overdue Only
-                       </label>
-                     </div>
-                   )}
                 </div>
 
                 {/* Queue List */}
@@ -796,7 +352,7 @@ export default function ReviewsPage(props: any) {
                            <div className="absolute -top-3 left-6 bg-card px-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Customer Wrote</div>
                            {selectedReview.comment ? (
                              <p className="text-foreground text-sm leading-relaxed whitespace-pre-wrap">
-                               &ldquo;{selectedReview.comment}&rdquo;
+                               "{selectedReview.comment}"
                              </p>
                            ) : (
                              <p className="text-muted-foreground italic text-sm">Customer left a star rating with no comment.</p>
@@ -996,28 +552,6 @@ export default function ReviewsPage(props: any) {
                                     </div>
                                   </button>
                                </div>
-
-                               {selectedReview.suggested_templates && selectedReview.suggested_templates.length > 0 && (
-                                 <div className="mt-8 w-full max-w-lg text-center animate-fade-up" style={{ animationDelay: '100ms', opacity: 0 }}>
-                                   <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">Or use a Quick Template</p>
-                                   <div className="flex flex-wrap justify-center gap-2">
-                                     {selectedReview.suggested_templates.map(template => (
-                                       <button
-                                         key={template.id}
-                                         onClick={() => {
-                                           const text = resolveTemplateVariables(template.body, selectedReview.reviewer_name, selectedReview.location_name)
-                                           setReplyText(text)
-                                           setReplyingTemplateId(template.id)
-                                           setReplyingTo(selectedReview.id)
-                                         }}
-                                         className="inline-flex items-center px-4 py-1.5 rounded-full border text-xs font-bold transition-all bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground shadow-sm"
-                                       >
-                                         {template.title}
-                                       </button>
-                                     ))}
-                                   </div>
-                                 </div>
-                               )}
                             </div>
                          ) : (
                            <div className="flex flex-col items-center justify-center h-full opacity-60">

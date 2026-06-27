@@ -1080,7 +1080,7 @@ def check_and_trigger_stale_insights_sync(organization_id: int, db: Session, for
 
 @router.post("/locations/{location_id}/sync", response_model=InsightsSyncPostResponse)
 def trigger_insights_sync(
-    location_id: int = Depends(deps.require_location_access),
+    location: Location = Depends(deps.require_location_access),
     start_date: Optional[datetime.date] = Query(None),
     end_date: Optional[datetime.date] = Query(None),
     scope: str = Query("all", regex="^(daily|keywords|all)$"),

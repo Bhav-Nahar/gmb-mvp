@@ -130,8 +130,9 @@ class LocationScopeRbacTests(unittest.TestCase):
         )
 
     def test_require_location_access_allows_assigned(self):
+        # Returns the validated Location row (was the id before the no-re-fetch change).
         self.assertEqual(
-            require_location_access(self.loc_a.id, db=self.db, current_user=self.store),
+            require_location_access(self.loc_a.id, db=self.db, current_user=self.store).id,
             self.loc_a.id,
         )
 
@@ -139,7 +140,7 @@ class LocationScopeRbacTests(unittest.TestCase):
         admin = self._make_admin()
         # Admin has implicit org-wide access — no UserLocationAccess row needed.
         self.assertEqual(
-            require_location_access(self.loc_b.id, db=self.db, current_user=admin),
+            require_location_access(self.loc_b.id, db=self.db, current_user=admin).id,
             self.loc_b.id,
         )
 

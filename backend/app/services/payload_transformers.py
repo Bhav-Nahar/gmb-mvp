@@ -176,15 +176,6 @@ TRANSFORMER_REGISTRY: Dict[str, Callable[[str, Any], Dict[str, Any]]] = {
     "business_hours": transform_business_hours,
 }
 
-def transform(field_name: str, value: Any, location: Any = None) -> Dict[str, Any]:
-    """Top-level dispatch: validate field_name exists in FIELD_MAP, then route to the correct transformer."""
-    config = FIELD_MAP.get(field_name)
-    if config is None:
-        raise ValueError(f"Unknown field '{field_name}': not found in FIELD_MAP")
-    transformer_key = getattr(config, "transformer", None)
-    transformer_fn = TRANSFORMER_REGISTRY.get(transformer_key, transform_identity)
-    return transformer_fn(field_name, value, location)
-
 class PayloadTransformer:
     @staticmethod
     def to_gbp_payload(field_name: str, new_value: Any, location: Any = None) -> Dict[str, Any]:

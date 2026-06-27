@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from app.schemas.base import ORMBase
 from typing import Optional
 from datetime import datetime
 
@@ -15,7 +16,7 @@ class ReplyTemplateUpdate(BaseModel):
     body: Optional[str] = Field(None, min_length=1, max_length=3500)
     display_order: Optional[int] = Field(None, ge=0)
 
-class ReplyTemplateResponse(BaseModel):
+class ReplyTemplateResponse(ORMBase):
     id: int
     organization_id: int
     star_rating: int
@@ -26,6 +27,3 @@ class ReplyTemplateResponse(BaseModel):
     usage_count: int
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True

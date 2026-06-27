@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
-import { Shield, AlertTriangle, User as UserIcon, Trash2, X, Building2, Mail, CalendarDays, Globe, ChevronRight, FileClock } from 'lucide-react'
+import { Shield, AlertTriangle, User as UserIcon, Trash2, X, Building2, Mail, CalendarDays, Globe, ChevronRight, FileClock, BellRing } from 'lucide-react'
 
 interface UserProfile {
   id: number
@@ -14,6 +14,8 @@ interface UserProfile {
   avatar?: string
   role: string
   created_at?: string
+  weekly_report_email?: boolean
+  lead_email_notifications?: boolean
   organization?: {
     name: string
   }
@@ -37,6 +39,9 @@ export default function SettingsPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
 
+  // Notification toggles
+  const [savingPref, setSavingPref] = useState('')
+
   useEffect(() => {
     loadProfile()
     loadTokenStatus()
@@ -58,6 +63,20 @@ export default function SettingsPage() {
       const data = await api.get<TokenStatus>('/users/me/token-status')
       setTokenStatus(data)
     } catch (e) { /* non-fatal */ }
+  }
+
+  const togglePref = async (key: 'weekly_report_email' | 'lead_email_notifications') => {
+    if (!userProfile || savingPref) return
+    const next = !(userProfile[key] ?? true)
+    setSavingPref(key)
+    setUserProfile({ ...userProfile, [key]: next }) // optimistic
+    try {
+      await api.patch('/users/me/preferences', { [key]: next })
+    } catch (e) {
+      setUserProfile({ ...userProfile, [key]: !next }) // revert on failure
+    } finally {
+      setSavingPref('')
+    }
   }
 
   const handleDeleteAccount = async () => {
@@ -152,6 +171,30 @@ export default function SettingsPage() {
           <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
         </Link>
 
+        {/* Notifications */}
+        <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <BellRing className="h-5 w-5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <h3 className="text-sm font-bold text-foreground">Email notifications</h3>
+          </div>
+          <div className="divide-y divide-border/60">
+            <PrefToggle
+              title="Weekly report email"
+              description="A Monday summary of your Google performance — profile views, calls, new reviews and ratings."
+              checked={userProfile?.weekly_report_email ?? true}
+              disabled={!userProfile || savingPref !== ''}
+              onToggle={() => togglePref('weekly_report_email')}
+            />
+            <PrefToggle
+              title="New lead emails"
+              description="Get an email the moment someone submits an enquiry on one of your microsites."
+              checked={userProfile?.lead_email_notifications ?? true}
+              disabled={!userProfile || savingPref !== ''}
+              onToggle={() => togglePref('lead_email_notifications')}
+            />
+          </div>
+        </section>
+
         {/* Danger zone — compact */}
         <section className="rounded-xl border border-red-300/60 dark:border-red-500/30 bg-red-50/50 dark:bg-red-500/5 p-4 sm:p-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -223,6 +266,27 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function PrefToggle({ title, description, checked, disabled, onToggle }: { title: string; description: string; checked: boolean; disabled: boolean; onToggle: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+      <div className="min-w-0">
+        <h4 className="text-sm font-semibold text-foreground">{title}</h4>
+        <p className="text-xs text-muted-foreground mt-0.5 max-w-md">{description}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={onToggle}
+        disabled={disabled}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${checked ? 'bg-indigo-600' : 'bg-muted-foreground/30'}`}
+      >
+        <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
+      </button>
     </div>
   )
 }

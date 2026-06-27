@@ -18,14 +18,12 @@ export type Attribution = {
   wbraid?: string
   fbclid?: string
   landing_page?: string
-  first_page_path?: string
-  referrer?: string
-  device_type?: "mobile" | "tablet" | "desktop"
   first_touch?: string
-  // last-touch (refreshed every visit that carries new params)
-  last_touch?: string
-  last_utm_source?: string
-  last_utm_campaign?: string
+  // _fbp / _fbc snapshotted from the Pixel's cookies (and _fbc synthesized from fbclid
+  // once if the Pixel hasn't set it yet), persisted so they survive to the post-OAuth
+  // page even if the cookie isn't readable at that instant.
+  fbp?: string
+  fbc?: string
 }
 
 function read(): Attribution {
@@ -40,21 +38,14 @@ function getCookie(name: string): string | undefined {
   return m?.pop()
 }
 
-function deviceType(ua: string): Attribution["device_type"] {
-  if (/iPad|Tablet|PlayBook|Silk|(Android(?!.*Mobile))/i.test(ua)) return "tablet"
-  if (/Mobi|Android|iPhone|iPod/i.test(ua)) return "mobile"
-  return "desktop"
-}
-
 // Read the stored attribution + current Meta cookies, to attach to signup / checkout
 // / payment API payloads. _fbp/_fbc come from the Pixel's cookies (not localStorage);
-// _fbc is synthesized from fbclid if the Pixel hasn't set it yet.
+// _fbc falls back to the value synthesized & persisted in captureAttribution.
 export function getAttribution(): Attribution & { _fbp?: string; _fbc?: string } {
   if (typeof window === "undefined") return {}
   const a = read()
-  const fbp = getCookie("_fbp")
-  let fbc = getCookie("_fbc")
-  if (!fbc && a.fbclid) fbc = `fb.1.${Date.now()}.${a.fbclid}`
+  const fbp = getCookie("_fbp") || a.fbp
+  const fbc = getCookie("_fbc") || a.fbc
   return { ...a, ...(fbp ? { _fbp: fbp } : {}), ...(fbc ? { _fbc: fbc } : {}) }
 }
 
@@ -78,23 +69,19 @@ export function captureAttribution() {
     a.wbraid = get("wbraid")
     a.fbclid = get("fbclid")
     a.landing_page = window.location.pathname + window.location.search
-    a.first_page_path = window.location.pathname
-    a.referrer = document.referrer || undefined
-    a.device_type = deviceType(navigator.userAgent)
     a.first_touch = now
   }
 
-  // Last touch: always refresh the timestamp; update source/campaign if this visit has them.
-  a.last_touch = now
-  if (get("utm_source")) a.last_utm_source = get("utm_source")
-  if (get("utm_campaign")) a.last_utm_campaign = get("utm_campaign")
+  // Meta cookies set by the Pixel. Snapshot _fbp whenever present, and synthesize _fbc
+  // from fbclid ONCE if the pixel hasn't set it yet — persist both so getAttribution()
+  // still has them on the post-OAuth page even if the cookie read is flaky there.
+  const fbpCookie = getCookie("_fbp")
+  if (fbpCookie) a.fbp = fbpCookie
+  if (!getCookie("_fbc") && a.fbclid && !a.fbc) a.fbc = `fb.1.${Date.now()}.${a.fbclid}`
+  const fbp = fbpCookie || a.fbp
+  const fbc = getCookie("_fbc") || a.fbc
 
   write(a)
-
-  // Meta cookies set by the Pixel. Synthesize _fbc from fbclid if the pixel hasn't yet.
-  const fbp = getCookie("_fbp")
-  let fbc = getCookie("_fbc")
-  if (!fbc && a.fbclid) fbc = `fb.1.${Date.now()}.${a.fbclid}`
 
   track("attribution_captured", {
     utm_source: a.utm_source,

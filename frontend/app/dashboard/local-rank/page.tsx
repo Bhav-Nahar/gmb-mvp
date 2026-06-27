@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { MapPin } from 'lucide-react'
 import { api } from '@/lib/api'
 import { LocalRankPanel } from '@/components/local-rank/LocalRankPanel'
@@ -8,16 +9,16 @@ import { LocalRankPanel } from '@/components/local-rank/LocalRankPanel'
 interface Loc { id: number; location_name: string }
 
 export default function LocalRankPage() {
-  const [locations, setLocations] = useState<Loc[]>([])
   const [selected, setSelected] = useState<number | null>(null)
-  const [loading, setLoading] = useState(true)
+
+  const { data: locations = [], isLoading: loading } = useQuery<Loc[]>({
+    queryKey: ['locations'],
+    queryFn: () => api.get<Loc[]>('/locations/'),
+  })
 
   useEffect(() => {
-    api.get<Loc[]>('/locations/')
-      .then((d) => { setLocations(d || []); if (d && d[0]) setSelected(d[0].id) })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+    if (selected === null && locations[0]) setSelected(locations[0].id)
+  }, [locations, selected])
 
   return (
     <div className="p-4 sm:p-6 space-y-5">

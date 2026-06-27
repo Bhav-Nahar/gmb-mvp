@@ -57,10 +57,11 @@ def get_category_id(category_name: str) -> str:
 
 @router.get("/{location_id}/form-schema")
 async def get_form_schema(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    location_id = location.id
     location = db.query(Location).filter(
         Location.id == location_id,
         Location.organization_id == current_user.organization_id
@@ -221,10 +222,11 @@ async def get_form_schema(
 @router.post("/{location_id}/draft-attributes")
 def save_draft_attributes(
     payload: Dict[str, Any],
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    location_id = location.id
     location = db.query(Location).filter(
         Location.id == location_id,
         Location.organization_id == current_user.organization_id
@@ -339,10 +341,11 @@ def save_draft_attributes(
 
 @router.post("/{location_id}/publish-attributes")
 async def publish_attributes(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    location_id = location.id
     location = db.query(Location).filter(
         Location.id == location_id,
         Location.organization_id == current_user.organization_id
@@ -385,10 +388,11 @@ async def publish_attributes(
 
 @router.get("/{location_id}/publish-status")
 def get_publish_status(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    location_id = location.id
     location = db.query(Location).filter(
         Location.id == location_id,
         Location.organization_id == current_user.organization_id
@@ -408,10 +412,11 @@ class SuppressRejectionRequest(BaseModel):
 @router.post("/{location_id}/suppress-rejection")
 def suppress_rejection(
     payload: SuppressRejectionRequest,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    location_id = location.id
     location = db.query(Location).filter(
         Location.id == location_id,
         Location.organization_id == current_user.organization_id

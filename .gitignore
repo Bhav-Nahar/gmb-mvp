@@ -33,6 +33,7 @@ yarn-error.log*
 .next/
 out/
 build/
+*.tsbuildinfo
 
 # Environment
 .env

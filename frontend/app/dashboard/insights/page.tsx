@@ -20,7 +20,8 @@ import {
   Frown,
   Clock,
   Heart,
-  Compass
+  Compass,
+  Trophy
 } from 'lucide-react'
 import Link from 'next/link'
 import { PlatformDeviceImpressions, KpiCard as SharedKpiCard, type PlatformDeviceBreakdown, type ReputationVelocity } from '@/components/insights/InsightsShared'
@@ -350,9 +351,9 @@ function ReputationGrid({
         <div>
           <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
             <Smile className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-            Customer Sentiment
+            Brand Sentiment
           </h4>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} · positive vs negative tags</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} • Tone analysis</p>
         </div>
         <div className="my-4 space-y-3">
           <div className="flex justify-between items-center text-xs">
@@ -388,9 +389,9 @@ function ReputationGrid({
         <div>
           <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
             <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-            SLA Performance
+            Response SLA
           </h4>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} · reply speeds and statuses</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} • Engagement speed</p>
         </div>
         <div className="my-4 grid grid-cols-2 gap-4">
           <div className="bg-muted/30 p-3 rounded-lg text-center border border-border/30">
@@ -415,9 +416,9 @@ function ReputationGrid({
       <div className="glass-panel p-6">
         <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
           <Heart className="h-4 w-4 text-rose-600 dark:text-rose-400" />
-          Customer Themes
+          Key Themes
         </h4>
-        <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} · recurring issue categories</p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} • Trending topics</p>
         <div className="mt-4 space-y-2 max-h-36 overflow-y-auto">
           {topIssues.length > 0 ? (
             topIssues.map((item, idx) => (
@@ -682,7 +683,7 @@ export default function InsightsPage() {
           {/* Header */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Performance Insights</h1>
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Intelligence Hub</h1>
               <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                 {syncState.insights_sync_in_progress ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20">
@@ -819,7 +820,7 @@ export default function InsightsPage() {
                       <div className="flex items-center gap-3 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/10 p-4 text-amber-600 dark:text-amber-300">
                         <AlertTriangle className="h-5 w-5 flex-shrink-0" />
                         <div className="text-sm font-medium">
-                          {data.attention_locations_count} {data.attention_locations_count === 1 ? 'location needs' : 'locations need'} operational attention. Visit individual locations to investigate.
+                          {data.attention_locations_count} {data.attention_locations_count === 1 ? 'location requires' : 'locations require'} urgent attention. Click through to resolve issues.
                         </div>
                       </div>
                     )
@@ -904,8 +905,8 @@ export default function InsightsPage() {
                   <div className="glass-panel p-6">
                     <div className="flex flex-col gap-4 mb-6 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <h3 className="text-base font-bold text-foreground">Daily Performance Trend</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">Toggle metrics to compare · hover for daily values</p>
+                        <h3 className="text-base font-bold text-foreground">Growth Velocity</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">Isolate metrics to uncover trends • Hover to inspect daily data</p>
                       </div>
                       {/* Clickable legend doubles as a metric toggle */}
                       <div className="flex items-center gap-2 flex-wrap">
@@ -958,9 +959,9 @@ export default function InsightsPage() {
                       <div className="glass-panel p-6">
                         <div className="flex items-center gap-1.5 mb-1">
                           <Compass className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                          <h3 className="text-base font-bold text-foreground">How Customers Found You</h3>
+                          <h3 className="text-base font-bold text-foreground">Traffic Acquisition</h3>
                         </div>
-                        <p className="text-xs text-muted-foreground mb-4">Search composition across the selected period</p>
+                        <p className="text-xs text-muted-foreground mb-4">Breakdown of customer discovery channels</p>
                         <div className="w-full h-3 rounded-full overflow-hidden flex bg-muted/40">
                           {segs.map((s) => (
                             <div
@@ -1008,52 +1009,89 @@ export default function InsightsPage() {
                   {selectedLocation === 'all' && data ? (
                     <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
                       {/* Leaderboard */}
-                      <div className="glass-panel p-6">
-                        <h3 className="text-base font-bold text-foreground mb-4">Locations Leaderboard</h3>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left text-xs border-collapse">
-                            <thead>
-                              <tr className="border-b border-border text-muted-foreground font-semibold">
-                                <th className="pb-3"><button onClick={() => toggleLbSort('location_name')} className="inline-flex items-center gap-1 hover:text-foreground">Location <LbSortIcon k="location_name" /></button></th>
-                                <th className="pb-3 text-right"><button onClick={() => toggleLbSort('profile_views')} className="inline-flex items-center gap-1 hover:text-foreground ml-auto">Views <LbSortIcon k="profile_views" /></button></th>
-                                <th className="pb-3 text-right"><button onClick={() => toggleLbSort('search_impressions')} className="inline-flex items-center gap-1 hover:text-foreground ml-auto">Impressions <LbSortIcon k="search_impressions" /></button></th>
-                                <th className="pb-3 text-right"><button onClick={() => toggleLbSort('avg_rating')} className="inline-flex items-center gap-1 hover:text-foreground ml-auto">Rating <LbSortIcon k="avg_rating" /></button></th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border/40 font-medium">
-                              {data.leaderboard.length > 0 ? (
-                                sortLeaderboard(data.leaderboard).map((item, idx) => (
-                                  <tr key={idx} className="hover:bg-muted/10 transition-colors">
-                                    <td className="py-3 pr-2">
-                                      <Link
-                                        href={`/dashboard/locations/${item.location_id}`}
-                                        className="text-foreground hover:underline hover:text-indigo-600 transition-colors"
-                                      >
+                      <div className="glass-panel p-6 flex flex-col h-full">
+                        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+                          <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                            <Trophy className="h-5 w-5 text-amber-500" />
+                            Global Leaderboard
+                          </h3>
+                          <div className="flex gap-1.5 text-[11px] font-bold bg-muted/40 p-1 rounded-lg border border-border/50">
+                            <button onClick={() => toggleLbSort('profile_views')} className={`px-3 py-1.5 rounded-md transition-all ${lbSort.key === 'profile_views' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Views {lbSort.key === 'profile_views' && (lbSort.dir === 'desc' ? '↓' : '↑')}</button>
+                            <button onClick={() => toggleLbSort('search_impressions')} className={`px-3 py-1.5 rounded-md transition-all ${lbSort.key === 'search_impressions' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Impressions {lbSort.key === 'search_impressions' && (lbSort.dir === 'desc' ? '↓' : '↑')}</button>
+                            <button onClick={() => toggleLbSort('avg_rating')} className={`px-3 py-1.5 rounded-md transition-all ${lbSort.key === 'avg_rating' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Rating {lbSort.key === 'avg_rating' && (lbSort.dir === 'desc' ? '↓' : '↑')}</button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 flex-grow overflow-y-auto pr-2">
+                          {data.leaderboard.length > 0 ? (() => {
+                            const sortedLb = sortLeaderboard(data.leaderboard)
+                            const maxVal = Math.max(...sortedLb.map(loc => loc[lbSort.key === 'location_name' || lbSort.key === 'avg_rating' ? 'profile_views' : lbSort.key] as number), 1)
+                            
+                            return sortedLb.map((item, idx) => {
+                              const rank = idx + 1
+                              const isFirst = rank === 1
+                              const isSecond = rank === 2
+                              const isThird = rank === 3
+                              
+                              let rankBadge = (
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs bg-muted text-muted-foreground shrink-0 border border-border/50 shadow-sm">
+                                  {rank}
+                                </div>
+                              )
+                              if (isFirst) rankBadge = <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg shadow-[0_0_15px_rgba(251,191,36,0.3)] bg-gradient-to-br from-amber-200 to-amber-500 text-amber-950 shrink-0">🥇</div>
+                              if (isSecond) rankBadge = <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg shadow-[0_0_15px_rgba(148,163,184,0.2)] bg-gradient-to-br from-slate-200 to-slate-400 text-slate-900 shrink-0">🥈</div>
+                              if (isThird) rankBadge = <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg shadow-[0_0_15px_rgba(251,146,60,0.2)] bg-gradient-to-br from-orange-200 to-orange-500 text-orange-950 shrink-0">🥉</div>
+
+                              const barWidth = `${((item[lbSort.key === 'location_name' || lbSort.key === 'avg_rating' ? 'profile_views' : lbSort.key] as number) / maxVal) * 100}%`
+
+                              return (
+                                <Link
+                                  key={idx}
+                                  href={`/dashboard/locations/${item.location_id}`}
+                                  className="group flex items-center justify-between p-3 rounded-xl bg-card border border-border hover:border-primary/40 hover:shadow-md transition-all duration-300 relative overflow-hidden"
+                                >
+                                  {/* Background Bar */}
+                                  <div 
+                                    className="absolute inset-y-0 left-0 bg-primary/5 transition-all duration-700 ease-out z-0" 
+                                    style={{ width: barWidth }} 
+                                  />
+                                  
+                                  <div className="flex items-center gap-3.5 z-10 min-w-0 flex-grow">
+                                    {rankBadge}
+                                    <div className="min-w-0">
+                                      <h4 className="font-extrabold text-foreground text-sm truncate group-hover:text-primary transition-colors">
                                         {item.location_name}
-                                      </Link>
-                                    </td>
-                                    <td className="py-3 text-right text-muted-foreground">
-                                      {item.profile_views.toLocaleString()}
-                                    </td>
-                                    <td className="py-3 text-right text-muted-foreground">
-                                      {item.search_impressions.toLocaleString()}
-                                    </td>
-                                    <td className="py-3 text-right text-muted-foreground">
-                                      {item.avg_rating !== null ? (
-                                        <span className="text-amber-600 dark:text-amber-400">★ {item.avg_rating.toFixed(1)}</span>
-                                      ) : (
-                                        '—'
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))
-                              ) : (
-                                <tr>
-                                  <td colSpan={4} className="py-4 text-center text-muted-foreground">No locations recorded.</td>
-                                </tr>
-                              )}
-                            </tbody>
-                          </table>
+                                      </h4>
+                                      <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground font-semibold">
+                                        <span className="flex items-center gap-1" title="Profile Views"><Eye className="w-3 h-3 text-indigo-400" /> {item.profile_views.toLocaleString()}</span>
+                                        <span className="flex items-center gap-1" title="Search Impressions"><Search className="w-3 h-3 text-sky-400" /> {item.search_impressions.toLocaleString()}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="z-10 shrink-0 ml-4 flex flex-col items-end justify-center">
+                                    {item.avg_rating !== null ? (
+                                      <div className={`px-2.5 py-1 rounded-full text-[10px] font-black flex items-center gap-1 ${
+                                        item.avg_rating >= 4.5 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 
+                                        item.avg_rating >= 3.5 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20' : 
+                                        'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                                      }`}>
+                                        <Star className="w-3 h-3 fill-current drop-shadow-sm" />
+                                        {item.avg_rating.toFixed(1)}
+                                      </div>
+                                    ) : (
+                                      <span className="text-[10px] font-bold text-muted-foreground px-2 py-1 bg-muted/40 rounded-full border border-border/50">New</span>
+                                    )}
+                                    <span className="text-[10px] font-medium text-muted-foreground mt-1.5">{item.reviews_count} reviews</span>
+                                  </div>
+                                </Link>
+                              )
+                            })
+                          })() : (
+                            <div className="py-12 text-center text-muted-foreground text-sm glass-panel rounded-xl">
+                              No locations recorded.
+                            </div>
+                          )}
                         </div>
                       </div>
 

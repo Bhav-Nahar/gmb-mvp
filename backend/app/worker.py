@@ -51,6 +51,7 @@ if settings.REDIS_URL.startswith("rediss://"):
 celery.autodiscover_tasks(["app"])
 import app.tasks_leaderboard # Explicitly import to register tasks
 import app.tasks_comparison # Explicitly import to register tasks
+import app.tasks_reports # Explicitly import to register tasks
 
 # Periodic Celery Beat Scheduling
 celery.conf.beat_schedule = {
@@ -67,9 +68,13 @@ celery.conf.beat_schedule = {
                              # previously provided by the (now 12h) location sync, so
                              # trial/grace/expiry transitions are NOT delayed.
     },
-    "check-scheduled-posts-every-minute": {
+    "check-scheduled-posts": {
         "task": "app.tasks.check_scheduled_posts_task",
-        "schedule": 60.0, # Every 60 seconds
+        "schedule": 180.0, # Every 3 minutes. The task publishes everything with
+                           # scheduled_at <= now (oldest-first, batched), so cadence
+                           # only sets max publish lag, not correctness. 3 min (vs 60s)
+                           # cuts this — the most frequent beat job — ~3x in Redis
+                           # commands + DB checks, at up to ~3 min publish delay.
     },
     "archive-activity-logs-daily": {
         "task": "app.tasks.archive_old_activity_logs_task",
@@ -104,6 +109,12 @@ celery.conf.beat_schedule = {
     "aggregate-comparison-insights-daily": {
         "task": "app.tasks_comparison.aggregate_comparison_insights_task",
         "schedule": crontab(hour=2, minute=0), # Daily at 2AM UTC, after sync-insights-daily
+    },
+    "send-weekly-reports": {
+        "task": "app.tasks_reports.send_weekly_reports_task",
+        "schedule": crontab(day_of_week="mon", hour=4, minute=0), # Mondays 4AM UTC —
+                            # after the daily insights (1AM) + comparison (2AM) jobs have
+                            # populated last week's metrics. Reports the prior 7 days.
     }
 }
 

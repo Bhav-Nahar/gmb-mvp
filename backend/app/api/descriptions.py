@@ -30,7 +30,11 @@ REGENERATION_CREDITS = 2
 # a draft that is genuinely short (<600) or invalid (>750, a hard flag); anything in
 # 600-750 is accepted as substantial. Biasing long happens in the prompt, not the loop.
 TARGET_MIN_CHARS = 600
-MAX_CORRECTIVE_PASSES = 2  # bound on LLM calls: initial + at most this many rewrites
+# One corrective rewrite only: initial + at most 1 rewrite = 2 LLM calls/request,
+# matching description_generator_service's "bounded at 2" contract. A draft still
+# policy-flagged after the single rewrite is returned unbilled (free /validate to
+# hand-edit), so the dropped second pass never costs the user a charge.
+MAX_CORRECTIVE_PASSES = 1
 
 
 class _Unbilled(Exception):
@@ -42,21 +46,15 @@ class _Unbilled(Exception):
 @router.post("/locations/{location_id}/description/generate", response_model=DescriptionResponse)
 async def generate_location_description(
     body: GenerateDescriptionRequest,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required),
 ):
+    location_id = location.id
     if current_user.role == Role.VIEWER:
         raise HTTPException(status_code=403, detail="Viewers cannot generate descriptions")
 
     assert_location_active(db, location_id)
-
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id,
-    ).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
 
     # First successful generation for this location costs more; regenerations are
     # cheaper. Blocked attempts never persist a row, so they never bump the price.
@@ -146,15 +144,10 @@ async def generate_location_description(
 @router.post("/locations/{location_id}/description/validate", response_model=ValidateDescriptionResponse)
 def validate_location_description(
     body: ValidateDescriptionRequest,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required),
 ):
     """Deterministic, no-LLM, no-credit policy check for live editing."""
-    location = db.query(Location.primary_category).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id,
-    ).first()
-    primary_category = location[0] if location else None
-    v = description_validation.validate(body.text, primary_category)
+    v = description_validation.validate(body.text, location.primary_category)
     return ValidateDescriptionResponse(**v)

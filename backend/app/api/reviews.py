@@ -331,7 +331,7 @@ async def generate_review_reply(
 
 @router.post("/locations/{location_id}/retag-sentiment", status_code=status.HTTP_200_OK)
 def retag_sentiment(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -339,15 +339,7 @@ def retag_sentiment(
     Reset sentiment_tagged_at for all non-deleted reviews of a location to NULL,
     then enqueue the sentiment tagging task.
     """
-    # Location scope is enforced by the require_location_access dependency.
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id
-    ).first()
-
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-
+    location_id = location.id
     # Reset all non-deleted reviews so they get re-tagged
     db.query(Review).filter(
         Review.location_id == location_id,

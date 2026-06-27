@@ -7,7 +7,10 @@ from app.core.redis_client import get_redis
 redis_client = get_redis()
 
 class ComparisonCacheService:
-    CACHE_TTL = 900  # 15 minutes
+    # 1 hour. Underlying group insights refresh only via the daily aggregation job,
+    # which explicitly flushes this cache (tasks_comparison.py), so the TTL is just a
+    # backstop — a longer one means more cache hits without serving staler data.
+    CACHE_TTL = 3600
 
     @staticmethod
     def _generate_key(org_id: int, group_type: str, date_hash: str, filter_hash: str) -> str:

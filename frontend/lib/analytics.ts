@@ -22,11 +22,6 @@ type EventParams = {
   payment_status?: string
   cta_location?: CtaLocation
   page_path?: string
-  utm_source?: string
-  gclid?: string
-  gbraid?: string
-  wbraid?: string
-  fbclid?: string
 }
 
 declare global {
@@ -35,7 +30,7 @@ declare global {
 
 export function generateEventId(): string {
   // crypto.randomUUID is native in all browsers we support
-  return "evt_" + (globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36) + Math.random().toString(36).slice(2))
+  return "evt_" + crypto.randomUUID()
 }
 
 // The only function that pushes to the dataLayer. Strips empty values, auto-adds page_path.

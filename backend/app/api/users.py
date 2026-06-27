@@ -19,7 +19,7 @@ from app.models.sync_log import SyncLog
 from app.models.location import Location
 from app.models.user_location_access import UserLocationAccess
 from app.models.audit_log import AuditLog
-from app.schemas.schemas import UserOut, RoleUpdate, LocationsUpdate, TransferOwnershipRequest
+from app.schemas.schemas import UserOut, RoleUpdate, LocationsUpdate, TransferOwnershipRequest, PreferencesUpdate
 from app.schemas.invite import InviteCreate, InviteURLResponse, InviteVerificationOut, InviteOut, InviteWithTokenOut
 from app.models.invite import Invite
 from app.services.invite_service import invite_service
@@ -44,7 +44,6 @@ class AttributionIn(BaseModel):
     fbp: str | None = Field(default=None, alias="_fbp")
     fbc: str | None = Field(default=None, alias="_fbc")
     landing_page: str | None = None
-    referrer: str | None = None
 
 
 @router.post("/me/attribution", status_code=status.HTTP_204_NO_CONTENT)
@@ -76,6 +75,26 @@ def save_attribution(
 def get_me(current_user: User = Depends(get_current_user)):
     """Retrieve currently authenticated Google user profile details."""
     # Transient (non-persisted) flag so the SPA can show/hide the super-admin panel.
+    current_user.is_superuser = settings.is_superadmin(current_user.email)
+    return current_user
+
+@router.patch("/me/preferences", response_model=UserOut)
+def update_my_preferences(
+    prefs: PreferencesUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update the authenticated user's own notification preferences.
+
+    Only the fields present in the request are changed (partial update), so the
+    same endpoint backs every toggle on the settings page.
+    """
+    if prefs.weekly_report_email is not None:
+        current_user.weekly_report_email = prefs.weekly_report_email
+    if prefs.lead_email_notifications is not None:
+        current_user.lead_email_notifications = prefs.lead_email_notifications
+    db.commit()
+    db.refresh(current_user)
     current_user.is_superuser = settings.is_superadmin(current_user.email)
     return current_user
 

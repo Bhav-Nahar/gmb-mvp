@@ -156,7 +156,6 @@ class Settings(BaseSettings):
     DATAFORSEO_LOGIN: str = ""
     DATAFORSEO_PASSWORD: str = ""
     DATAFORSEO_BASE_URL: str = "https://sandbox.dataforseo.com"
-    LOCAL_RANK_MAX_CONCURRENCY: int = 8  # concurrent live maps calls per scan
 
     # Task Settings
     REVIEW_SYNC_CHUNK_SIZE: int = 20
@@ -164,7 +163,7 @@ class Settings(BaseSettings):
     EDIT_STALE_TIMEOUT_MINUTES: int = 5
 
     # Storage Settings
-    STORAGE_PROVIDER: str = "local"  # "local", "s3", "r2"
+    STORAGE_PROVIDER: str = "local"  # "local", "r2"
     LOCAL_STORAGE_DIR: str = "static/uploads"
 
     # AWS S3 Configuration

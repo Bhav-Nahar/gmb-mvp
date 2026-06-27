@@ -125,10 +125,13 @@ async def upload_media(
     if media.post_id:
         from app.models.post_variant import PostVariant
         from app.services.health_score_service import HealthScoreService
-        variants = db.query(PostVariant).filter(PostVariant.post_id == media.post_id).all()
-        for variant in variants:
-            HealthScoreService.recalculate_health_score(db, variant.location_id, reason="media_upload")
-        if variants:
+        # Distinct locations only — recalc is idempotent per location, so loading full
+        # variant rows and recalculating duplicates just wastes queries.
+        location_ids = [row[0] for row in db.query(PostVariant.location_id)
+                        .filter(PostVariant.post_id == media.post_id).distinct()]
+        for location_id in location_ids:
+            HealthScoreService.recalculate_health_score(db, location_id, reason="media_upload")
+        if location_ids:
             db.commit()
 
 
@@ -210,10 +213,13 @@ def delete_media(
     if media.post_id:
         from app.models.post_variant import PostVariant
         from app.services.health_score_service import HealthScoreService
-        variants = db.query(PostVariant).filter(PostVariant.post_id == media.post_id).all()
-        for variant in variants:
-            HealthScoreService.recalculate_health_score(db, variant.location_id, reason="media_delete")
-        db.commit()
+        # Distinct locations only — recalc is idempotent per location (see upload path).
+        location_ids = [row[0] for row in db.query(PostVariant.location_id)
+                        .filter(PostVariant.post_id == media.post_id).distinct()]
+        for location_id in location_ids:
+            HealthScoreService.recalculate_health_score(db, location_id, reason="media_delete")
+        if location_ids:
+            db.commit()
 
 
     logger.info(

@@ -130,9 +130,9 @@ export default function ContactSection({ address, phone, website, businessHours,
   }, [businessHours])
 
   return (
-    <section id="contact" className="py-24 px-6 sm:px-12 bg-background scroll-mt-20">
-      <div className="max-w-6xl mx-auto animate-fade-up">
-        <div className="bg-slate-900 rounded-[2rem] overflow-hidden shadow-2xl grid lg:grid-cols-2 border border-slate-800">
+    <section id="contact" className="scroll-mt-28">
+      <div className="animate-fade-up">
+        <div className="bg-slate-900 rounded-[2rem] overflow-hidden shadow-2xl grid xl:grid-cols-2 border border-slate-800">
           
           {/* Left: contact details + hours */}
           <div className="p-8 md:p-12 text-white flex flex-col justify-between">
@@ -231,15 +231,15 @@ export default function ContactSection({ address, phone, website, businessHours,
 
           {/* Right: map */}
           {mapUrl && (
-            <div className="min-h-[400px] lg:min-h-full relative overflow-hidden group">
+            <div className="min-h-[400px] lg:min-h-full relative overflow-hidden group border-l border-slate-800">
               <iframe
                 title="Google Maps Location"
                 src={mapUrl}
-                className="w-full h-full min-h-[400px] border-0 grayscale hover:grayscale-0 transition-all duration-1000 scale-105 group-hover:scale-100"
+                className="w-full h-full min-h-[400px] border-0 transition-all duration-1000"
                 loading="lazy"
                 referrerPolicy="no-referrer-when-downgrade"
               />
-              <div className="absolute inset-0 pointer-events-none shadow-[inset_0_0_20px_rgba(0,0,0,0.1)]"></div>
+              <div className="absolute inset-0 pointer-events-none shadow-[inset_0_0_60px_rgba(15,23,42,1)] ring-1 ring-inset ring-slate-900/50"></div>
             </div>
           )}
         </div>

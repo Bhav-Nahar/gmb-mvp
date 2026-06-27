@@ -1,13 +1,14 @@
 from typing import Optional, List, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field, AnyHttpUrl, computed_field, field_validator, model_validator
+from app.schemas.base import ORMBase
 from app.constants.posts import PostType, PostStatus, CallToActionType, MediaType, PublishJobStatus, CampaignStatus
 
 # -----------------
 # Responses
 # -----------------
 
-class CampaignResponse(BaseModel):
+class CampaignResponse(ORMBase):
     id: int
     organization_id: int
     created_by_user_id: Optional[int]
@@ -23,9 +24,6 @@ class CampaignResponse(BaseModel):
     scheduled_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 class CampaignListResponse(BaseModel):
     campaigns: List[CampaignResponse]
@@ -43,7 +41,7 @@ class CampaignProgressResponse(BaseModel):
     total_rejected: int
     total_shadow_banned: int
 
-class PostResponse(BaseModel):
+class PostResponse(ORMBase):
     id: int
     organization_id: int
     campaign_id: Optional[int]
@@ -60,16 +58,13 @@ class PostResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 class PostListResponse(BaseModel):
     posts: List[PostResponse]
     total: int
     page: int
     pages: int
 
-class PostVariantResponse(BaseModel):
+class PostVariantResponse(ORMBase):
     id: int
     organization_id: int
     post_id: int
@@ -79,10 +74,7 @@ class PostVariantResponse(BaseModel):
     rendering_variables: Optional[Any]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
-class PostMediaResponse(BaseModel):
+class PostMediaResponse(ORMBase):
     id: int
     organization_id: int
     post_id: Optional[int] = None
@@ -104,15 +96,12 @@ class PostMediaResponse(BaseModel):
     deleted_at: Optional[datetime] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
     @computed_field
     @property
     def is_ready(self) -> bool:
         return self.upload_status == "Optimized" and self.validation_status == "Valid" and self.optimized_url is not None
 
-class PublishJobResponse(BaseModel):
+class PublishJobResponse(ORMBase):
     id: int
     organization_id: int
     campaign_id: Optional[int]
@@ -129,10 +118,7 @@ class PublishJobResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
-class PostAuditLogResponse(BaseModel):
+class PostAuditLogResponse(ORMBase):
     id: int
     organization_id: int
     post_id: int
@@ -143,10 +129,7 @@ class PostAuditLogResponse(BaseModel):
     log_metadata: Optional[Any]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
-class CampaignAuditLogResponse(BaseModel):
+class CampaignAuditLogResponse(ORMBase):
     id: int
     organization_id: int
     campaign_id: int
@@ -157,10 +140,7 @@ class CampaignAuditLogResponse(BaseModel):
     log_metadata: Optional[Any]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
-class CampaignPrimaryPost(BaseModel):
+class CampaignPrimaryPost(ORMBase):
     """Editable content of a campaign's primary post — surfaced so the UI can
     pre-fill the edit/reschedule dialog for a scheduled campaign."""
     id: int
@@ -169,9 +149,6 @@ class CampaignPrimaryPost(BaseModel):
     cta_type: Optional[str] = None
     cta_url: Optional[str] = None
     scheduled_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
 
 class CampaignDetailResponse(CampaignProgressResponse):
     name: Optional[str] = None

@@ -1,16 +1,14 @@
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
+from app.schemas.base import ORMBase
 
-class LocationSyncStatus(BaseModel):
+class LocationSyncStatus(ORMBase):
     location_id: int
     status: str          # "Success", "Failed", "Pending"
     last_synced_at: Optional[datetime] = None
     error_message: Optional[str] = None
     run_type: str         # "Scheduled" or "Manual"
-
-    class Config:
-        from_attributes = True
 
 class HealthScoreBreakdown(BaseModel):
     score: int
@@ -39,7 +37,7 @@ class HealthScoreRecommendation(BaseModel):
     potential_gain: int
     target_tab: str
 
-class LocationHealthScoreOut(BaseModel):
+class LocationHealthScoreOut(ORMBase):
     location_id: int
     score: int
     potential_score: int
@@ -48,9 +46,6 @@ class LocationHealthScoreOut(BaseModel):
     recommendations: list[HealthScoreRecommendation]
     last_recalculated_reason: str
     calculated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 class OrganizationHealthSummaryOut(BaseModel):
     average_score: int

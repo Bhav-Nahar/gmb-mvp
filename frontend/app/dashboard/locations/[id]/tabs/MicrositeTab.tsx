@@ -1,6 +1,7 @@
 import React, { useState } from "react"
 import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
 import { useAuth } from "@/hooks/useAuth"
+import { useBillingStatus } from "@/hooks/useBilling"
 import { SkeletonLoader } from "../components/SkeletonLoader"
 import { LeadsPanel } from "./LeadsPanel"
 import { Button } from "@/components/ui/button"
@@ -37,6 +38,11 @@ function formatDistanceToNow(dateStr: string): string {
 
 export function MicrositeTab({ locationId }: MicrositeTabProps) {
   const { isAdmin } = useAuth()
+  const { data: billing } = useBillingStatus()
+  // Microsites are a Pro-tier feature (enforced server-side too). Gate the
+  // create/publish entry points so Basic users see an upgrade prompt up front
+  // rather than hitting a 402 on click.
+  const hasMicrositeFeature = (billing?.features ?? []).includes("microsite")
   const {
     microsite,
     isMicrositeLoading,
@@ -85,6 +91,35 @@ export function MicrositeTab({ locationId }: MicrositeTabProps) {
   // line 105 if the error message text ever changes, since microsite would be
   // undefined and destructuring it would throw a runtime error.
   const noMicrositeExists = isMicrositeError || !microsite
+
+  // Pro-feature lock: Basic/trial orgs with no microsite yet see an upgrade card
+  // instead of the generate button. (A downgraded org that still has a microsite
+  // keeps the status view below so it can take its live page offline.)
+  if (noMicrositeExists && !hasMicrositeFeature) {
+    return (
+      <div className="animate-in fade-in duration-500 max-w-2xl mx-auto py-8">
+        <div className="bg-card border border-border rounded-2xl p-6 sm:p-8 text-center space-y-6 shadow-sm">
+          <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto">
+            <Lock className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">Microsites are a Pro feature</h2>
+            <p className="text-muted-foreground text-sm max-w-md mx-auto">
+              Launch a fast, public page for this location — showcasing details, reviews, and media to boost local search presence. Upgrade to Pro to unlock microsites.
+            </p>
+          </div>
+          <div className="pt-2">
+            <a
+              href="/dashboard/settings/billing"
+              className="inline-flex items-center justify-center rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors px-5 py-2.5 gap-2 shadow-md shadow-primary/10"
+            >
+              <ArrowUpRight className="w-4 h-4" /> Upgrade to Pro
+            </a>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (noMicrositeExists) {
     return (
@@ -172,13 +207,22 @@ export function MicrositeTab({ locationId }: MicrositeTabProps) {
             {isAdmin ? (
               <>
                 {status === "draft" && (
-                  <Button
-                    onClick={() => publishMicrositeMutation.mutate()}
-                    disabled={publishMicrositeMutation.isPending}
-                    className="shadow-sm font-medium"
-                  >
-                    {publishMicrositeMutation.isPending ? "Publishing..." : "Publish Microsite"}
-                  </Button>
+                  hasMicrositeFeature ? (
+                    <Button
+                      onClick={() => publishMicrositeMutation.mutate()}
+                      disabled={publishMicrositeMutation.isPending}
+                      className="shadow-sm font-medium"
+                    >
+                      {publishMicrositeMutation.isPending ? "Publishing..." : "Publish Microsite"}
+                    </Button>
+                  ) : (
+                    <a
+                      href="/dashboard/settings/billing"
+                      className="inline-flex items-center justify-center rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors px-4 py-2 gap-2 h-10 shadow-sm"
+                    >
+                      <Lock className="w-3.5 h-3.5" /> Upgrade to Pro to publish
+                    </a>
+                  )
                 )}
                 {status === "published" && (
                   <Button
@@ -201,13 +245,22 @@ export function MicrositeTab({ locationId }: MicrositeTabProps) {
                   </Button>
                 )}
                 {status === "unpublished" && (
-                  <Button
-                    onClick={() => publishMicrositeMutation.mutate()}
-                    disabled={publishMicrositeMutation.isPending}
-                    className="shadow-sm font-medium"
-                  >
-                    {publishMicrositeMutation.isPending ? "Re-publishing..." : "Re-publish"}
-                  </Button>
+                  hasMicrositeFeature ? (
+                    <Button
+                      onClick={() => publishMicrositeMutation.mutate()}
+                      disabled={publishMicrositeMutation.isPending}
+                      className="shadow-sm font-medium"
+                    >
+                      {publishMicrositeMutation.isPending ? "Re-publishing..." : "Re-publish"}
+                    </Button>
+                  ) : (
+                    <a
+                      href="/dashboard/settings/billing"
+                      className="inline-flex items-center justify-center rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors px-4 py-2 gap-2 h-10 shadow-sm"
+                    >
+                      <Lock className="w-3.5 h-3.5" /> Upgrade to Pro to re-publish
+                    </a>
+                  )
                 )}
               </>
             ) : (

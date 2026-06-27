@@ -156,18 +156,18 @@ export default function ReviewsSection({
   const totalDots = Math.max(1, filteredAndSortedReviews.length)
 
   return (
-    <section id="reviews" className="py-24 px-6 sm:px-12 bg-secondary/30 scroll-mt-20">
-      <div className="max-w-6xl mx-auto">
+    <section id="reviews" className="scroll-mt-28 relative">
+      <div>
         
         {/* Header */}
-        <div className="text-center mb-16 animate-fade-up">
-          <span className="text-sm font-bold tracking-[0.2em] text-primary uppercase">
+        <div className="mb-10 animate-fade-up">
+          <span className="text-xs font-bold tracking-[0.2em] text-primary uppercase">
             Testimonials
           </span>
-          <h2 className="text-4xl sm:text-5xl font-black text-foreground tracking-tight mt-4 mb-6">
+          <h2 className="text-3xl sm:text-4xl font-black text-foreground tracking-tight mt-3 mb-4">
             What Customers Say
           </h2>
-          <p className="text-muted-foreground max-w-2xl mx-auto text-lg leading-relaxed">
+          <p className="text-muted-foreground max-w-2xl text-base leading-relaxed">
             Verified ratings and customer reviews pulled directly from Google Business Profile.
           </p>
         </div>
@@ -264,19 +264,6 @@ export default function ReviewsSection({
               >
                 <Grid className="w-4 h-4" />
               </button>
-            </div>
-
-            <div className="relative w-full sm:w-64">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-muted-foreground">
-                <Search className="w-4 h-4" />
-              </span>
-              <input
-                type="text"
-                placeholder="Search feedback..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-11 pr-4 py-2.5 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all text-foreground"
-              />
             </div>
           </div>
 

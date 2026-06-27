@@ -1,10 +1,11 @@
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
+from app.schemas.base import ORMBase
 
 from app.schemas.reply_template import ReplyTemplateResponse
 
-class ReviewResponse(BaseModel):
+class ReviewResponse(ORMBase):
     id: int
     organization_id: int
     location_id: int
@@ -28,9 +29,6 @@ class ReviewResponse(BaseModel):
     sentiment_tagged_at: Optional[datetime] = None
     location_name: str
     suggested_templates: List[ReplyTemplateResponse] = []
-
-    class Config:
-        from_attributes = True
 
 class ReviewListResponse(BaseModel):
     reviews: List[ReviewResponse]
