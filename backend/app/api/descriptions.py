@@ -46,21 +46,15 @@ class _Unbilled(Exception):
 @router.post("/locations/{location_id}/description/generate", response_model=DescriptionResponse)
 async def generate_location_description(
     body: GenerateDescriptionRequest,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required),
 ):
+    location_id = location.id
     if current_user.role == Role.VIEWER:
         raise HTTPException(status_code=403, detail="Viewers cannot generate descriptions")
 
     assert_location_active(db, location_id)
-
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id,
-    ).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
 
     # First successful generation for this location costs more; regenerations are
     # cheaper. Blocked attempts never persist a row, so they never bump the price.
@@ -150,15 +144,10 @@ async def generate_location_description(
 @router.post("/locations/{location_id}/description/validate", response_model=ValidateDescriptionResponse)
 def validate_location_description(
     body: ValidateDescriptionRequest,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required),
 ):
     """Deterministic, no-LLM, no-credit policy check for live editing."""
-    location = db.query(Location.primary_category).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id,
-    ).first()
-    primary_category = location[0] if location else None
-    v = description_validation.validate(body.text, primary_category)
+    v = description_validation.validate(body.text, location.primary_category)
     return ValidateDescriptionResponse(**v)

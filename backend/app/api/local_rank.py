@@ -24,12 +24,13 @@ router = APIRouter()
 @router.post("/locations/{location_id}/local-rank/scan", response_model=ScanOut)
 def start_local_rank_scan(
     body: RunScanRequest,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required),
 ):
     """Queue a geo-grid rank scan. Charged on completion (in the Celery task), so a
     scan that fails to fetch never costs credits. Returns the Pending scan to poll."""
+    location_id = location.id
     if current_user.role == Role.VIEWER:
         raise HTTPException(status_code=403, detail="Viewers cannot run rank scans")
 
@@ -40,13 +41,6 @@ def start_local_rank_scan(
                             detail="Local Rank is available on the Pro plan. Upgrade to unlock it.")
 
     assert_location_active(db, location_id)
-
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id,
-    ).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
 
     latlng = location.latlng if isinstance(location.latlng, dict) else {}
     has_coords = latlng.get("latitude") is not None and latlng.get("longitude") is not None
@@ -95,13 +89,14 @@ def start_local_rank_scan(
 
 @router.get("/locations/{location_id}/local-rank/scans", response_model=list[ScanSummaryOut])
 def list_local_rank_scans(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required),
     limit: int = 20,
 ):
     """History list — lightweight (no cells). Each item carries a precomputed centre
     (mean of the grid points) so the UI can draw a live preview without the full cells."""
+    location_id = location.id
     rows = (
         db.query(LocalRankScan)
         .filter(LocalRankScan.location_id == location_id)
@@ -126,10 +121,11 @@ def list_local_rank_scans(
 @router.get("/locations/{location_id}/local-rank/scans/{scan_id}", response_model=ScanOut)
 def get_local_rank_scan(
     scan_id: int,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required),
 ):
+    location_id = location.id
     scan = db.query(LocalRankScan).filter(
         LocalRankScan.id == scan_id,
         LocalRankScan.location_id == location_id,

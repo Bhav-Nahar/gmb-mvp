@@ -12,6 +12,7 @@ import Breadcrumbs from '@/components/microsite/Breadcrumbs'
 import AboutSection from '@/components/microsite/AboutSection'
 import LeadForm from '@/components/microsite/LeadForm'
 import Footer from '@/components/microsite/Footer'
+import BackToTop from '@/components/microsite/BackToTop'
 import { buildLocalBusinessJsonLd, buildBreadcrumbJsonLd } from '@/lib/microsite/jsonld'
 
 // Enable ISR caching (revalidate every 3600 seconds / 1 hour)
@@ -167,44 +168,61 @@ export default async function MicrositePage({ params }: { params: { slug: string
         mapLink={mapLink}
       />
 
-      <AboutSection description={data.description} name={data.location_name} />
+      <div className="max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-20 relative">
+        <div className="flex flex-col lg:flex-row gap-8 lg:gap-10">
+          
+          {/* Main Content Column */}
+          <div className="w-full lg:w-[72%] flex flex-col gap-16 lg:gap-24">
+            <AboutSection description={data.description} name={data.location_name} />
+            
+            <ServicesSection serviceItems={data.service_items} />
+            
+            <Gallery photos={data.photos} />
+            
+            <ReviewsSection
+              reviews={data.reviews}
+              averageRating={data.average_rating}
+              totalReviews={data.total_reviews}
+              reviewUrl={data.review_url}
+            />
+            
+            <ContactSection
+              address={data.address}
+              phone={data.phone}
+              website={data.website}
+              businessHours={data.business_hours}
+              latlng={data.latlng}
+              mapsUrl={data.maps_url}
+            />
+            
+            <CTASection
+              phone={data.phone}
+              website={data.website}
+              mapLink={mapLink}
+              whatsapp={whatsapp}
+              reviewUrl={data.review_url}
+            />
+            
+            <div className="pt-8 border-t border-border">
+              <SocialLinks links={otherSocials} />
+            </div>
+          </div>
 
-      <ServicesSection serviceItems={data.service_items} />
+          {/* Sticky Sidebar */}
+          <div className="w-full lg:w-[28%]">
+            <div className="sticky top-28">
+              <LeadForm
+                slug={params.slug}
+                businessName={data.location_name}
+                whatsapp={whatsapp}
+              />
+            </div>
+          </div>
 
-      <Gallery photos={data.photos} />
+        </div>
+      </div>
 
-      <ReviewsSection
-        reviews={data.reviews}
-        averageRating={data.average_rating}
-        totalReviews={data.total_reviews}
-        reviewUrl={data.review_url}
-      />
-
-      <LeadForm
-        slug={params.slug}
-        businessName={data.location_name}
-        whatsapp={whatsapp}
-      />
-
-      <ContactSection
-        address={data.address}
-        phone={data.phone}
-        website={data.website}
-        businessHours={data.business_hours}
-        latlng={data.latlng}
-        mapsUrl={data.maps_url}
-      />
-
-      <CTASection
-        phone={data.phone}
-        website={data.website}
-        mapLink={mapLink}
-        whatsapp={whatsapp}
-        reviewUrl={data.review_url}
-      />
-
-      <SocialLinks links={otherSocials} />
-
+      <BackToTop />
       <Footer businessName={data.location_name} />
 
       {/* Floating Mobile CTA Action Bar */}

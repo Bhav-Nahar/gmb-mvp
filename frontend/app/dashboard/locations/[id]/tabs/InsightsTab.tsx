@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
   Eye,
@@ -52,40 +53,33 @@ interface LocationInsightsResponse {
 }
 
 export function InsightsTab({ locationId }: { locationId: number }) {
+  const queryClient = useQueryClient()
   const [range, setRange] = useState('30')
-  const [data, setData] = useState<LocationInsightsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
-  const [error, setError] = useState('')
   const [selectedMetrics, setSelectedMetrics] = useState<Set<TrendMetricKey>>(
     new Set<TrendMetricKey>(['profile_views', 'search_impressions'])
   )
 
-  useEffect(() => {
-    fetchLocationInsights()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range])
-
-  const fetchLocationInsights = async () => {
-    setLoading(true)
-    setError('')
-    try {
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery<LocationInsightsResponse>({
+    queryKey: ['location-insights', locationId, range],
+    queryFn: () => {
       const today = new Date()
       const endStr = today.toISOString().split('T')[0]
       const start = new Date()
       start.setDate(today.getDate() - parseInt(range))
       const startStr = start.toISOString().split('T')[0]
 
-      const res = await api.get<LocationInsightsResponse>(
+      return api.get<LocationInsightsResponse>(
         `/insights/locations/${locationId}?start_date=${startStr}&end_date=${endStr}`
       )
-      setData(res)
-    } catch (err: any) {
-      setError(err.message || 'Failed to load insights.')
-    } finally {
-      setLoading(false)
-    }
-  }
+    },
+  })
+
+  const error = queryError ? ((queryError as any).message || 'Failed to load insights.') : ''
 
   const triggerManualSync = async () => {
     setSyncing(true)
@@ -98,7 +92,9 @@ export function InsightsTab({ locationId }: { locationId: number }) {
 
       await api.post(`/insights/locations/${locationId}/sync?start_date=${startStr}&end_date=${endStr}`, {})
       toast.success('Synchronization task queued successfully!')
-      setTimeout(fetchLocationInsights, 2000)
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['location-insights', locationId, range] })
+      }, 2000)
     } catch (err: any) {
       toast.error(err.message || 'Failed to queue sync task.')
     } finally {

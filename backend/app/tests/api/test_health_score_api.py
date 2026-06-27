@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.db.session import get_db
-from app.api.deps import staff_required, get_current_user
+from app.api.deps import staff_required, get_current_user, require_location_access
 import app.api.deps as deps_module
 
 
@@ -55,6 +55,8 @@ def client(fake_admin_user, monkeypatch):
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[staff_required] = lambda: fake_admin_user
     app.dependency_overrides[get_current_user] = lambda: fake_admin_user
+    # The endpoint reads location.id from the require_location_access dependency.
+    app.dependency_overrides[require_location_access] = lambda: SimpleNamespace(id=42)
     try:
         yield TestClient(app)
     finally:

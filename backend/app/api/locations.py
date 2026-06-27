@@ -101,37 +101,24 @@ async def get_locations_sla_summary(
 
 @router.get("/{location_id}/sla", response_model=LocationSLAMetrics)
 async def get_location_sla(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
     """Fetch SLA metrics for a specific location."""
         
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id
-    ).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-
+    location_id = location.id
     return await get_location_sla_metrics(location_id, current_user.organization_id, db)
 
 @router.post("/{location_id}/sla/enable", status_code=status.HTTP_200_OK)
 def enable_location_sla(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required)
 ):
     """Enable SLA tracking for a specific location."""
         
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id
-    ).first()
-    
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-
+    location_id = location.id
     now = datetime.now(timezone.utc)
     result = db.execute(
         update(Location)
@@ -199,20 +186,11 @@ def get_organization_health_summary(
 
 @router.get("/{location_id}", response_model=LocationOut)
 def get_location(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
     """Fetch a specific location by ID."""
-    # Location scope is enforced by the require_location_access dependency.
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id
-    ).first()
-    
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-        
     return location
 
 @router.get("/categories/search")
@@ -324,7 +302,7 @@ def trigger_sync(
 
 @router.get("/{location_id}/sync-status", response_model=LocationSyncStatus)
 def get_location_sync_status(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
@@ -332,14 +310,7 @@ def get_location_sync_status(
     Get the sync status of a specific location.
     Enforces that the location belongs to the user's organization.
     """
-
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id
-    ).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-
+    location_id = location.id
     latest_log = db.query(SyncLog).filter(
         SyncLog.location_id == location_id,
         SyncLog.organization_id == current_user.organization_id
@@ -373,11 +344,12 @@ def get_location_sync_status(
 
 @router.get("/{location_id}/health-score", response_model=LocationHealthScoreOut)
 def get_location_health_score(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
     """Fetch the health score for a specific location. If it doesn't exist, calculate it."""
+    location_id = location.id
     # Tenant boundary AND per-user location scope are both enforced by the
     # require_location_access dependency, so location_id is guaranteed to belong
     # to current_user's organization here (prevents the cross-tenant IDOR where an

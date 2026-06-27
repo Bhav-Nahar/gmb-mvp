@@ -59,7 +59,10 @@ class Organization(Base):
     fbp = Column(String, nullable=True)
     fbc = Column(String, nullable=True)
     landing_page = Column(String, nullable=True)
-    referrer = Column(String, nullable=True)
+    # Customer IP + user-agent from the most recent /billing/confirm request, used as
+    # Meta CAPI match keys (the webhook itself only sees Razorpay's IP).
+    conv_client_ip = Column(String, nullable=True)
+    conv_user_agent = Column(String, nullable=True)
     attribution_captured_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (

@@ -25,16 +25,6 @@ def _require_microsite_feature(db: Session, organization_id: int) -> None:
             detail="Microsites are available on the Pro plan. Upgrade to unlock them.",
         )
 
-def _get_location_or_404(db: Session, location_id: int, organization_id: int) -> Location:
-    """Helper to verify location exists and belongs to the requesting org."""
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == organization_id
-    ).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-    return location
-
 def _get_microsite_or_404(db: Session, location_id: int, organization_id: int) -> Microsite:
     """Helper to get microsite and verify tenancy."""
     microsite = db.query(Microsite).filter(
@@ -47,7 +37,7 @@ def _get_microsite_or_404(db: Session, location_id: int, organization_id: int) -
 
 @router.post("/{location_id}/microsite/generate", response_model=MicrositeResponse, status_code=status.HTTP_200_OK)
 def generate_microsite(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required)
 ):
@@ -56,21 +46,19 @@ def generate_microsite(
     Idempotent.
     """
     _require_microsite_feature(db, current_user.organization_id)
-    location = _get_location_or_404(db, location_id, current_user.organization_id)
     return microsite_service.generate_microsite(db, current_user.organization, location)
 
 @router.post("/{location_id}/microsite/publish", response_model=MicrositeResponse, status_code=status.HTTP_200_OK)
 def publish_microsite(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required)
 ):
     """
     Publish a microsite, making it publicly accessible.
     """
+    location_id = location.id
     _require_microsite_feature(db, current_user.organization_id)
-    # Defensive check: ensure location exists
-    _get_location_or_404(db, location_id, current_user.organization_id)
     microsite = _get_microsite_or_404(db, location_id, current_user.organization_id)
     
     if not microsite.org_slug or not microsite.location_slug:
@@ -86,14 +74,14 @@ def publish_microsite(
 
 @router.post("/{location_id}/microsite/unpublish", response_model=MicrositeResponse, status_code=status.HTTP_200_OK)
 def unpublish_microsite(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required)
 ):
     """
     Unpublish a microsite, taking it offline but preserving its slugs.
     """
-    _get_location_or_404(db, location_id, current_user.organization_id)
+    location_id = location.id
     microsite = _get_microsite_or_404(db, location_id, current_user.organization_id)
     res = microsite_service.unpublish_microsite(db, microsite)
     from app.services.revalidation_service import trigger_bulk_microsite_revalidation
@@ -102,12 +90,11 @@ def unpublish_microsite(
 
 @router.get("/{location_id}/microsite", response_model=MicrositeResponse, status_code=status.HTTP_200_OK)
 def get_microsite(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
     """
     Get the current microsite status. Used by the dashboard to show status.
     """
-    _get_location_or_404(db, location_id, current_user.organization_id)
-    return _get_microsite_or_404(db, location_id, current_user.organization_id)
+    return _get_microsite_or_404(db, location.id, current_user.organization_id)

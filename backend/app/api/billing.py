@@ -118,6 +118,7 @@ def buy_credits(
 @router.post("/confirm")
 def confirm_payment(
     request: ConfirmRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _: User = Depends(admin_required),
@@ -133,6 +134,12 @@ def confirm_payment(
     org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Snapshot the customer's real IP + UA here (this is their browser request); the
+    # webhook-fired Meta CAPI conversion can't see them since it runs off Razorpay's call.
+    fwd = http_request.headers.get("x-forwarded-for")
+    org.conv_client_ip = fwd.split(",")[0].strip() if fwd else (http_request.client.host if http_request.client else None)
+    org.conv_user_agent = http_request.headers.get("user-agent")
 
     client = SubscriptionService.get_razorpay_client()
     try:

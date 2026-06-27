@@ -23,22 +23,22 @@ def _sha256(v: str | None) -> str | None:
 
 def fire_purchase_conversion(
     *, payment_id: str, amount_paise: int, currency: str,
-    email: str | None, attribution: dict,
+    email: str | None, attribution: dict, user_id: int | str | None = None,
 ) -> None:
     """Best-effort Purchase conversion to Meta + Google. attribution is a plain dict
     with gclid/gbraid/wbraid/fbclid/fbp/fbc/landing_page (whatever was captured)."""
     value = round((amount_paise or 0) / 100, 2)
     try:
-        _meta_capi(payment_id, value, currency, email, attribution)
+        _meta_capi(payment_id, value, currency, email, attribution, user_id)
     except Exception as e:
         logger.error("Meta CAPI conversion failed for payment %s: %s", payment_id, e)
     try:
-        _google_ads(value, currency, attribution)
+        _google_ads(value, currency, attribution, payment_id)
     except Exception as e:
         logger.error("Google Ads conversion failed for payment %s: %s", payment_id, e)
 
 
-def _meta_capi(payment_id, value, currency, email, attr) -> None:
+def _meta_capi(payment_id, value, currency, email, attr, user_id=None) -> None:
     if not (settings.META_PIXEL_ID and settings.META_CAPI_ACCESS_TOKEN):
         return
     user_data = {}
@@ -49,6 +49,16 @@ def _meta_capi(payment_id, value, currency, email, attr) -> None:
         user_data["fbp"] = attr["fbp"]
     if attr.get("fbc"):
         user_data["fbc"] = attr["fbc"]
+    # external_id: stable hashed user id, same identifier the browser event sends.
+    ext = _sha256(str(user_id)) if user_id else None
+    if ext:
+        user_data["external_id"] = [ext]
+    # IP + user-agent (NOT hashed) — Meta's strongest server-side match signals. Captured
+    # at the customer-facing /confirm request, not here (the webhook's IP is Razorpay's).
+    if attr.get("client_ip_address"):
+        user_data["client_ip_address"] = attr["client_ip_address"]
+    if attr.get("client_user_agent"):
+        user_data["client_user_agent"] = attr["client_user_agent"]
     if not user_data:
         logger.info("Meta CAPI skipped (payment %s): no match keys", payment_id)
         return
@@ -61,6 +71,10 @@ def _meta_capi(payment_id, value, currency, email, attr) -> None:
         "user_data": user_data,
         "custom_data": {"currency": currency, "value": value},
     }
+    lp = attr.get("landing_page")
+    if lp:
+        # landing_page is a path ("/pricing?..."); Meta wants a full URL.
+        event["event_source_url"] = lp if lp.startswith("http") else settings.FRONTEND_URL.rstrip("/") + lp
     url = f"https://graph.facebook.com/{settings.META_CAPI_API_VERSION}/{settings.META_PIXEL_ID}/events"
     resp = httpx.post(
         url,
@@ -72,7 +86,7 @@ def _meta_capi(payment_id, value, currency, email, attr) -> None:
     logger.info("Meta CAPI Purchase sent for payment %s", payment_id)
 
 
-def _google_ads(value, currency, attr) -> None:
+def _google_ads(value, currency, attr, payment_id=None) -> None:
     g = settings
     if not (g.GOOGLE_ADS_DEVELOPER_TOKEN and g.GOOGLE_ADS_CLIENT_ID and g.GOOGLE_ADS_CLIENT_SECRET
             and g.GOOGLE_ADS_REFRESH_TOKEN and g.GOOGLE_ADS_CUSTOMER_ID and g.GOOGLE_ADS_CONVERSION_ACTION_ID):
@@ -103,6 +117,9 @@ def _google_ads(value, currency, attr) -> None:
         "conversionValue": value,
         "currencyCode": currency,
     }
+    if payment_id:
+        # orderId is Google's dedup key: a retried task re-uploads the same id, no double count.
+        conversion["orderId"] = payment_id
     # gclid preferred; gbraid/wbraid are the iOS/privacy-safe fallbacks.
     if gclid:
         conversion["gclid"] = gclid

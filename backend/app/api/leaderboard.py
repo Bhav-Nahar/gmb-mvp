@@ -256,11 +256,12 @@ def get_periods(
 
 @router.get("/{location_id}/history")
 def get_history(
-    location_id: int = Depends(deps.require_location_access),
+    location: Location = Depends(deps.require_location_access),
     limit: int = Query(12, ge=1, le=24),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
+    location_id = location.id
     history = db.query(LeaderboardSnapshot).filter(
         LeaderboardSnapshot.organization_id == current_user.organization_id,
         LeaderboardSnapshot.location_id == location_id
@@ -280,11 +281,12 @@ def get_history(
 
 @router.get("/{location_id}/explain")
 def get_explain(
-    location_id: int = Depends(deps.require_location_access),
+    location: Location = Depends(deps.require_location_access),
     period: Optional[str] = Query(None),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
+    location_id = location.id
     if not period:
         latest_period = db.query(LeaderboardSnapshot.period_label).filter(
             LeaderboardSnapshot.organization_id == current_user.organization_id,
@@ -370,11 +372,12 @@ def get_explain(
 
 @router.get("/{location_id}/next-action")
 def get_next_action(
-    location_id: int = Depends(deps.require_location_access),
+    location: Location = Depends(deps.require_location_access),
     period: Optional[str] = Query(None),
     current_user: User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ):
+    location_id = location.id
     if not period:
         latest = db.query(LeaderboardSnapshot.period_label).filter(
             LeaderboardSnapshot.organization_id == current_user.organization_id,

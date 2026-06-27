@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
+from app.schemas.base import ORMBase
 
 
 class RunScanRequest(BaseModel):
@@ -34,7 +35,7 @@ class CellOut(BaseModel):
     top_results: List[ResultRow] = []      # top ~10 businesses at this point for the pin popup
 
 
-class ScanOut(BaseModel):
+class ScanOut(ORMBase):
     id: int
     keyword: str
     grid_size: int
@@ -48,9 +49,6 @@ class ScanOut(BaseModel):
     credits_charged: int
     error: Optional[str] = None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ScanSummaryOut(BaseModel):

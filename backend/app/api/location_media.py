@@ -32,7 +32,7 @@ PUBLISH_STALE_MINUTES = 10
 )
 def publish_location_media(
     payload: LocationMediaCreate,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required),
 ):
@@ -42,14 +42,8 @@ def publish_location_media(
     returns a PostMedia id + cdn_url); we reference that asset here and send its
     public URL to Google as the photo `sourceUrl`.
     """
+    location_id = location.id
     assert_location_active(db, location_id)
-
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id,
-    ).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found.")
 
     # Google only accepts media for verified locations.
     if location.is_verified is False:
@@ -115,7 +109,7 @@ def publish_location_media(
     response_model=list[LocationMediaResponse],
 )
 def list_location_media(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -125,6 +119,7 @@ def list_location_media(
     (debounced to once/60s per location) so photos uploaded outside our app
     appear shortly after opening the tab.
     """
+    location_id = location.id
     # Stuck-Publishing recovery: a row left in PUBLISHING past the threshold means
     # the worker crashed or never ran — surface it as Failed instead of forever-spinning.
     stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=PUBLISH_STALE_MINUTES)

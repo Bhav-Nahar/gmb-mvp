@@ -31,9 +31,6 @@ MIN_DAYS_SYNCED_FOR_ELIGIBILITY = 14
 # chains (5-50 locations). Large chains (500+ locations) may need to raise these quickly
 # after seeing real data, to avoid a fluke 3-review location ranking artificially high.
 
-LEADERBOARD_SNAPSHOT_PERIOD = "monthly"
-# Reserved for future weekly support. Keep as a string constant.
-
 # Cohort ranking: locations are ranked within review-volume bands so a fluke 3-review
 # location isn't ranked against a 5,000-review one. Global rank is kept too; cohort_rank
 # is the fair within-peer-group position. (min_reviews_inclusive, label), descending.

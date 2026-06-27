@@ -44,7 +44,6 @@ class AttributionIn(BaseModel):
     fbp: str | None = Field(default=None, alias="_fbp")
     fbc: str | None = Field(default=None, alias="_fbc")
     landing_page: str | None = None
-    referrer: str | None = None
 
 
 @router.post("/me/attribution", status_code=status.HTTP_204_NO_CONTENT)

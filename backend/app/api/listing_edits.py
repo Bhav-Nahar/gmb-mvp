@@ -7,6 +7,7 @@ from app.api.deps import get_db, get_current_user, admin_required, staff_require
 from app.core.roles import Role
 from app.core.authorization import assert_location_access
 from app.models.user import User
+from app.models.location import Location
 from app.models.location_edit import LocationEdit
 from app.models.activity_log import ActivityLog
 from app.schemas.listing_edits import (
@@ -53,11 +54,12 @@ def get_field_config(current_user: User = Depends(get_current_user)):
 @router.post("/locations/{location_id}/edits", response_model=LocationEditResponse, status_code=201)
 def create_edit(
     payload: LocationEditCreate,
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Staff: creates a Draft. Admin: creates and auto-advances to Pending."""
+    location_id = location.id
     from app.core.authorization import assert_location_active
     assert_location_active(db, location_id)
     try:
@@ -83,7 +85,7 @@ def create_edit(
 
 @router.get("/locations/{location_id}/edits", response_model=list[LocationEditResponse])
 def list_edits(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     status_filter: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -91,6 +93,7 @@ def list_edits(
     """
     Returns edits for a location. Enforces stale Publishing recovery.
     """
+    location_id = location.id
     # ── Stale Publishing Recovery Rule ────────────────────────────────────────
     stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.EDIT_STALE_TIMEOUT_MINUTES)
     stale_edits = db.query(LocationEdit).filter(
@@ -246,14 +249,14 @@ def publish_edit(
 
 @router.get("/locations/{location_id}/activity", response_model=list[ActivityLogResponse])
 def get_activity_log(
-    location_id: int = Depends(require_location_access),
+    location: Location = Depends(require_location_access),
     limit: int = Query(50, le=200),
     offset: int = Query(0),
     entity_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Location scope is enforced by the require_location_access dependency.
+    location_id = location.id
     query = db.query(ActivityLog).filter(
         ActivityLog.location_id == location_id,
         ActivityLog.organization_id == current_user.organization_id,

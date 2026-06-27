@@ -391,7 +391,7 @@ export default function HomeClient() {
 
       {/* Mobile menu */}
       {mobileMenuOpen && (
-        <div className="fixed inset-0 top-16 z-40 w-full border-b border-border bg-background/95 backdrop-blur-lg duration-200 animate-in fade-in md:hidden">
+        <div className="fixed inset-0 top-16 z-40 w-full border-b border-border bg-background/95 backdrop-blur-lg duration-300 animate-in fade-in slide-in-from-top-4 md:hidden">
           <div className="flex flex-col gap-2 p-6">
             {[['how', 'How it works'], ['features', 'Features'], ['rank', 'Local Rank'], ['pricing', 'Pricing'], ['faq', 'FAQ']].map(([id, label]) => (
               <button key={id} onClick={() => scrollToSection(id)} className="border-b border-border/50 py-3 text-left text-sm font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground">
@@ -433,6 +433,17 @@ export default function HomeClient() {
               <button onClick={() => scrollToSection('pricing')} className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
                 View Pricing <ArrowRight className="h-4 w-4" />
               </button>
+            </div>
+            
+            <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row lg:justify-start">
+              <div className="flex -space-x-3">
+                <img className="inline-block h-9 w-9 rounded-full ring-2 ring-background shadow-sm" src="https://i.pravatar.cc/100?img=1" alt="" />
+                <img className="inline-block h-9 w-9 rounded-full ring-2 ring-background shadow-sm" src="https://i.pravatar.cc/100?img=33" alt="" />
+                <img className="inline-block h-9 w-9 rounded-full ring-2 ring-background shadow-sm" src="https://i.pravatar.cc/100?img=12" alt="" />
+                <img className="inline-block h-9 w-9 rounded-full ring-2 ring-background shadow-sm" src="https://i.pravatar.cc/100?img=45" alt="" />
+                <img className="inline-block h-9 w-9 rounded-full ring-2 ring-background shadow-sm" src="https://i.pravatar.cc/100?img=60" alt="" />
+              </div>
+              <p className="text-xs font-semibold text-muted-foreground">⭐ Loved by <span className="font-bold text-foreground">500+</span> local SEO agencies</p>
             </div>
           </Reveal>
           {error && <div className="mx-auto max-w-md rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs font-semibold text-red-500 lg:mx-0">{error}</div>}
@@ -516,8 +527,8 @@ export default function HomeClient() {
           <Reveal delay={120}>
             <div className="flex h-full flex-col gap-3 rounded-2xl border border-border bg-card p-6 shadow-sm">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"><Search className="h-5 w-5 text-primary" /></div>
-              <h3 className="text-sm font-bold text-foreground">Search Intelligence</h3>
-              <p className="text-xs leading-relaxed text-muted-foreground">See the exact keywords customers use to find you, split branded vs. discovery searches, and track impressions over time.</p>
+              <h3 className="text-base font-bold text-foreground">Search Intelligence</h3>
+              <p className="text-sm leading-relaxed text-muted-foreground">See the exact keywords customers use to find you, split branded vs. discovery searches, and track impressions over time.</p>
             </div>
           </Reveal>
 
@@ -534,8 +545,8 @@ export default function HomeClient() {
             <Reveal key={f.title} delay={(i % 3) * 60}>
               <div className="flex h-full flex-col gap-3 rounded-2xl border border-border bg-card p-6 shadow-sm transition-shadow hover:shadow-md">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"><f.icon className="h-5 w-5 text-primary" /></div>
-                <h3 className="text-sm font-bold text-foreground">{f.title}</h3>
-                <p className="text-xs leading-relaxed text-muted-foreground">{f.desc}</p>
+                <h3 className="text-base font-bold text-foreground">{f.title}</h3>
+                <p className="text-sm leading-relaxed text-muted-foreground">{f.desc}</p>
               </div>
             </Reveal>
           ))}
@@ -613,8 +624,8 @@ export default function HomeClient() {
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"><item.icon className="h-5 w-5 text-primary" /></div>
                   <span className="text-2xl font-extrabold text-muted-foreground/20">{item.step}</span>
                 </div>
-                <h3 className="text-sm font-bold text-foreground">{item.title}</h3>
-                <p className="text-xs leading-relaxed text-muted-foreground">{item.desc}</p>
+                <h3 className="text-base font-bold text-foreground">{item.title}</h3>
+                <p className="text-sm leading-relaxed text-muted-foreground">{item.desc}</p>
               </div>
             </Reveal>
           ))}
@@ -662,14 +673,25 @@ export default function HomeClient() {
             </div>
             <button onClick={() => handleContinueWithGoogle('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-border pt-5 text-xs font-semibold text-muted-foreground">
-              {[`${basicQuote ? basicQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 30} AI credits / month`, '30 AI credits per location', 'Unified review inbox + AI replies', 'Google Posts scheduler', 'Multi-location analytics & audits', 'Team roles & permissions'].map((t) => (
+              {[
+                `${basicQuote ? basicQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 30} AI credits / month`,
+                '30 AI credits per location',
+                'Unified review inbox with AI drafts',
+                'Automated review SLAs & tracking',
+                'Bulk Google Posts scheduler',
+                'Multi-location performance analytics',
+                'Automated GMB health audits',
+                'Role-based access (RBAC) & permissions'
+              ].map((t) => (
                 <li key={t} className="flex items-center gap-2"><Check className="h-3.5 w-3.5 shrink-0 text-primary" />{t}</li>
               ))}
             </ul>
           </div>
 
           {/* PRO (highlighted) */}
-          <div className="relative flex flex-col gap-5 rounded-2xl border-2 border-primary bg-primary/5 p-8 shadow-md">
+          <div className="relative flex flex-col gap-5 rounded-2xl border-2 border-primary bg-primary/5 p-8 shadow-xl">
+            {/* Background glow */}
+            <div className="pointer-events-none absolute -inset-1 -z-10 rounded-2xl bg-primary/20 blur-xl" />
             <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-primary px-3 py-0.5 text-[9px] font-extrabold uppercase tracking-widest text-primary-foreground">Most popular</span>
             <div className="space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
@@ -682,7 +704,17 @@ export default function HomeClient() {
             </div>
             <button onClick={() => handleContinueWithGoogle('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-primary/20 pt-5 text-xs font-semibold text-foreground">
-              {['Everything in Basic, plus:', `${proQuote ? proQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 45} AI credits / month`, '45 AI credits per location', 'Local Rank heatmaps (geo-grid)', 'Lead-capture microsites', 'Location leaderboard + cohort ranking', 'Search intelligence'].map((t, i) => (
+              {[
+                'Everything in Basic, plus:',
+                `${proQuote ? proQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 45} AI credits / month`,
+                '45 AI credits per location',
+                'Local rank heatmaps (7x7 geo-grid)',
+                'Lead-capture microsite per location',
+                'Location leaderboard & cohort ranking',
+                'Search term intelligence',
+                'Review sentiment & issue AI tagging',
+                'Competitor tracking & insights'
+              ].map((t, i) => (
                 <li key={t} className="flex items-center gap-2">{i === 0 ? <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" /> : <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}{t}</li>
               ))}
             </ul>

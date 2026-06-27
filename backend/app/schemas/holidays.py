@@ -1,11 +1,10 @@
 from datetime import date as date_type, datetime
 from typing import Optional, List
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, field_validator
+from app.schemas.base import ORMBase
 
 
-class HolidayOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class HolidayOut(ORMBase):
     id: int
     date: date_type
     name: str

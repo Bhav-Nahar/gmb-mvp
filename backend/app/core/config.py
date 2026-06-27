@@ -163,7 +163,7 @@ class Settings(BaseSettings):
     EDIT_STALE_TIMEOUT_MINUTES: int = 5
 
     # Storage Settings
-    STORAGE_PROVIDER: str = "local"  # "local", "s3", "r2"
+    STORAGE_PROVIDER: str = "local"  # "local", "r2"
     LOCAL_STORAGE_DIR: str = "static/uploads"
 
     # AWS S3 Configuration

@@ -1,31 +1,26 @@
 from datetime import datetime
 from typing import Optional, List, Any
 from pydantic import BaseModel, EmailStr
+from app.schemas.base import ORMBase
 
 # Organization schemas
 class OrganizationBase(BaseModel):
     name: str
 
-class OrganizationOut(OrganizationBase):
+class OrganizationOut(OrganizationBase, ORMBase):
     id: int
     created_at: datetime
     
-    class Config:
-        from_attributes = True
-
 # OAuthAccount schemas
-class OAuthAccountOut(BaseModel):
+class OAuthAccountOut(ORMBase):
     id: int
     provider: str
     provider_account_id: str
     expires_at: datetime
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
 # User schemas
-class UserOut(BaseModel):
+class UserOut(ORMBase):
     id: int
     email: EmailStr
     name: str
@@ -45,9 +40,6 @@ class UserOut(BaseModel):
 
     # We can include active accounts
     oauth_accounts: List[OAuthAccountOut] = []
-
-    class Config:
-        from_attributes = True
 
 class PreferencesUpdate(BaseModel):
     weekly_report_email: Optional[bool] = None
@@ -70,7 +62,7 @@ class Token(BaseModel):
     user: UserOut
 
 # Location schemas
-class LocationOut(BaseModel):
+class LocationOut(ORMBase):
     id: int
     google_location_id: str
     location_name: str
@@ -116,20 +108,14 @@ class LocationOut(BaseModel):
     # Embedded Microsite Status
     microsite_status: Optional[str] = None
 
-    class Config:
-        from_attributes = True
-
 # SyncLog schemas
-class SyncLogOut(BaseModel):
+class SyncLogOut(ORMBase):
     id: int
     location_id: Optional[int] = None
     status: str
     error_message: Optional[str] = None
     run_type: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 class SyncLogPaginated(BaseModel):
     items: List[SyncLogOut]

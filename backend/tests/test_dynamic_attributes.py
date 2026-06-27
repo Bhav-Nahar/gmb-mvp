@@ -107,7 +107,7 @@ class DynamicAttributesCacheTests(unittest.TestCase):
         import asyncio
         # Call get_form_schema (async def) using asyncio.run
         response = asyncio.run(get_form_schema(
-            location_id=self.location.id,
+            location=self.location,
             db=self.db,
             current_user=self.user
         ))
@@ -119,7 +119,7 @@ class DynamicAttributesCacheTests(unittest.TestCase):
         mock_redis.setex.reset_mock()
         mock_redis.get.return_value = '{"schema": [{"attribute_id": "wifi", "display_name": "Has Wifi"}]}'
         response_hit = asyncio.run(get_form_schema(
-            location_id=self.location.id,
+            location=self.location,
             db=self.db,
             current_user=self.user
         ))

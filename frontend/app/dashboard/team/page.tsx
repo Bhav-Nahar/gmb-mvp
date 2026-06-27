@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import InviteMember from '@/components/InviteMember'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
@@ -27,36 +28,40 @@ interface InviteProfile {
 
 export default function TeamSettingsPage() {
   const { user } = useAuth()
-  const [users, setUsers] = useState<UserProfile[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  const [invites, setInvites] = useState<InviteProfile[]>([])
-  const [invitesLoading, setInvitesLoading] = useState(false)
-  const [invitesError, setInvitesError] = useState('')
+  const queryClient = useQueryClient()
   const [tempInviteUrl, setTempInviteUrl] = useState('')
   const [tempInviteCopied, setTempInviteCopied] = useState(false)
 
   const canManageTeam = user ? ['Owner', 'Admin', 'Regional Manager'].includes(user.role) : false
 
-  useEffect(() => {
-    if (canManageTeam) {
-      loadTeamInvites()
-    }
-    loadTeamUsers()
-  }, [canManageTeam])
+  const {
+    data: users = [],
+    isLoading: loading,
+    error: usersError,
+  } = useQuery<UserProfile[]>({
+    // Fetches users in active organization
+    queryKey: ['team-users'],
+    queryFn: () => api.get<UserProfile[]>('/users/'),
+  })
+  const error = usersError ? ((usersError as any).message || 'Failed to fetch team members.') : ''
 
-  const loadTeamInvites = async () => {
-    setInvitesLoading(true)
-    setInvitesError('')
-    try {
-      const data = await api.get<InviteProfile[]>('/users/invites')
-      setInvites(data)
-    } catch (err: any) {
-      setInvitesError(err.message || 'Failed to fetch pending invites.')
-    } finally {
-      setInvitesLoading(false)
-    }
+  const {
+    data: invites = [],
+    isLoading: invitesLoading,
+    error: invitesQueryError,
+  } = useQuery<InviteProfile[]>({
+    queryKey: ['team-invites'],
+    queryFn: () => api.get<InviteProfile[]>('/users/invites'),
+    enabled: canManageTeam,
+  })
+  const invitesError = invitesQueryError ? ((invitesQueryError as any).message || 'Failed to fetch pending invites.') : ''
+
+  const loadTeamInvites = () => {
+    queryClient.invalidateQueries({ queryKey: ['team-invites'] })
+  }
+
+  const loadTeamUsers = () => {
+    queryClient.invalidateQueries({ queryKey: ['team-users'] })
   }
 
   const handleRevoke = async (id: number) => {
@@ -86,20 +91,6 @@ export default function TeamSettingsPage() {
       navigator.clipboard.writeText(tempInviteUrl)
       setTempInviteCopied(true)
       setTimeout(() => setTempInviteCopied(false), 2000)
-    }
-  }
-
-  const loadTeamUsers = async () => {
-    setLoading(true)
-    setError('')
-    try {
-      // Fetches users in active organization
-      const data = await api.get<UserProfile[]>('/users/')
-      setUsers(data)
-    } catch (err: any) {
-      setError(err.message || 'Failed to fetch team members.')
-    } finally {
-      setLoading(false)
     }
   }
 

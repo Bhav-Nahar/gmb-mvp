@@ -42,36 +42,34 @@ export default function Gallery({ photos }: GalleryProps) {
   const hasMore = photos.length > INITIAL_COUNT
 
   return (
-    <section id="photos" className="py-24 px-6 sm:px-12 bg-background scroll-mt-20">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-16 animate-fade-up">
-          <span className="text-sm font-bold tracking-[0.2em] text-primary uppercase">
+    <section id="photos" className="scroll-mt-28">
+      <div>
+        <div className="mb-10 animate-fade-up">
+          <span className="text-xs font-bold tracking-[0.2em] text-primary uppercase">
             Our Gallery
           </span>
-          <h2 className="text-4xl sm:text-5xl font-black text-foreground tracking-tight mt-4 mb-6">
+          <h2 className="text-3xl sm:text-4xl font-black text-foreground tracking-tight mt-3 mb-4">
             Captured Moments
           </h2>
-          <p className="text-muted-foreground max-w-2xl mx-auto text-lg leading-relaxed">
+          <p className="text-muted-foreground max-w-2xl text-base leading-relaxed">
             Take a visual tour of our workspace, team, and recent projects.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 animate-fade-up" style={{ animationDelay: '100ms', opacity: 0 }}>
+        <div className="columns-2 md:columns-3 gap-4 sm:gap-6 space-y-4 sm:space-y-6 animate-fade-up" style={{ animationDelay: '100ms', opacity: 0 }}>
           {visible.map((url, i) => {
-            // Create a slight masonry/bento effect by making every 4th item span taller
-            const isTall = i % 4 === 0 || i % 5 === 0;
             return (
               <button
                 key={i}
                 onClick={() => setLightbox(i)}
-                className={`relative overflow-hidden rounded-[2rem] bg-card group border border-border cursor-zoom-in shadow-sm hover:shadow-xl hover:border-primary/30 transition-all duration-500 ${isTall ? 'row-span-2 aspect-[3/4]' : 'aspect-square'}`}
+                className="relative overflow-hidden rounded-2xl bg-card group border border-border cursor-zoom-in shadow-sm hover:shadow-xl hover:border-primary/30 transition-all duration-500 block w-full mb-4 sm:mb-6 break-inside-avoid"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={url}
                   alt={`Location photo ${i + 1}`}
                   referrerPolicy="no-referrer"
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                  className="w-full h-auto object-cover transition-transform duration-700 group-hover:scale-110 block"
                   loading="lazy"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/0 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 flex items-end justify-center pb-6">

@@ -281,6 +281,11 @@ class WebhookService:
                     ("gclid", "gbraid", "wbraid", "fbclid", "fbp", "fbc", "landing_page")
                     if getattr(org, k, None)
                 }
+                # IP/UA captured at /confirm — Meta CAPI expects these exact key names.
+                if org.conv_client_ip:
+                    attribution["client_ip_address"] = org.conv_client_ip
+                if org.conv_user_agent:
+                    attribution["client_user_agent"] = org.conv_user_agent
                 from app.worker import celery as celery_app
                 celery_app.send_task(
                     "app.tasks.fire_purchase_conversion_task",
@@ -290,6 +295,7 @@ class WebhookService:
                         "currency": payment.get("currency", "INR"),
                         "email": owner.email if owner else None,
                         "attribution": attribution,
+                        "user_id": owner.id if owner else None,
                     },
                 )
             except Exception as e:

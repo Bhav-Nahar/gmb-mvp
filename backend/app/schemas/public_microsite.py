@@ -1,8 +1,8 @@
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from app.schemas.base import ORMBase
 
-class PublicReviewSchema(BaseModel):
+class PublicReviewSchema(ORMBase):
     reviewer_name: str
     reviewer_profile_photo: Optional[str] = None
     rating: Optional[int] = None
@@ -10,10 +10,8 @@ class PublicReviewSchema(BaseModel):
     review_created_at: datetime
     reply_text: Optional[str] = None
     reply_created_at: Optional[datetime] = None
-    
-    model_config = ConfigDict(from_attributes=True)
 
-class PublicMicrositeSchema(BaseModel):
+class PublicMicrositeSchema(ORMBase):
     # Core identifying fields
     location_name: str
     primary_category: Optional[str] = None
@@ -43,5 +41,3 @@ class PublicMicrositeSchema(BaseModel):
     
     # Status to confirm routing
     status: str
-
-    model_config = ConfigDict(from_attributes=True)

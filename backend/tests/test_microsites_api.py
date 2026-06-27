@@ -52,7 +52,7 @@ def _create_user(db: Session, org_id: int, role: Role, email: str) -> User:
 
 @pytest.fixture
 def auth_setup(client, db):
-    org = Organization(name="Test Org")
+    org = Organization(name="Test Org", plan_tier="pro")  # microsite is a Pro-tier feature
     db.add(org)
     db.commit()
     db.refresh(org)
@@ -75,16 +75,14 @@ def auth_setup(client, db):
     def override_current_user():
         return admin_user
 
-    def override_require_location_access(location_id: int):
-        return location_id
-
     def override_noop():
         return None
 
     app.dependency_overrides[get_current_user] = override_current_user
     app.dependency_overrides[admin_required] = override_current_user
     app.dependency_overrides[staff_required] = override_current_user
-    app.dependency_overrides[require_location_access] = override_require_location_access
+    # require_location_access is NOT overridden — the real dependency runs against
+    # the test DB (org-scoped lookup + scope check), so it enforces real tenancy.
     app.dependency_overrides[check_billing_lock] = override_noop
     app.dependency_overrides[check_csrf] = override_noop
 

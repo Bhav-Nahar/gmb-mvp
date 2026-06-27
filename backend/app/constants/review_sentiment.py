@@ -21,7 +21,3 @@ ALLOWED_ISSUE_CATEGORIES: set[str] = {
     "Product Quality",
     "General Feedback",
 }
-
-# Convenience lists for ordered use (dropdowns, API docs)
-SENTIMENT_LIST: list[str] = sorted(ALLOWED_SENTIMENTS)
-ISSUE_CATEGORY_LIST: list[str] = sorted(ALLOWED_ISSUE_CATEGORIES)

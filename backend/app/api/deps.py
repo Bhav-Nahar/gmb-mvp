@@ -12,11 +12,8 @@ from app.models.user_location_access import UserLocationAccess
 from app.models.organization import Organization
 from app.models.location import Location
 from app.services.billing.entitlement_service import EntitlementService
-from app.core import plan_config
-import redis
 from app.core.config import settings
 from app.core.roles import Role, ADMIN_ROLES, STAFF_ROLES, TEAM_VIEWER_ROLES
-from sqlalchemy import select
 from sqlalchemy.orm.attributes import set_committed_value
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
@@ -125,45 +122,18 @@ def get_user_location_ids(user: User, db: Session) -> Optional[List[int]]:
     mappings = db.query(UserLocationAccess).filter(UserLocationAccess.user_id == user.id).all()
     return [mapping.location_id for mapping in mappings]
 
-def verify_location_access(location_id: int):
-    def _verify(
-        request: Request,
-        db: Session = Depends(get_db),
-        current_user: User = Depends(get_current_user)
-    ):
-        if current_user.role in ADMIN_ROLES:
-            # Optionally check if location belongs to org here, but usually done at query level
-            return location_id
-
-        if current_user.role == Role.VIEWER:
-            if request.method not in ["GET", "OPTIONS", "HEAD"]:
-                raise HTTPException(status_code=403, detail="Viewers cannot perform mutations")
-            if current_user.viewer_scope == "organization":
-                return location_id
-        
-        # Check mapping
-        mapping = db.query(UserLocationAccess).filter(
-            UserLocationAccess.user_id == current_user.id,
-            UserLocationAccess.location_id == location_id
-        ).first()
-        
-        if not mapping:
-            raise HTTPException(status_code=403, detail="You do not have access to this location")
-            
-        return location_id
-    return _verify
-
 def require_location_access(
     location_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> int:
+) -> Location:
     """FastAPI dependency enforcing BOTH tenant (org) boundary AND per-user
     location scope for a path's location_id.
 
-    Declare a route's path param as `location_id: int = Depends(require_location_access)`
+    Declare a route's param as `location: Location = Depends(require_location_access)`
     so both checks run automatically before the handler — making it structurally
-    impossible to forget either one.
+    impossible to forget either one — and use the returned row directly (no re-fetch).
+    Bodies that still need the id use `location_id = location.id`.
 
     1. Tenant boundary: the location must exist within the caller's organization.
        This runs for ALL roles (Owner/Admin included), so an endpoint can never
@@ -172,18 +142,18 @@ def require_location_access(
     2. Location scope: org-wide roles (Owner/Admin and org-scoped Viewer) pass;
        location-restricted roles must have the location in their assigned set.
 
-    Returns the validated location_id for inline use.
+    Returns the validated Location row for inline use.
     """
     # Tenant boundary first — a cross-org id is "not found", regardless of role.
-    location_exists = (
-        db.query(Location.id)
+    location = (
+        db.query(Location)
         .filter(
             Location.id == location_id,
             Location.organization_id == current_user.organization_id,
         )
         .first()
     )
-    if location_exists is None:
+    if location is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Location not found",
@@ -195,7 +165,7 @@ def require_location_access(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this location",
         )
-    return location_id
+    return location
 
 
 def check_csrf(request: Request):
@@ -242,9 +212,6 @@ def check_csrf(request: Request):
             detail=detail_msg.strip()
         )
 
-def get_redis_client() -> redis.Redis:
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
-
 def check_billing_lock(request: Request, db: Session = Depends(get_db)):
     """Global dependency to block write operations if organization is locked."""
     if request.method in ["GET", "OPTIONS", "HEAD"]:
@@ -282,41 +249,3 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
     org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
     if org and EntitlementService.is_org_locked(org):
         raise HTTPException(status_code=402, detail="Organization is locked. Please update your subscription.")
-
-
-def check_location_quota(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Dependency to check if the organization has reached its location quota.
-
-    NOTE: Authoritative quota enforcement lives in the location sync Celery task
-    (app.tasks), which marks over-quota locations 'pending_payment' at insert time —
-    an HTTP dependency cannot gate a background task. This dependency is retained only
-    for any future *manual* add-location endpoint and is currently unused.
-    """
-    if not current_user.organization_id:
-        return
-
-    org_id = current_user.organization_id
-    
-    redis_client = get_redis_client()
-    lock = redis_client.lock(f"lock:add_location:{org_id}", timeout=10)
-    
-    if not lock.acquire(blocking=True, blocking_timeout=5):
-        raise HTTPException(status_code=429, detail="Too many concurrent requests. Please try again.")
-
-    try:
-        stmt = select(Organization).where(Organization.id == org_id).with_for_update()
-        org = db.scalars(stmt).first()
-        
-        if not org:
-            raise HTTPException(status_code=404, detail="Organization not found")
-
-        # location_quota reflects what the org has actually paid for (set on
-        # subscription.charged). Falls back to the trial quota before activation.
-        quota = org.location_quota if org.location_quota is not None else plan_config.TRIAL_LOCATION_QUOTA
-
-        current_count = db.query(Location).filter(Location.organization_id == org_id).count()
-        if current_count >= quota:
-            raise HTTPException(status_code=402, detail=f"location_quota_exceeded: limit {quota} reached.")
-            
-    finally:
-        lock.release()
