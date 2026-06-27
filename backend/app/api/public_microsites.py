@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.db.session import get_db
 from app.models.microsite import Microsite
 from app.models.location import Location
@@ -17,6 +17,15 @@ from app.services.email_service import send_email
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Public microsite pages are unauthenticated, SEO-crawled, and change only when a
+# sync/publish runs — all of which flow through revalidation_service, which deletes
+# this key. The TTL is a backstop matching the frontend's hourly ISR cycle.
+_PUBLIC_MICROSITE_CACHE_TTL = 60 * 60
+
+
+def public_microsite_cache_key(location_slug: str) -> str:
+    return f"public_microsite:{location_slug}"
 
 
 # GBP exposes social/contact links as URL attributes (attributes/url_*). Map the
@@ -105,11 +114,24 @@ def get_public_microsite(location_slug: str, db: Session = Depends(get_db)):
     Public endpoint to fetch all data necessary to render a microsite.
     Single-level URL: access control is purely via the globally-unique location_slug.
     """
-    # 1. Look up Microsite
-    microsite = db.query(Microsite).filter(
+    # Cache only holds published responses and is deleted on any publish/unpublish/
+    # sync (revalidation_service), so a hit always means "still published". A Redis
+    # miss/outage falls through to the DB.
+    cache_key = public_microsite_cache_key(location_slug)
+    try:
+        cached = get_redis().get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    # 1. Look up Microsite (eager-load the location to avoid a second round-trip)
+    microsite = db.query(Microsite).options(
+        joinedload(Microsite.location)
+    ).filter(
         Microsite.location_slug == location_slug
     ).first()
-    
+
     if not microsite or microsite.status == "draft":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
     
@@ -191,7 +213,7 @@ def get_public_microsite(location_slug: str, db: Session = Depends(get_db)):
             reply_created_at=r.reply_created_at
         ))
         
-    return PublicMicrositeSchema(
+    result = PublicMicrositeSchema(
         location_name=location.location_name,
         primary_category=location.primary_category,
         average_rating=location.average_rating,
@@ -215,16 +237,39 @@ def get_public_microsite(location_slug: str, db: Session = Depends(get_db)):
         reviews=public_reviews,
         status=microsite.status
     )
+    # Only published responses reach here (draft/unpublished raised above).
+    if microsite.status == "published":
+        try:
+            get_redis().setex(cache_key, _PUBLIC_MICROSITE_CACHE_TTL, result.model_dump_json())
+        except Exception:
+            pass
+    return result
 
 
 def _notify_recipients(db: Session, location: Location) -> list:
-    """Org Owner/Admin emails + the optional per-location lead_email."""
-    emails = [
-        u.email for u in db.query(User).filter(
-            User.organization_id == location.organization_id,
-            User.role.in_(["Owner", "Admin"]),
-        ).all() if u.email
-    ]
+    """Lead-email recipients (all respecting the per-user opt-out):
+      • org Owners/Admins (org-wide access), plus
+      • Regional/Store Managers assigned to THIS location, plus
+      • the optional per-location lead_email override.
+    """
+    from app.models.user_location_access import UserLocationAccess
+
+    org_wide = db.query(User).filter(
+        User.organization_id == location.organization_id,
+        User.role.in_(["Owner", "Admin"]),
+        User.lead_email_notifications == True,  # noqa: E712 — respect per-user opt-out
+    )
+    # Managers (Regional/Store) only for the location the lead came in on.
+    assigned = db.query(User).join(
+        UserLocationAccess, UserLocationAccess.user_id == User.id
+    ).filter(
+        User.organization_id == location.organization_id,
+        User.role.in_(["Regional Manager", "Store Manager"]),
+        User.lead_email_notifications == True,  # noqa: E712
+        UserLocationAccess.location_id == location.id,
+    )
+    emails = [u.email for u in org_wide.all() if u.email]
+    emails += [u.email for u in assigned.all() if u.email]
     if location.lead_email:
         emails.append(location.lead_email)
     # de-dupe, preserve order

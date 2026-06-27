@@ -30,7 +30,11 @@ REGENERATION_CREDITS = 2
 # a draft that is genuinely short (<600) or invalid (>750, a hard flag); anything in
 # 600-750 is accepted as substantial. Biasing long happens in the prompt, not the loop.
 TARGET_MIN_CHARS = 600
-MAX_CORRECTIVE_PASSES = 2  # bound on LLM calls: initial + at most this many rewrites
+# One corrective rewrite only: initial + at most 1 rewrite = 2 LLM calls/request,
+# matching description_generator_service's "bounded at 2" contract. A draft still
+# policy-flagged after the single rewrite is returned unbilled (free /validate to
+# hand-edit), so the dropped second pass never costs the user a charge.
+MAX_CORRECTIVE_PASSES = 1
 
 
 class _Unbilled(Exception):

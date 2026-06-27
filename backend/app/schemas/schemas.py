@@ -34,6 +34,8 @@ class UserOut(BaseModel):
     role: str
     is_active: bool
     viewer_scope: Optional[str] = None
+    weekly_report_email: bool = True
+    lead_email_notifications: bool = True
     organization_id: int
     created_at: datetime
 
@@ -46,6 +48,10 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class PreferencesUpdate(BaseModel):
+    weekly_report_email: Optional[bool] = None
+    lead_email_notifications: Optional[bool] = None
 
 class RoleUpdate(BaseModel):
     role: str

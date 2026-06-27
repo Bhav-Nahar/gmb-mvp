@@ -61,7 +61,7 @@ PLANS = {
         "name": "Pro",
         "price_tiers": [(10, 300_000), (25, 250_000), (None, 200_000)],  # ~₹500/loc more
         "credits_per_location": 45,
-        "features": ["local_rank"],
+        "features": ["local_rank", "microsite"],
     },
 }
 DEFAULT_PLAN_TIER = "basic"

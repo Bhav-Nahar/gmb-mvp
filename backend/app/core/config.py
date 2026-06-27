@@ -156,7 +156,6 @@ class Settings(BaseSettings):
     DATAFORSEO_LOGIN: str = ""
     DATAFORSEO_PASSWORD: str = ""
     DATAFORSEO_BASE_URL: str = "https://sandbox.dataforseo.com"
-    LOCAL_RANK_MAX_CONCURRENCY: int = 8  # concurrent live maps calls per scan
 
     # Task Settings
     REVIEW_SYNC_CHUNK_SIZE: int = 20
