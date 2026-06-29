@@ -176,8 +176,8 @@ export default function LocationProfilePage() {
               </div>
             </div>
 
-            <Button variant="outline" size="sm" disabled={isSyncing} className="gap-2 shrink-0 w-full min-h-[44px] self-start sm:w-auto sm:min-h-0 sm:self-auto" onClick={handleForceSync}>
-              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            <Button variant="outline" size="sm" disabled={isSyncing} className="gap-2 shrink-0 w-full min-h-[44px] sm:h-9 self-start sm:w-auto sm:min-h-0 sm:self-auto text-xs font-bold shadow-sm hover:shadow hover:-translate-y-0.5 transition-all rounded-xl bg-background/50 backdrop-blur-md" onClick={handleForceSync}>
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
               {isSyncing ? 'Syncing…' : 'Force Sync'}
             </Button>
           </div>
@@ -195,7 +195,7 @@ export default function LocationProfilePage() {
             </Alert>
           )}
 
-          <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm overflow-hidden flex flex-col">
+          <div className="glass-panel border-border/40 rounded-2xl p-4 sm:p-8 shadow-sm overflow-hidden flex flex-col mt-4">
             <Tabs 
               value={activeTab} 
               onValueChange={(value) => {

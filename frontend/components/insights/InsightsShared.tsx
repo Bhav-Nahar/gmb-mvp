@@ -15,6 +15,19 @@ import {
   Navigation,
   Compass,
 } from 'lucide-react'
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+  PieChart,
+  Pie,
+  Cell
+} from 'recharts'
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 
 // ---- Shared types (mirrors the /insights/* payloads) -----------------------
 
@@ -153,7 +166,7 @@ export function KpiCard({
   const isNew = metric.percentage_change === null && metric.current > 0 && metric.prior === 0
 
   return (
-    <div className="glass-panel p-6 flex flex-col justify-between relative overflow-hidden">
+    <div className="glass-panel border-border/40 rounded-2xl p-6 flex flex-col justify-between relative overflow-hidden shadow-sm group hover:shadow-md transition-all">
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-muted-foreground">{title}</span>
         <div className={`p-2 rounded-lg bg-muted/40 ${KPI_ICON_CLASSES[color] ?? 'text-indigo-400'}`}>
@@ -209,181 +222,93 @@ export function TrendChart({
   trends: DailyMetricPoint[]
   selected: Set<TrendMetricKey>
 }) {
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
-
   if (!trends || trends.length === 0) return null
-
-  const width = 800
-  const height = 280
-  const paddingLeft = 50
-  const paddingRight = 20
-  const paddingTop = 20
-  const paddingBottom = 40
 
   const activeMetrics = TREND_METRICS.filter((m) => selected.has(m.key))
 
-  const maxVal = Math.max(
-    ...trends.flatMap((t) => activeMetrics.map((m) => t[m.key])),
-    10
-  )
-
-  const getX = (index: number) => {
-    const step = (width - paddingLeft - paddingRight) / (trends.length - 1 || 1)
-    return paddingLeft + index * step
-  }
-  const getY = (val: number) =>
-    height - paddingBottom - (val / maxVal) * (height - paddingTop - paddingBottom)
-
-  const buildPath = (key: TrendMetricKey) =>
-    trends
-      .map((t, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(t[key])}`)
-      .join(' ')
-
-  const tickCount = Math.min(trends.length, 6)
-  const ticks: number[] = []
-  for (let i = 0; i < tickCount; i++) {
-    const index = Math.round((i * (trends.length - 1)) / (tickCount - 1 || 1))
-    if (trends[index] !== undefined && !ticks.includes(index)) ticks.push(index)
-  }
-
-  const hovered = hoverIdx !== null ? trends[hoverIdx] : null
-
-  return (
-    <div className="relative w-full h-full">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full h-full text-muted-foreground"
-        onMouseLeave={() => setHoverIdx(null)}
-      >
-        {[0, 0.25, 0.5, 0.75, 1].map((p, idx) => {
-          const val = Math.round(maxVal * p)
-          const y = getY(val)
-          return (
-            <g key={idx}>
-              <line
-                x1={paddingLeft}
-                y1={y}
-                x2={width - paddingRight}
-                y2={y}
-                stroke="currentColor"
-                strokeOpacity={0.07}
-                strokeWidth={1}
-              />
-              <text
-                x={paddingLeft - 10}
-                y={y + 4}
-                className="text-[10px] font-medium fill-muted-foreground"
-                textAnchor="end"
-              >
-                {val.toLocaleString()}
-              </text>
-            </g>
-          )
-        })}
-
-        {ticks.map((idx) => {
-          const t = trends[idx]
-          const x = getX(idx)
-          const d = new Date(t.date)
-          const dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-          return (
-            <text
-              key={idx}
-              x={x}
-              y={height - 15}
-              className="text-[10px] font-medium fill-muted-foreground"
-              textAnchor="middle"
-            >
-              {dateLabel}
-            </text>
-          )
-        })}
-
-        {activeMetrics.map((m) => (
-          <path
-            key={m.key}
-            d={buildPath(m.key)}
-            fill="none"
-            stroke={m.color}
-            strokeWidth={2.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        ))}
-
-        {hoverIdx !== null && (
-          <g>
-            <line
-              x1={getX(hoverIdx)}
-              y1={paddingTop}
-              x2={getX(hoverIdx)}
-              y2={height - paddingBottom}
-              stroke="currentColor"
-              strokeOpacity={0.2}
-              strokeWidth={1}
-            />
-            {activeMetrics.map((m) => (
-              <circle
-                key={m.key}
-                cx={getX(hoverIdx)}
-                cy={getY(trends[hoverIdx][m.key])}
-                r={3.5}
-                fill={m.color}
-                stroke="var(--background, #fff)"
-                strokeWidth={1.5}
-              />
-            ))}
-          </g>
-        )}
-
-        {trends.map((t, i) => {
-          const step = (width - paddingLeft - paddingRight) / (trends.length || 1)
-          return (
-            <rect
-              key={i}
-              x={getX(i) - step / 2}
-              y={paddingTop}
-              width={step}
-              height={height - paddingTop - paddingBottom}
-              fill="transparent"
-              onMouseEnter={() => setHoverIdx(i)}
-            />
-          )
-        })}
-      </svg>
-
-      {hovered && (
-        <div
-          className="pointer-events-none absolute top-2 z-10 rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 shadow-lg"
-          style={{
-            left: `${(getX(hoverIdx!) / width) * 100}%`,
-            transform:
-              getX(hoverIdx!) > width / 2 ? 'translateX(-105%)' : 'translateX(5%)',
-          }}
-        >
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 shadow-lg">
           <div className="text-[11px] font-bold text-foreground mb-1">
-            {new Date(hovered.date).toLocaleDateString(undefined, {
+            {new Date(label).toLocaleDateString(undefined, {
               month: 'short',
               day: 'numeric',
               year: 'numeric',
             })}
           </div>
           <div className="space-y-0.5">
-            {activeMetrics.map((m) => (
-              <div key={m.key} className="flex items-center gap-2 text-[11px]">
+            {payload.map((entry: any, index: number) => (
+              <div key={index} className="flex items-center gap-2 text-[11px]">
                 <span
                   className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: m.color }}
+                  style={{ backgroundColor: entry.color }}
                 />
-                <span className="text-muted-foreground">{m.label}</span>
+                <span className="text-muted-foreground">{entry.name}</span>
                 <span className="ml-auto font-bold text-foreground">
-                  {hovered[m.key].toLocaleString()}
+                  {entry.value.toLocaleString()}
                 </span>
               </div>
             ))}
           </div>
         </div>
-      )}
+      )
+    }
+    return null
+  }
+
+  const formatXAxis = (tickItem: string) => {
+    return new Date(tickItem).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  }
+
+  return (
+    <div className="w-full h-full relative" style={{ minHeight: '280px' }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart
+          data={trends}
+          margin={{ top: 20, right: 20, left: -20, bottom: 0 }}
+        >
+          <defs>
+            {activeMetrics.map((m) => (
+              <linearGradient key={`color-${m.key}`} id={`color-${m.key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={m.color} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={m.color} stopOpacity={0} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" strokeOpacity={0.07} />
+          <XAxis 
+            dataKey="date" 
+            tickFormatter={formatXAxis} 
+            axisLine={false} 
+            tickLine={false} 
+            tick={{ fill: 'var(--muted-foreground)', fontSize: 10, fontWeight: 500 }}
+            dy={10}
+            minTickGap={30}
+          />
+          <YAxis 
+            axisLine={false} 
+            tickLine={false} 
+            tick={{ fill: 'var(--muted-foreground)', fontSize: 10, fontWeight: 500 }}
+            tickFormatter={(val) => val.toLocaleString()}
+          />
+          <RechartsTooltip content={<CustomTooltip />} cursor={{ stroke: 'currentColor', strokeOpacity: 0.2, strokeWidth: 1 }} />
+          {activeMetrics.map((m) => (
+            <Area
+              key={m.key}
+              type="monotone"
+              dataKey={m.key}
+              name={m.label}
+              stroke={m.color}
+              strokeWidth={2.5}
+              fillOpacity={1}
+              fill={`url(#color-${m.key})`}
+              activeDot={{ r: 4, strokeWidth: 1.5, stroke: 'var(--background)' }}
+              animationDuration={1500}
+            />
+          ))}
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   )
 }
@@ -438,7 +363,7 @@ export function ConversionQuality({ kpis }: { kpis: OverviewKPIs }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
       {items.map((it) => (
-        <div key={it.label} className="glass-panel p-4 flex items-center gap-3" title={it.help}>
+        <div key={it.label} className="glass-panel border-border/40 rounded-2xl p-5 flex items-center gap-4 shadow-sm group hover:-translate-y-0.5 transition-all" title={it.help}>
           <div className="p-2 rounded-lg bg-muted/40 text-indigo-400">
             <it.icon className="h-4 w-4" />
           </div>
@@ -466,7 +391,7 @@ export function SearchComposition({ trends }: { trends: DailyMetricPoint[] }) {
     { label: 'Branded', help: 'Searched a related brand or chain', value: chain, color: '#fbbf24' },
   ]
   return (
-    <div className="glass-panel p-6">
+    <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm">
       <div className="flex items-center gap-1.5 mb-1">
         <Compass className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
         <h3 className="text-base font-bold text-foreground">How Customers Found You</h3>
@@ -513,39 +438,58 @@ export function ReputationGrid({
   topIssues: IssueCategorySummary[]
   scopeLabel: string
 }) {
+  const pieData = [
+    { name: 'Positive', value: sentiment.positive_percentage, color: '#34d399' },
+    { name: 'Neutral', value: sentiment.neutral_percentage, color: '#9ca3af' },
+    { name: 'Negative', value: sentiment.negative_percentage, color: '#fb7185' }
+  ]
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
       {/* Customer Sentiment */}
-      <div className="glass-panel p-6 flex flex-col justify-between">
+      <div className="glass-panel border-border/40 rounded-2xl p-6 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:shadow-lg transition-all duration-300">
         <div>
           <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
             <Smile className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
             Customer Sentiment
           </h4>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} · positive vs negative tags</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} · tone analysis</p>
         </div>
-        <div className="my-4 space-y-3">
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1"><Smile className="h-3.5 w-3.5" />Positive</span>
-            <span className="text-foreground font-bold">{sentiment.positive_percentage.toFixed(0)}%</span>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-gray-600 dark:text-gray-400 font-semibold flex items-center gap-1"><MessageSquare className="h-3.5 w-3.5" />Neutral</span>
-            <span className="text-foreground font-bold">{sentiment.neutral_percentage.toFixed(0)}%</span>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1"><Frown className="h-3.5 w-3.5" />Negative</span>
-            <span className="text-foreground font-bold">{sentiment.negative_percentage.toFixed(0)}%</span>
+
+        <div className="flex flex-col items-center justify-center flex-1 py-4">
+          <div className="relative w-40 h-24 overflow-hidden mb-2">
+            <ResponsiveContainer width="100%" height="200%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="100%"
+                  startAngle={180}
+                  endAngle={0}
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={2}
+                  dataKey="value"
+                  stroke="none"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute bottom-0 left-0 right-0 text-center flex flex-col">
+              <span className="text-2xl font-extrabold text-foreground">
+                {sentiment.positive_percentage.toFixed(0)}%
+              </span>
+              <span className="text-[10px] font-bold text-emerald-500">Positive</span>
+            </div>
           </div>
         </div>
-        <div className="w-full h-2 rounded-full overflow-hidden flex bg-muted/40">
-          <div className="bg-emerald-400" style={{ width: `${sentiment.positive_percentage}%` }} />
-          <div className="bg-gray-400" style={{ width: `${sentiment.neutral_percentage}%` }} />
-          <div className="bg-rose-400" style={{ width: `${sentiment.negative_percentage}%` }} />
-        </div>
+
         {sentiment.avg_sentiment_score !== null && sentiment.avg_sentiment_score !== undefined && (
-          <div className="mt-3 flex items-center justify-between text-[11px]">
-            <span className="text-muted-foreground">Sentiment score</span>
+          <div className="mt-2 flex items-center justify-between text-xs sm:text-[11px] pt-3 border-t border-border/40">
+            <span className="text-muted-foreground">Avg Sentiment</span>
             <span className={`font-bold ${sentiment.avg_sentiment_score > 0.1 ? 'text-emerald-600 dark:text-emerald-400' : sentiment.avg_sentiment_score < -0.1 ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground'}`}>
               {sentiment.avg_sentiment_score > 0 ? '+' : ''}{sentiment.avg_sentiment_score.toFixed(2)} <span className="text-muted-foreground font-normal">/ 1.0</span>
             </span>
@@ -554,50 +498,58 @@ export function ReputationGrid({
       </div>
 
       {/* SLA Summary */}
-      <div className="glass-panel p-6 flex flex-col justify-between">
+      <div className="glass-panel border-border/40 rounded-2xl p-6 flex flex-col justify-between shadow-sm group hover:shadow-lg transition-all duration-300">
         <div>
           <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
             <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-            SLA Performance
+            Response SLA
           </h4>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} · reply speeds and statuses</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} · engagement speed</p>
         </div>
-        <div className="my-4 grid grid-cols-2 gap-4">
-          <div className="bg-muted/30 p-3 rounded-lg text-center border border-border/30">
-            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Response Rate</span>
-            <span className="text-lg font-extrabold text-indigo-600 dark:text-indigo-400 mt-1 block">
-              {sla.response_rate.toFixed(0)}%
+        <div className="my-6 grid grid-cols-2 gap-4">
+          <div className="bg-gradient-to-br from-indigo-500/10 to-transparent p-4 rounded-xl text-center border border-indigo-500/20">
+            <span className="text-[10px] uppercase font-bold text-indigo-600/80 dark:text-indigo-400/80 block mb-1">Response Rate</span>
+            <span className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400 flex items-center justify-center gap-1">
+              <AnimatedNumber value={sla.response_rate} />%
             </span>
           </div>
-          <div className="bg-muted/30 p-3 rounded-lg text-center border border-border/30">
-            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Avg Reply Time</span>
-            <span className="text-lg font-extrabold text-indigo-600 dark:text-indigo-400 mt-1 block">
-              {sla.avg_response_time_hours !== null ? `${sla.avg_response_time_hours.toFixed(1)}h` : '—'}
+          <div className="bg-gradient-to-br from-indigo-500/10 to-transparent p-4 rounded-xl text-center border border-indigo-500/20">
+            <span className="text-[10px] uppercase font-bold text-indigo-600/80 dark:text-indigo-400/80 block mb-1">Avg Reply Time</span>
+            <span className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400 flex items-center justify-center gap-1">
+              {sla.avg_response_time_hours !== null ? <AnimatedNumber value={sla.avg_response_time_hours} /> : '—'}
+              {sla.avg_response_time_hours !== null && <span className="text-sm">h</span>}
             </span>
           </div>
         </div>
-        <div className="text-[10px] text-muted-foreground text-center">
-          Total Reviews: {sla.total_reviews} • Replied: {sla.replied_reviews}
+        <div className="text-[11px] text-muted-foreground flex justify-between items-center pt-3 border-t border-border/40 font-medium">
+          <span>Total Reviews: <strong>{sla.total_reviews}</strong></span>
+          <span>Replied: <strong>{sla.replied_reviews}</strong></span>
         </div>
       </div>
 
       {/* Customer Themes */}
-      <div className="glass-panel p-6">
+      <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm group hover:shadow-lg transition-all duration-300">
         <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
           <Heart className="h-4 w-4 text-rose-600 dark:text-rose-400" />
-          Customer Themes
+          Key Themes
         </h4>
-        <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} · recurring issue categories</p>
-        <div className="mt-4 space-y-2 max-h-36 overflow-y-auto">
+        <p className="text-[10px] text-muted-foreground mt-0.5 mb-4">{scopeLabel} · trending topics</p>
+        <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
           {topIssues.length > 0 ? (
             topIssues.map((item, idx) => (
-              <div key={idx} className="flex justify-between items-center text-xs border-b border-border/20 pb-1.5">
-                <span className="text-muted-foreground font-semibold capitalize">{item.category}</span>
-                <span className="text-foreground font-bold">{item.count} tags</span>
+              <div
+                key={idx}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/40 border border-border/50 text-xs hover:bg-muted/60 hover:border-border transition-colors cursor-default"
+              >
+                <span className="font-semibold text-foreground capitalize">{item.category}</span>
+                <span className="text-[10px] bg-background px-1.5 py-0.5 rounded text-muted-foreground font-bold">{item.count}</span>
               </div>
             ))
           ) : (
-            <span className="text-xs text-muted-foreground block text-center py-6">No recurring themes found.</span>
+            <div className="w-full h-full flex flex-col items-center justify-center py-6 text-muted-foreground">
+              <MessageSquare className="h-6 w-6 mb-2 opacity-20" />
+              <span className="text-xs">No recurring themes found.</span>
+            </div>
           )}
         </div>
       </div>
@@ -617,7 +569,7 @@ export function PeriodComparison({ kpis }: { kpis: OverviewKPIs }) {
     { name: 'Directions Requests', m: kpis.direction_requests },
   ]
   return (
-    <div className="glass-panel p-6">
+    <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm overflow-hidden">
       <h3 className="text-base font-bold text-foreground mb-4">Period Comparison</h3>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs border-collapse">
@@ -703,7 +655,7 @@ export function PlatformDeviceImpressions({ data }: { data: PlatformDeviceBreakd
   const activeSlice = active ? slices.find((s) => s.key === active) : null
 
   return (
-    <div className="glass-panel p-4 sm:p-5">
+    <div className="glass-panel border-border/40 rounded-2xl p-4 sm:p-5 shadow-sm">
       <div className="flex items-center gap-2 mb-1">
         <Compass className="h-4 w-4 text-indigo-400 shrink-0" />
         <h3 className="text-sm font-bold text-foreground">Platform &amp; Device Impressions</h3>

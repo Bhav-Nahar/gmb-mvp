@@ -6,12 +6,14 @@ interface AnimatedNumberProps {
   value: number;
   duration?: number; // ms
   formatter?: (val: number) => string;
+  isFloat?: boolean;
 }
 
 export function AnimatedNumber({
   value,
   duration = 1000,
   formatter = (val) => val.toLocaleString(),
+  isFloat = false,
 }: AnimatedNumberProps) {
   const [displayValue, setDisplayValue] = useState(0);
   const prevValue = useRef(0);
@@ -33,7 +35,9 @@ export function AnimatedNumber({
       // Easing function: easeOutExpo
       const easeProgress = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
       
-      const current = Math.floor(startValue + (value - startValue) * easeProgress);
+      const current = isFloat 
+        ? startValue + (value - startValue) * easeProgress
+        : Math.floor(startValue + (value - startValue) * easeProgress);
       setDisplayValue(current);
 
       if (progress < 1) {

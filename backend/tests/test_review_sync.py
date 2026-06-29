@@ -156,14 +156,11 @@ class ReviewSyncArchitectureTests(unittest.TestCase):
             self.assertIsNotNone(rev.content_hash)
             self.assertIsNone(rev.sentiment_tagged_at) # Should be None to trigger sentiment task
 
-        # Verify Celery send_task called once for the batch
-        mock_send_task.assert_called_once_with(
-            "app.tasks.tag_reviews_sentiment_task",
-            kwargs={
-                "location_id": self.location.id,
-                "organization_id": self.org.id
-            }
-        )
+        # Verify Celery enqueues both the sentiment-tagging and auto-reply tasks for the batch
+        expected_kwargs = {"location_id": self.location.id, "organization_id": self.org.id}
+        self.assertEqual(mock_send_task.call_count, 2)
+        mock_send_task.assert_any_call("app.tasks.tag_reviews_sentiment_task", kwargs=expected_kwargs)
+        mock_send_task.assert_any_call("app.tasks.auto_reply_reviews_task", kwargs=expected_kwargs)
 
         # Verify stats updated on location
         self.db.refresh(self.location)
@@ -286,14 +283,11 @@ class ReviewSyncArchitectureTests(unittest.TestCase):
         for r in db_revs:
             print(f"ID: {r.provider_review_id}, rating: {r.rating}, comment: {r.comment}, hash: {r.content_hash}, sentiment_tagged_at: {r.sentiment_tagged_at}")
 
-        # Verify Celery send_task was called once for the batch of updates
-        mock_send_task.assert_called_once_with(
-            "app.tasks.tag_reviews_sentiment_task",
-            kwargs={
-                "location_id": self.location.id,
-                "organization_id": self.org.id
-            }
-        )
+        # Verify Celery enqueues both the sentiment-tagging and auto-reply tasks for the batch of updates
+        expected_kwargs = {"location_id": self.location.id, "organization_id": self.org.id}
+        self.assertEqual(mock_send_task.call_count, 2)
+        mock_send_task.assert_any_call("app.tasks.tag_reviews_sentiment_task", kwargs=expected_kwargs)
+        mock_send_task.assert_any_call("app.tasks.auto_reply_reviews_task", kwargs=expected_kwargs)
         
         # Verify database state
         self.db.refresh(rev_1)
