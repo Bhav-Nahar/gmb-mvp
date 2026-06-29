@@ -9,6 +9,7 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 import { useLocationWorkspace } from '@/hooks/useLocationWorkspace'
 import { useBillingStatus } from '@/hooks/useBilling'
 import { LocalRankMap, RankCell } from '@/components/local-rank/LocalRankMap'
@@ -169,63 +170,85 @@ export function LocalRankPanel({ locationId }: Props) {
   }
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm space-y-4">
+    <div className="glass-panel border-border/60 rounded-xl p-4 sm:p-6 shadow-sm space-y-6">
       {/* Controls */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <Label htmlFor="lr-keyword" className="text-xs">Search keyword</Label>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="space-y-1.5 relative group">
+          <Label htmlFor="lr-keyword" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground ml-1">Search keyword</Label>
           <Input id="lr-keyword" value={keyword} onChange={(e) => setKeyword(e.target.value)}
-            placeholder="e.g. diamond ring shop" className="text-sm" />
+            placeholder="e.g. diamond ring shop" className="h-10 bg-background/50 backdrop-blur-md border-border/60 shadow-sm focus-visible:ring-indigo-500/50 hover:border-indigo-500/30 transition-all font-semibold" />
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="lr-radius" className="text-xs">Radius (km, centre → edge)</Label>
+        <div className="space-y-1.5 relative group">
+          <Label htmlFor="lr-radius" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground ml-1">Radius (km, centre → edge)</Label>
           <select id="lr-radius" value={radiusKm} onChange={(e) => onRadius(Number(e.target.value))}
-            className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm">
-            {KM_OPTIONS.map((km) => <option key={km} value={km}>{km} km</option>)}
+            className="h-10 w-full rounded-md border border-border/60 bg-background/50 backdrop-blur-md px-3 text-sm font-semibold shadow-sm focus:border-indigo-500 outline-none hover:border-indigo-500/30 transition-all appearance-none cursor-pointer">
+            {KM_OPTIONS.map((km) => <option key={km} value={km} className="bg-background">{km} km</option>)}
           </select>
+          <div className="absolute inset-y-0 right-0 top-6 flex items-center pr-3 pointer-events-none"><span className="text-[10px] opacity-50">▼</span></div>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs">Grid size</Label>
-          <div className="flex gap-1">
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="space-y-1.5">
+          <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground ml-1">Grid size</Label>
+          <div className="flex gap-1.5 p-1 bg-muted/30 rounded-lg border border-border/50">
             {GRID_SIZES.map((g) => (
               <button key={g} onClick={() => onGrid(g)}
-                className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
-                  gridSize === g ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted/40'}`}>
+                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${
+                  gridSize === g ? 'bg-indigo-600 text-white shadow-md scale-105' : 'text-muted-foreground hover:bg-background/80 hover:text-foreground'}`}>
                 {g}×{g}
               </button>
             ))}
           </div>
         </div>
         <Button onClick={() => runMutation.mutate()} disabled={busy || tooFew || !keyword.trim()}
-          title={tooFew ? 'Not enough AI credits' : ''}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
+          title={tooFew ? 'Not enough AI credits' : ''}
+          className="h-10 px-5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white shadow-[0_4px_14px_0_rgb(79,70,229,0.39)] hover:shadow-[0_6px_20px_rgba(79,70,229,0.23)] font-bold transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:hover:shadow-[0_4px_14px_0_rgb(79,70,229,0.39)] ml-2">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <MapPin className="h-4 w-4 mr-2" />}
           {running ? 'Scanning…' : 'Run scan'}
         </Button>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs font-semibold text-muted-foreground mb-3 ml-2">
           {gridSize}×{gridSize} = {gridSize * gridSize} points · {price} credits · you have {available}
         </span>
       </div>
 
       {/* Map: live gray preview before scanning, real ranks after */}
       {displayCells.length > 0 && (
-        <div className="space-y-3 pt-2 border-t border-border/50">
+        <div className="space-y-4 pt-4 border-t border-border/50">
           {!showPreview && scan && scan.status === 'Completed' ? (
-            <div className="flex flex-wrap gap-4 text-sm">
-              <span><span className="text-muted-foreground">Avg rank:</span> <b>{scan.avg_rank ?? '—'}</b></span>
-              <span><span className="text-muted-foreground">Top-3 coverage (SoLV):</span> <b>{scan.solv ?? 0}%</b></span>
-              <span><span className="text-muted-foreground">Found in:</span> <b>{scan.found_count}/{scan.total_cells}</b> spots</span>
-              <span className="text-muted-foreground">“{scan.keyword}”</span>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
+              <div className="glass-panel border-border/60 rounded-xl p-3 shadow-sm relative overflow-hidden group hover:-translate-y-0.5 transition-all">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Avg rank</p>
+                <p className="text-2xl font-extrabold mt-1 text-foreground">
+                  {scan.avg_rank != null ? <AnimatedNumber value={scan.avg_rank} /> : '—'}
+                </p>
+              </div>
+              <div className="glass-panel border-border/60 rounded-xl p-3 shadow-sm relative overflow-hidden group hover:-translate-y-0.5 transition-all">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Top-3 (SoLV)</p>
+                <p className="text-2xl font-extrabold mt-1 text-foreground">
+                  {scan.solv != null ? <AnimatedNumber value={scan.solv} /> : '0'}%
+                </p>
+              </div>
+              <div className="glass-panel border-border/60 rounded-xl p-3 shadow-sm relative overflow-hidden group hover:-translate-y-0.5 transition-all">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Found in</p>
+                <p className="text-2xl font-extrabold mt-1 text-foreground">
+                  <AnimatedNumber value={scan.found_count} /><span className="text-muted-foreground text-sm font-semibold"> / {scan.total_cells}</span>
+                </p>
+              </div>
+              <div className="glass-panel border-border/60 rounded-xl p-3 shadow-sm relative overflow-hidden flex flex-col justify-center">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Keyword</p>
+                <p className="text-base font-extrabold mt-0.5 text-indigo-500 truncate" title={scan.keyword}>“{scan.keyword}”</p>
+              </div>
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs font-semibold text-muted-foreground bg-muted/30 p-3 rounded-lg border border-border/50">
               Preview · {gridSize}×{gridSize} grid over {radiusKm} km — press Run scan to get ranks.
             </p>
           )}
 
-          <LocalRankMap cells={displayCells} preview={showPreview} />
+          <div className="shadow-lg rounded-xl overflow-hidden border border-border/60">
+            <LocalRankMap cells={displayCells} preview={showPreview} />
+          </div>
 
           {!showPreview && (
             <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
@@ -238,17 +261,17 @@ export function LocalRankPanel({ locationId }: Props) {
           )}
 
           {!showPreview && topCats.length > 0 && (
-            <div className="rounded-lg bg-muted/20 border border-border/50 p-3 text-xs space-y-2">
-              <div className="font-medium text-foreground">Categories your top-ranked competitors use</div>
-              <div className="flex flex-wrap gap-1.5">
+            <div className="glass-panel border-border/60 p-4 rounded-xl space-y-3 shadow-sm">
+              <div className="font-bold text-foreground text-sm">Categories your top-ranked competitors use</div>
+              <div className="flex flex-wrap gap-2">
                 {topCats.map(([cat, n]) => (
-                  <span key={cat} className="px-2 py-0.5 rounded-full bg-background border border-border">
-                    {cat} <span className="text-muted-foreground">×{n}</span>
+                  <span key={cat} className="px-3 py-1 rounded-full bg-background/50 backdrop-blur-md border border-border/60 text-xs font-semibold shadow-sm hover:-translate-y-0.5 transition-all">
+                    {cat} <span className="text-muted-foreground ml-1 bg-muted px-1.5 rounded-sm">×{n}</span>
                   </span>
                 ))}
               </div>
               {location?.primary_category && (
-                <div className="text-muted-foreground">
+                <div className="text-xs font-semibold text-muted-foreground pt-1">
                   Your primary category: <b className="text-foreground">{location.primary_category}</b>
                   {' '}— consider adding any of the above you don’t already cover.
                 </div>
@@ -272,21 +295,32 @@ export function LocalRankPanel({ locationId }: Props) {
 
       {/* Scan history — pick any past run to view its map */}
       {recent && recent.length > 0 && (
-        <div className="pt-3 border-t border-border/50">
-          <h4 className="text-sm font-medium text-foreground mb-2">Scan history</h4>
-          <div className="space-y-1 max-h-52 overflow-auto">
+        <div className="pt-4 border-t border-border/50">
+          <h4 className="text-sm font-bold text-foreground mb-3 flex items-center gap-2"><MapPin className="h-4 w-4 text-indigo-500" /> Scan history</h4>
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
             {recent.map((s) => (
               <button
                 key={s.id}
                 onClick={() => { setScanId(s.id); setPreviewing(false) }}
-                className={`w-full text-left text-xs px-3 py-2 rounded-md border transition-colors ${
-                  s.id === scanId && !showPreview ? 'border-primary bg-primary/10 text-foreground' : 'border-border hover:bg-muted/40 text-muted-foreground'
+                className={`w-full text-left text-xs px-4 py-3 rounded-xl border transition-all shadow-sm flex flex-col gap-1 hover:-translate-y-0.5 hover:shadow-md ${
+                  s.id === scanId && !showPreview ? 'border-indigo-500 bg-indigo-500/5 text-foreground ring-1 ring-indigo-500/20' : 'bg-background/40 backdrop-blur-md border-border/60 hover:border-indigo-500/40 text-muted-foreground'
                 }`}
               >
-                <span className="font-semibold">{fmtDate(s.created_at)}</span> · {s.keyword} · {s.grid_size}×{s.grid_size}
-                {s.status === 'Completed'
-                  ? ` · avg ${s.avg_rank ?? '—'} · SoLV ${s.solv ?? 0}%`
-                  : ` · ${s.status}`}
+                <div className="flex justify-between items-center w-full">
+                  <span className={`font-extrabold text-sm ${s.id === scanId && !showPreview ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground'}`}>{s.keyword}</span>
+                  <span className="font-semibold text-[10px] bg-muted px-2 py-0.5 rounded text-muted-foreground">{fmtDate(s.created_at)}</span>
+                </div>
+                <div className="font-semibold text-[11px] flex items-center gap-3">
+                  <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-primary" /> {s.grid_size}×{s.grid_size}</span>
+                  {s.status === 'Completed' ? (
+                    <>
+                      <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> avg {s.avg_rank ?? '—'}</span>
+                      <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> SoLV {s.solv ?? 0}%</span>
+                    </>
+                  ) : (
+                    <span className="italic flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> {s.status}</span>
+                  )}
+                </div>
               </button>
             ))}
           </div>

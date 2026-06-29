@@ -13,7 +13,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { api } from '@/lib/api'
-
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+} from 'recharts'
 const RANGE_OPTIONS = [
   { label: 'Last 1 Month', value: 1 },
   { label: 'Last 3 Months', value: 3 },
@@ -203,6 +207,43 @@ export default function SearchIntelligencePage() {
     )
   }
 
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const branded = payload.find((p: any) => p.dataKey === 'branded')?.value || 0
+      const discovery = payload.find((p: any) => p.dataKey === 'non_branded')?.value || 0
+      const total = payload.find((p: any) => p.dataKey === 'total')?.value || 0
+      
+      const formattedDate = new Date(label + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+      
+      return (
+        <div className="glass-panel p-4 shadow-xl border border-border/50 text-sm">
+          <p className="font-bold text-foreground mb-3 pb-2 border-b border-border/50">{formattedDate}</p>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-6">
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <span className="h-2.5 w-2.5 rounded-sm bg-indigo-500 shadow-sm" />
+                Branded
+              </span>
+              <span className="font-bold text-foreground">{branded.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center justify-between gap-6">
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400 shadow-sm" />
+                Discovery
+              </span>
+              <span className="font-bold text-foreground">{discovery.toLocaleString()}</span>
+            </div>
+            <div className="pt-2 mt-2 border-t border-border/50 flex items-center justify-between gap-6">
+              <span className="font-semibold text-foreground">Total</span>
+              <span className="font-extrabold text-foreground">{total.toLocaleString()}</span>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return null
+  }
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-8">
       {/* Header */}
@@ -267,123 +308,145 @@ export default function SearchIntelligencePage() {
 
       {/* Filters */}
       <div className="flex gap-3 overflow-x-auto sm:flex-wrap sm:items-center sm:overflow-visible pb-1 sm:pb-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 min-h-[44px] sm:min-h-0 bg-muted/20 shrink-0">
-          <MapPin className="h-4 w-4 text-muted-foreground" />
+        <div className="relative group shrink-0">
+          <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+            <MapPin className="h-4 w-4 text-indigo-500 group-hover:text-indigo-400 transition-colors" />
+          </div>
           <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)}
-            className="bg-transparent text-sm font-medium outline-none cursor-pointer max-w-[200px]">
-            <option value="all">All Locations</option>
-            {locations.map((l) => <option key={l.id} value={String(l.id)}>{l.location_name}</option>)}
+            className="pl-9 pr-8 py-2.5 bg-background/50 backdrop-blur-md border border-border/60 rounded-xl text-xs font-bold text-foreground outline-none cursor-pointer shadow-sm hover:shadow-md hover:border-indigo-500/30 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all appearance-none min-w-[160px] max-w-[200px]">
+            <option value="all" className="bg-background font-semibold">All Locations</option>
+            {locations.map((l) => <option key={l.id} value={String(l.id)} className="bg-background">{l.location_name}</option>)}
           </select>
+          <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+            <span className="text-[10px] opacity-50">▼</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 min-h-[44px] sm:min-h-0 bg-muted/20 shrink-0">
-          <Calendar className="h-4 w-4 text-muted-foreground" />
+        <div className="relative group shrink-0">
+          <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+            <Calendar className="h-4 w-4 text-emerald-500 group-hover:text-emerald-400 transition-colors" />
+          </div>
           <select value={months} onChange={(e) => setMonths(parseInt(e.target.value))}
-            className="bg-transparent text-sm font-medium outline-none cursor-pointer">
-            {RANGE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            className="pl-9 pr-8 py-2.5 bg-background/50 backdrop-blur-md border border-border/60 rounded-xl text-xs font-bold text-foreground outline-none cursor-pointer shadow-sm hover:shadow-md hover:border-emerald-500/30 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 transition-all appearance-none">
+            {RANGE_OPTIONS.map((r) => <option key={r.value} value={r.value} className="bg-background font-semibold">{r.label}</option>)}
           </select>
+          <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+            <span className="text-[10px] opacity-50">▼</span>
+          </div>
         </div>
       </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-card rounded-xl p-6 border border-border/60 shadow-sm">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Total Impressions</p>
-          <h3 className="text-3xl font-extrabold text-foreground">{(kpis?.total_impressions ?? 0).toLocaleString()}</h3>
-          <div className="mt-2"><Delta v={kpis?.impressions_mom ?? null} /> <span className="text-xs text-muted-foreground">vs prior period</span></div>
+        <div className="glass-panel rounded-xl p-6 relative overflow-hidden group hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:hover:shadow-[0_8px_30px_rgba(255,255,255,0.05)] transition-all duration-300 transform hover:-translate-y-1">
+          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
+            <Search className="w-24 h-24" />
+          </div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">Total Impressions</p>
+          <h3 className="text-3xl font-extrabold text-foreground tracking-tight relative z-10">
+            <AnimatedNumber value={kpis?.total_impressions ?? 0} />
+          </h3>
+          <div className="mt-2 relative z-10"><Delta v={kpis?.impressions_mom ?? null} /> <span className="text-xs text-muted-foreground ml-1">vs prior period</span></div>
         </div>
-        <div className="bg-card rounded-xl p-6 border border-border/60 shadow-sm">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
+        
+        <div className="glass-panel rounded-xl p-6 relative overflow-hidden group hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:hover:shadow-[0_8px_30px_rgba(255,255,255,0.05)] transition-all duration-300 transform hover:-translate-y-1">
+          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
+            <BarChart2 className="w-24 h-24" />
+          </div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1 relative z-10">
             Keywords Tracked
             <span title="Google only reports keywords above a privacy threshold; low-volume terms may be hidden." className="cursor-help">
               <Info className="h-3 w-3" />
             </span>
           </p>
-          <h3 className="text-3xl font-extrabold text-foreground">{(kpis?.keywords_tracked ?? 0).toLocaleString()}</h3>
-          <p className="mt-2 text-xs text-muted-foreground">unique terms in period</p>
+          <h3 className="text-3xl font-extrabold text-foreground tracking-tight relative z-10">
+            <AnimatedNumber value={kpis?.keywords_tracked ?? 0} />
+          </h3>
+          <p className="mt-2 text-xs text-muted-foreground relative z-10">unique terms in period</p>
         </div>
-        <div className="bg-card rounded-xl p-6 border border-border/60 shadow-sm">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Branded Impressions</p>
-          <h3 className="text-3xl font-extrabold text-indigo-600">{(kpis?.branded_pct ?? 0)}%</h3>
-          <p className="mt-2 text-xs text-muted-foreground">{(kpis?.branded_impressions ?? 0).toLocaleString()} impressions</p>
+
+        <div className="glass-panel rounded-xl p-6 relative overflow-hidden group hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:hover:shadow-[0_8px_30px_rgba(255,255,255,0.05)] transition-all duration-300 transform hover:-translate-y-1">
+          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
+            <TrendingUp className="w-24 h-24" />
+          </div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">Branded Impressions</p>
+          <h3 className="text-3xl font-extrabold text-indigo-600 dark:text-indigo-400 tracking-tight relative z-10">
+            {kpis?.branded_pct ?? 0}%
+          </h3>
+          <p className="mt-2 text-xs text-muted-foreground relative z-10">
+            {(kpis?.branded_impressions ?? 0).toLocaleString()} impressions
+          </p>
         </div>
-        <div className="bg-card rounded-xl p-6 border border-border/60 shadow-sm">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Non-Branded (Discovery)</p>
-          <h3 className="text-3xl font-extrabold text-emerald-600">{(kpis?.non_branded_pct ?? 0)}%</h3>
-          <p className="mt-2 text-xs text-muted-foreground">{(kpis?.non_branded_impressions ?? 0).toLocaleString()} impressions</p>
+
+        <div className="glass-panel rounded-xl p-6 relative overflow-hidden group hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:hover:shadow-[0_8px_30px_rgba(255,255,255,0.05)] transition-all duration-300 transform hover:-translate-y-1">
+          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
+            <Search className="w-24 h-24" />
+          </div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">Non-Branded (Discovery)</p>
+          <h3 className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight relative z-10">
+            {kpis?.non_branded_pct ?? 0}%
+          </h3>
+          <p className="mt-2 text-xs text-muted-foreground relative z-10">
+            {(kpis?.non_branded_impressions ?? 0).toLocaleString()} impressions
+          </p>
         </div>
       </div>
 
       {/* Trend chart */}
-      <div className="bg-card border border-border/60 rounded-xl p-6 shadow-sm">
+      <div className="glass-panel rounded-xl p-6 shadow-sm border border-border/60">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div>
             <h3 className="text-base font-bold text-foreground">Visibility Trend</h3>
             <p className="text-xs text-muted-foreground">Monthly impressions — branded vs discovery</p>
           </div>
           <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-indigo-500" />Branded</span>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />Discovery</span>
+            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-indigo-500 shadow-sm" />Branded</span>
+            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400 shadow-sm" />Discovery</span>
           </div>
         </div>
-        {trends.length === 0 ? (
-          <div className="h-56 flex items-center justify-center text-sm text-muted-foreground">No trend data for this range.</div>
+        
+        {loading ? (
+          <div className="h-64 flex flex-col items-center justify-center space-y-4">
+            <Skeleton className="h-48 w-full rounded-lg" />
+            <div className="flex justify-between w-full">
+              {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-4 w-12" />)}
+            </div>
+          </div>
+        ) : trends.length === 0 ? (
+          <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">No trend data for this range.</div>
         ) : (
-          <div className="flex gap-3">
-            {/* Y-axis scale */}
-            <div className="flex flex-col justify-between h-56 py-1 text-[10px] text-muted-foreground text-right w-10 shrink-0">
-              {[1, 0.75, 0.5, 0.25, 0].map((p) => (
-                <span key={p}>{Math.round(maxTrend * p).toLocaleString()}</span>
-              ))}
-            </div>
-            {/* Plot area with gridlines */}
-            <div className="relative flex-1">
-              <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
-                {[0, 1, 2, 3, 4].map((i) => <div key={i} className="border-t border-border/40" />)}
-              </div>
-              <div className="relative flex items-end justify-around gap-2 sm:gap-3 h-56">
-                {trends.map((t) => {
-                  const brandedH = (t.branded / maxTrend) * 100
-                  const discoveryH = (t.non_branded / maxTrend) * 100
-                  return (
-                    <div key={t.month} className="flex flex-col items-center flex-1 h-full justify-end group">
-                      {t.total > 0 && (
-                        <span className="text-[10px] font-semibold text-foreground mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {t.total.toLocaleString()}
-                        </span>
-                      )}
-                      <div
-                        className="w-full max-w-[44px] mx-auto flex flex-col justify-end rounded-t-md overflow-hidden cursor-default"
-                        style={{ height: t.total > 0 ? `${Math.max(brandedH + discoveryH, 2)}%` : '2px' }}
-                        title={
-                          t.total > 0
-                            ? `${new Date(t.month + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}\nBranded: ${t.branded.toLocaleString()}\nDiscovery: ${t.non_branded.toLocaleString()}\nTotal: ${t.total.toLocaleString()}`
-                            : `${new Date(t.month + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}: no data`
-                        }
-                      >
-                        {t.total > 0 ? (
-                          <>
-                            <div className="bg-indigo-500 transition-all" style={{ height: `${(brandedH / (brandedH + discoveryH || 1)) * 100}%` }} />
-                            <div className="bg-emerald-400 transition-all" style={{ height: `${(discoveryH / (brandedH + discoveryH || 1)) * 100}%` }} />
-                          </>
-                        ) : (
-                          <div className="bg-border/60 h-full" />
-                        )}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground mt-2 whitespace-nowrap">
-                        {new Date(t.month + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' })}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+          <div className="h-72 w-full mt-4 -ml-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={trends} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-border/40" />
+                <XAxis 
+                  dataKey="month" 
+                  tickFormatter={(val) => new Date(val + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' })}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 11 }}
+                  className="text-muted-foreground"
+                  dy={10}
+                />
+                <YAxis 
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(val) => val.toLocaleString()}
+                  className="text-muted-foreground"
+                  dx={-10}
+                />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'transparent' }} />
+                <Bar dataKey="branded" stackId="a" fill="#6366f1" radius={[0, 0, 4, 4]} animationDuration={1000} />
+                <Bar dataKey="non_branded" stackId="a" fill="#34d399" radius={[4, 4, 0, 0]} animationDuration={1000} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         )}
       </div>
 
       {/* Location comparison (All Locations only) */}
       {selectedLocation === 'all' && comparison.length > 0 && (
-        <div className="bg-card border border-border/60 rounded-xl p-6 shadow-sm">
+        <div className="glass-panel border border-border/60 rounded-xl p-6 shadow-sm">
           <h3 className="text-base font-bold text-foreground mb-4">Location Comparison</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -413,7 +476,7 @@ export default function SearchIntelligencePage() {
       )}
 
       {/* Top keywords */}
-      <div className="bg-card border border-border/60 rounded-xl overflow-hidden shadow-sm">
+      <div className="glass-panel border border-border/60 rounded-xl overflow-hidden shadow-sm">
         <div className="p-5 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -458,12 +521,14 @@ export default function SearchIntelligencePage() {
               </thead>
               <tbody className="divide-y divide-border/40 font-medium">
                 {loading ? (
-                  <tr><td colSpan={4} className="py-12 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                      <p>Loading intelligence data…</p>
-                    </div>
-                  </td></tr>
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <tr key={i} className="animate-pulse">
+                      <td className="py-4"><Skeleton className="h-4 w-32" /></td>
+                      <td className="py-4 text-right"><Skeleton className="h-4 w-12 ml-auto" /></td>
+                      <td className="py-4 text-right"><Skeleton className="h-4 w-16 ml-auto" /></td>
+                      <td className="py-4 text-right"><Skeleton className="h-6 w-20 rounded-full ml-auto" /></td>
+                    </tr>
+                  ))
                 ) : error ? (
                   <tr><td colSpan={4} className="py-12 text-center">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">

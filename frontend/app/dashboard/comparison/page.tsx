@@ -6,7 +6,8 @@ import { useComparisonDashboard, ComparisonFilters, GroupRow } from '@/hooks/use
 import { BarChart2, Download, Filter, RefreshCw, TrendingUp, TrendingDown, Trophy, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell } from 'recharts'
 import { api } from '@/lib/api'
-
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { Skeleton } from '@/components/ui/skeleton'
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6', '#a855f7', '#3b82f6']
 
 // metric key -> label. Sum metrics support per-location normalization.
@@ -173,6 +174,30 @@ export default function ComparisonDashboardPage() {
 
   const truncated = series.length > 12
 
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="glass-panel p-4 shadow-xl border border-border/50 text-sm min-w-[200px]">
+          <p className="font-bold text-foreground mb-3 pb-2 border-b border-border/50">{label}</p>
+          <div className="space-y-2">
+            {payload.map((entry: any, index: number) => (
+              <div key={index} className="flex items-center justify-between gap-6">
+                <span className="flex items-center gap-2 text-muted-foreground font-semibold">
+                  <span className="h-2.5 w-2.5 rounded-sm shadow-sm" style={{ backgroundColor: entry.color }} />
+                  {entry.name}
+                </span>
+                <span className="font-bold text-foreground">
+                  {typeof entry.value === 'number' && !Number.isInteger(entry.value) ? entry.value.toFixed(1) : entry.value.toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )
+    }
+    return null
+  }
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {loading && breakdown.length > 0 && (
@@ -188,62 +213,67 @@ export default function ComparisonDashboardPage() {
           <button
             onClick={async () => { const { synced } = await refresh(); if (synced) alert('Sync started — Google data is being pulled in the background. Reload in a minute to see updated numbers.'); }}
             disabled={loading} title="Pull the latest data from Google and recompute"
-            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm font-semibold hover:bg-muted/40 disabled:opacity-50">
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white shadow-[0_4px_14px_0_rgb(79,70,229,0.39)] hover:shadow-[0_6px_20px_rgba(79,70,229,0.23)] rounded-xl text-sm font-bold transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:hover:shadow-[0_4px_14px_0_rgb(79,70,229,0.39)]">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Sync &amp; Refresh
           </button>
-          <button onClick={handleExport} disabled={exporting} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50">
-            {exporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export CSV
+          <button onClick={handleExport} disabled={exporting} className="flex items-center gap-2 px-4 py-2 bg-background/50 backdrop-blur-md border border-border/60 text-foreground shadow-sm hover:shadow-md hover:border-border rounded-xl text-sm font-bold transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100">
+            {exporting ? <RefreshCw className="h-4 w-4 animate-spin text-indigo-500" /> : <Download className="h-4 w-4 text-indigo-500" />} Export CSV
           </button>
         </div>
       </div>
 
       {/* Controls */}
-      <div className="bg-card border border-border rounded-xl p-4 flex flex-wrap items-end gap-4">
-        <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Filter className="h-3 w-3" /> Group by</label>
-          <select className="bg-card border border-input rounded-lg text-sm px-3 py-2" value={filters.group_type}
+      <div className="glass-panel rounded-xl p-4 flex flex-wrap items-end gap-4 shadow-sm border-border/60">
+        <div className="flex flex-col gap-1.5 relative group">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1 ml-1"><Filter className="h-3 w-3 text-indigo-500" /> Group by</label>
+          <select className="pl-3 pr-8 py-2 bg-background/50 backdrop-blur-md border border-border/60 rounded-xl text-xs font-bold text-foreground outline-none cursor-pointer shadow-sm hover:shadow-md hover:border-indigo-500/30 focus:border-indigo-500 transition-all appearance-none" value={filters.group_type}
             onChange={e => setFilters(p => ({ ...p, group_type: e.target.value as any, group_ids: [] }))}>
-            <option value="CITY">City</option><option value="STATE">State</option>
-            <option value="REGION">Region</option>
+            <option value="CITY" className="bg-background">City</option><option value="STATE" className="bg-background">State</option>
+            <option value="REGION" className="bg-background">Region</option>
           </select>
+          <div className="absolute inset-y-0 right-0 top-5 flex items-center pr-3 pointer-events-none"><span className="text-[10px] opacity-50">▼</span></div>
+        </div>
+        <div className="flex flex-col gap-1.5 relative group">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground ml-1">Metric</label>
+          <select className="pl-3 pr-8 py-2 bg-background/50 backdrop-blur-md border border-border/60 rounded-xl text-xs font-bold text-foreground outline-none cursor-pointer shadow-sm hover:shadow-md hover:border-indigo-500/30 focus:border-indigo-500 transition-all appearance-none" value={metric} onChange={e => { setMetric(e.target.value); setSortKey(e.target.value) }}>
+            {CHART_METRICS.map(m => <option key={m} value={m} className="bg-background">{LABELS[m]}</option>)}
+          </select>
+          <div className="absolute inset-y-0 right-0 top-5 flex items-center pr-3 pointer-events-none"><span className="text-[10px] opacity-50">▼</span></div>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Metric</label>
-          <select className="bg-card border border-input rounded-lg text-sm px-3 py-2" value={metric} onChange={e => { setMetric(e.target.value); setSortKey(e.target.value) }}>
-            {CHART_METRICS.map(m => <option key={m} value={m}>{LABELS[m]}</option>)}
-          </select>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Date range</label>
-          <div className="flex gap-2">
-            <input type="date" value={filters.start_date} max={filters.end_date} onChange={e => setFilters(p => ({ ...p, start_date: e.target.value }))} className="bg-card border border-input rounded-lg text-sm px-2 py-1.5" />
-            <input type="date" value={filters.end_date} min={filters.start_date} max={new Date().toISOString().split('T')[0]} onChange={e => setFilters(p => ({ ...p, end_date: e.target.value }))} className="bg-card border border-input rounded-lg text-sm px-2 py-1.5" />
+          <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground ml-1">Date range</label>
+          <div className="flex items-center gap-2 bg-background/50 backdrop-blur-md border border-border/60 rounded-xl px-2 py-1 shadow-sm hover:shadow-md transition-all">
+            <input type="date" value={filters.start_date} max={filters.end_date} onChange={e => setFilters(p => ({ ...p, start_date: e.target.value }))} className="bg-transparent border-none text-xs font-bold text-foreground outline-none cursor-pointer p-1" />
+            <span className="text-xs font-bold text-muted-foreground opacity-50">→</span>
+            <input type="date" value={filters.end_date} min={filters.start_date} max={new Date().toISOString().split('T')[0]} onChange={e => setFilters(p => ({ ...p, end_date: e.target.value }))} className="bg-transparent border-none text-xs font-bold text-foreground outline-none cursor-pointer p-1" />
           </div>
         </div>
-        <label className="flex items-center gap-2 text-sm font-medium ml-auto cursor-pointer select-none">
-          <input type="checkbox" checked={perLocation} onChange={e => setPerLocation(e.target.checked)} className="h-4 w-4 accent-primary" />
+        <label className="flex items-center gap-2 text-sm font-bold ml-auto cursor-pointer select-none text-muted-foreground hover:text-foreground transition-colors">
+          <input type="checkbox" checked={perLocation} onChange={e => setPerLocation(e.target.checked)} className="h-4 w-4 rounded border-border/60 text-indigo-600 focus:ring-indigo-500/50" />
           Per-location average
         </label>
       </div>
 
       {/* Compare-specific chips */}
       <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Filter:</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/40 px-2 py-1 rounded-md">Filter:</span>
         {availableGroups.length === 0 && <span className="text-sm text-muted-foreground">No {noun}s found.</span>}
         {availableGroups.map(g => {
           const active = (filters.group_ids || []).includes(g.id)
           return <button key={g.id} onClick={() => toggleGroup(g.id)}
-            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary font-semibold' : 'bg-card text-muted-foreground border-border hover:border-primary/50'}`}>{g.name}</button>
+            className={`text-xs px-3 py-1.5 rounded-full border transition-all shadow-sm hover:shadow-md ${active ? 'bg-indigo-600 text-white border-indigo-600 font-bold scale-105' : 'bg-background/50 backdrop-blur-md text-foreground border-border/60 hover:border-indigo-500/50 font-semibold hover:-translate-y-0.5'}`}>{g.name}</button>
         })}
       </div>
 
       {/* KPI band */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {totals.map(t => (
-          <div key={t.key} className="bg-card border border-border rounded-xl p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{LABELS[t.key]}</p>
-            <p className="text-2xl font-black mt-1">{fmt(t.cur)}</p>
-            <div className="mt-1"><Delta value={t.delta} /> <span className="text-[10px] text-muted-foreground">vs prev</span></div>
+          <div key={t.key} className="glass-panel border border-border/60 rounded-xl p-5 relative overflow-hidden group hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:hover:shadow-[0_8px_30px_rgba(255,255,255,0.05)] transition-all duration-300 transform hover:-translate-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground relative z-10">{LABELS[t.key]}</p>
+            <p className="text-2xl font-extrabold mt-1 tracking-tight text-foreground relative z-10">
+              {isPct(t.key) || isRate(t.key) ? fmt(t.cur, isPct(t.key)) : <AnimatedNumber value={t.cur} />}
+            </p>
+            <div className="mt-1.5 relative z-10"><Delta value={t.delta} /></div>
           </div>
         ))}
       </div>
@@ -251,102 +281,105 @@ export default function ComparisonDashboardPage() {
       {/* Insight callouts */}
       {insights && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4">
-            <p className="text-xs font-bold uppercase tracking-wider text-emerald-600 flex items-center gap-1.5"><Trophy className="h-3.5 w-3.5" /> Top performer</p>
-            <p className="text-lg font-bold mt-1">{insights.top.group_name}</p>
-            <p className="text-sm text-muted-foreground">{fmt(val(insights.top, metric), isPct(metric))} {LABELS[metric]}{perLocation && !isRate(metric) ? ' / location' : ''}</p>
+          <div className="glass-panel border-emerald-500/30 rounded-xl p-5 relative overflow-hidden group hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
+            <Trophy className="absolute -right-4 -bottom-4 h-24 w-24 text-emerald-500/10 group-hover:scale-110 group-hover:text-emerald-500/20 transition-all duration-500" />
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 flex items-center gap-1.5 relative z-10"><Trophy className="h-3.5 w-3.5" /> Top performer</p>
+            <p className="text-xl font-extrabold mt-1 text-foreground relative z-10">{insights.top.group_name}</p>
+            <p className="text-sm font-semibold text-muted-foreground relative z-10">{fmt(val(insights.top, metric), isPct(metric))} {LABELS[metric]}{perLocation && !isRate(metric) ? ' / location' : ''}</p>
           </div>
-          <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-4">
-            <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 flex items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5" /> Most improved</p>
+          <div className="glass-panel border-indigo-500/30 rounded-xl p-5 relative overflow-hidden group hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
+            <TrendingUp className="absolute -right-4 -bottom-4 h-24 w-24 text-indigo-500/10 group-hover:scale-110 group-hover:text-indigo-500/20 transition-all duration-500" />
+            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 flex items-center gap-1.5 relative z-10"><TrendingUp className="h-3.5 w-3.5" /> Most improved</p>
             {insights.improved ? <>
-              <p className="text-lg font-bold mt-1">{insights.improved.r.group_name}</p>
-              <p className="text-sm text-muted-foreground flex items-center gap-1"><Delta value={insights.improved.d} /> {LABELS[metric]} vs prev period</p>
-            </> : <p className="text-sm text-muted-foreground mt-1">No prior-period data</p>}
+              <p className="text-xl font-extrabold mt-1 text-foreground relative z-10">{insights.improved.r.group_name}</p>
+              <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1 relative z-10"><Delta value={insights.improved.d} /> {LABELS[metric]} vs prev period</p>
+            </> : <p className="text-sm font-semibold text-muted-foreground mt-1 relative z-10">No prior-period data</p>}
           </div>
-          <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
-            <p className="text-xs font-bold uppercase tracking-wider text-amber-600 flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5" /> Needs attention</p>
+          <div className="glass-panel border-amber-500/30 rounded-xl p-5 relative overflow-hidden group hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
+            <AlertTriangle className="absolute -right-4 -bottom-4 h-24 w-24 text-amber-500/10 group-hover:scale-110 group-hover:text-amber-500/20 transition-all duration-500" />
+            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 flex items-center gap-1.5 relative z-10"><AlertTriangle className="h-3.5 w-3.5" /> Needs attention</p>
             {insights.attention ? <>
-              <p className="text-lg font-bold mt-1">{insights.attention.group_name}</p>
-              <p className="text-sm text-muted-foreground">Lowest response rate: {fmt(insights.attention.response_rate, true)}</p>
-            </> : <p className="text-sm text-muted-foreground mt-1">No review data</p>}
+              <p className="text-xl font-extrabold mt-1 text-foreground relative z-10">{insights.attention.group_name}</p>
+              <p className="text-sm font-semibold text-muted-foreground relative z-10">Lowest response rate: {fmt(insights.attention.response_rate, true)}</p>
+            </> : <p className="text-sm font-semibold text-muted-foreground mt-1 relative z-10">No review data</p>}
           </div>
         </div>
       )}
 
       {/* Ranking bar chart — current-period totals per group (no extra backend call) */}
       <div className="space-y-3">
-        <h3 className="text-lg font-bold flex items-center gap-2"><BarChart2 className="h-5 w-5 text-indigo-500" /> {LABELS[metric]} by {noun}</h3>
-        <div className="h-[360px] bg-card border border-border rounded-xl p-5">
+        <h3 className="text-lg font-extrabold flex items-center gap-2"><BarChart2 className="h-5 w-5 text-indigo-500" /> {LABELS[metric]} by {noun}</h3>
+        <div className="h-[360px] glass-panel border-border/60 shadow-sm rounded-xl p-5">
           {sorted.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={sorted.slice(0, 15).map(r => ({ name: r.group_name, value: val(r, metric) ?? 0 }))} layout="vertical" margin={{ left: 12, right: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
-                <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', borderRadius: 8, border: '1px solid hsl(var(--border))' }} />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="currentColor" className="text-border/40" />
+                <XAxis type="number" tick={{ fontSize: 11 }} className="text-muted-foreground" axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} className="text-muted-foreground" axisLine={false} tickLine={false} />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'transparent' }} />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]} animationDuration={1000}>
                   {sorted.slice(0, 15).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
-          ) : <div className="h-full flex items-center justify-center text-muted-foreground text-sm">No data for this selection</div>}
+          ) : <div className="h-full flex items-center justify-center text-muted-foreground text-sm font-semibold">No data for this selection</div>}
         </div>
       </div>
 
       {/* Multi-series trend */}
       <div className="space-y-3">
-        <h3 className="text-lg font-bold flex items-center gap-2"><TrendingUp className="h-5 w-5 text-indigo-500" /> {LABELS[metric]} over time
-          {truncated && <span className="text-xs font-normal text-amber-600">· showing top 12 of {series.length} {noun}s</span>}</h3>
-        <div className="h-[380px] bg-card border border-border rounded-xl p-5">
+        <h3 className="text-lg font-extrabold flex items-center gap-2"><TrendingUp className="h-5 w-5 text-indigo-500" /> {LABELS[metric]} over time
+          {truncated && <span className="text-xs font-semibold text-amber-600">· showing top 12 of {series.length} {noun}s</span>}</h3>
+        <div className="h-[380px] glass-panel border-border/60 shadow-sm rounded-xl p-5">
           {chartData.length > 0 && series.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', borderRadius: 8, border: '1px solid hsl(var(--border))' }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
+              <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-border/40" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} className="text-muted-foreground" axisLine={false} tickLine={false} dy={10} />
+                <YAxis tick={{ fontSize: 11 }} className="text-muted-foreground" axisLine={false} tickLine={false} dx={-10} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600, paddingTop: '10px' }} iconType="circle" />
                 {series.slice(0, 12).map((s, i) => (
-                  <Line key={s.group_name} type="monotone" dataKey={s.group_name} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} connectNulls />
+                  <Line key={s.group_name} type="monotone" dataKey={s.group_name} stroke={COLORS[i % COLORS.length]} strokeWidth={3} dot={{ r: 3, strokeWidth: 2 }} activeDot={{ r: 6 }} animationDuration={1000} connectNulls />
                 ))}
               </LineChart>
             </ResponsiveContainer>
-          ) : <div className="h-full flex items-center justify-center text-muted-foreground text-sm">No trend data for this selection</div>}
+          ) : <div className="h-full flex items-center justify-center text-muted-foreground text-sm font-semibold">No trend data for this selection</div>}
         </div>
       </div>
 
       {/* Sentiment + search-intent breakdowns (from already-loaded data) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-3">
-          <h3 className="text-base font-bold flex items-center gap-2">Review sentiment by {noun}</h3>
-          <div className="h-[320px] bg-card border border-border rounded-xl p-4">
+          <h3 className="text-base font-extrabold flex items-center gap-2">Review sentiment by {noun}</h3>
+          <div className="h-[320px] glass-panel border-border/60 shadow-sm rounded-xl p-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={sorted.slice(0, 12).map(r => ({ name: r.group_name, Positive: r.positive_review_count || 0, Neutral: r.neutral_review_count || 0, Negative: r.negative_review_count || 0 }))}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} interval={0} angle={-25} textAnchor="end" height={60} />
-                <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', borderRadius: 8, border: '1px solid hsl(var(--border))' }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="Positive" stackId="s" fill="#10b981" />
-                <Bar dataKey="Neutral" stackId="s" fill="#94a3b8" />
-                <Bar dataKey="Negative" stackId="s" fill="#ef4444" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-border/40" />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} className="text-muted-foreground" interval={0} angle={-25} textAnchor="end" height={60} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11 }} className="text-muted-foreground" axisLine={false} tickLine={false} dx={-10} />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'transparent' }} />
+                <Legend wrapperStyle={{ fontSize: 11, fontWeight: 600 }} iconType="circle" />
+                <Bar dataKey="Positive" stackId="s" fill="#10b981" animationDuration={1000} radius={[0, 0, 4, 4]} />
+                <Bar dataKey="Neutral" stackId="s" fill="#94a3b8" animationDuration={1000} />
+                <Bar dataKey="Negative" stackId="s" fill="#ef4444" animationDuration={1000} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
         <div className="space-y-3">
-          <h3 className="text-base font-bold flex items-center gap-2">Search intent by {noun}</h3>
-          <div className="h-[320px] bg-card border border-border rounded-xl p-4">
+          <h3 className="text-base font-extrabold flex items-center gap-2">Search intent by {noun}</h3>
+          <div className="h-[320px] glass-panel border-border/60 shadow-sm rounded-xl p-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={sorted.slice(0, 12).map(r => ({ name: r.group_name, Branded: r.searches_chain || 0, Direct: r.searches_direct || 0, Discovery: r.searches_indirect || 0 }))}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} interval={0} angle={-25} textAnchor="end" height={60} />
-                <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', borderRadius: 8, border: '1px solid hsl(var(--border))' }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="Direct" stackId="q" fill="#6366f1" />
-                <Bar dataKey="Discovery" stackId="q" fill="#06b6d4" />
-                <Bar dataKey="Branded" stackId="q" fill="#f59e0b" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-border/40" />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} className="text-muted-foreground" interval={0} angle={-25} textAnchor="end" height={60} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11 }} className="text-muted-foreground" axisLine={false} tickLine={false} dx={-10} />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'transparent' }} />
+                <Legend wrapperStyle={{ fontSize: 11, fontWeight: 600 }} iconType="circle" />
+                <Bar dataKey="Direct" stackId="q" fill="#6366f1" animationDuration={1000} radius={[0, 0, 4, 4]} />
+                <Bar dataKey="Discovery" stackId="q" fill="#06b6d4" animationDuration={1000} />
+                <Bar dataKey="Branded" stackId="q" fill="#f59e0b" animationDuration={1000} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -355,44 +388,57 @@ export default function ComparisonDashboardPage() {
 
       {/* Comparison table */}
       <div className="space-y-3">
-        <h3 className="text-lg font-bold flex items-center gap-2"><BarChart2 className="h-5 w-5 text-indigo-500" /> {noun.charAt(0).toUpperCase() + noun.slice(1)} breakdown</h3>
-        <div className="bg-card border border-border rounded-xl overflow-x-auto">
+        <h3 className="text-lg font-extrabold flex items-center gap-2"><BarChart2 className="h-5 w-5 text-indigo-500" /> {noun.charAt(0).toUpperCase() + noun.slice(1)} breakdown</h3>
+        <div className="glass-panel border-border/60 shadow-sm rounded-xl overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-muted/40 border-b border-border">
+            <thead className="bg-muted/40 border-b border-border/60">
               <tr>
-                <th className="px-4 py-3 text-left font-bold text-muted-foreground">{noun}</th>
-                <th className="px-3 py-3 text-right font-bold text-muted-foreground">Locs</th>
+                <th className="px-4 py-4 text-left font-bold text-muted-foreground">{noun}</th>
+                <th className="px-3 py-4 text-right font-bold text-muted-foreground">Locs</th>
                 {tableCols.map(c => (
-                  <th key={c} onClick={() => setSort(c)} className={`px-3 py-3 text-right font-bold cursor-pointer select-none whitespace-nowrap ${sortKey === c ? 'text-primary' : 'text-muted-foreground'}`}>
+                  <th key={c} onClick={() => setSort(c)} className={`px-3 py-4 text-right font-bold cursor-pointer select-none whitespace-nowrap transition-colors hover:text-indigo-500 ${sortKey === c ? 'text-indigo-600' : 'text-muted-foreground'}`}>
                     {LABELS[c]}{sortKey === c ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {sorted.length === 0 && <tr><td colSpan={tableCols.length + 2} className="px-4 py-10 text-center text-muted-foreground">No data for this selection.</td></tr>}
-              {sorted.map(row => (
-                <tr key={row.group_id} className="hover:bg-muted/20">
-                  <td className="px-4 py-2.5 font-semibold">{row.group_name}</td>
-                  <td className="px-3 py-2.5 text-right text-muted-foreground">{row.locations_count}</td>
-                  {tableCols.map(c => {
-                    const v = val(row, c)
-                    const avg = orgAvg[c]
-                    const vsAvg = (v !== null && avg) ? ((v - avg) / avg) * 100 : null
-                    const rate = isPct(c)
-                    return (
-                      <td key={c} className="px-3 py-2.5 text-right whitespace-nowrap">
-                        <span className="font-semibold">{fmt(v, rate)}</span>
-                        {vsAvg !== null && Math.abs(vsAvg) >= 1 && (
-                          <span className={`ml-1.5 text-[10px] font-bold ${vsAvg >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                            {vsAvg >= 0 ? '+' : ''}{vsAvg.toFixed(0)}%
-                          </span>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
+            <tbody className="divide-y divide-border/40">
+              {loading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="animate-pulse">
+                    <td className="px-4 py-4"><Skeleton className="h-4 w-32" /></td>
+                    <td className="px-3 py-4"><Skeleton className="h-4 w-8 ml-auto" /></td>
+                    {tableCols.map(c => (
+                      <td key={c} className="px-3 py-4"><Skeleton className="h-4 w-12 ml-auto" /></td>
+                    ))}
+                  </tr>
+                ))
+              ) : sorted.length === 0 ? (
+                <tr><td colSpan={tableCols.length + 2} className="px-4 py-12 text-center text-muted-foreground font-semibold">No data for this selection.</td></tr>
+              ) : (
+                sorted.map(row => (
+                  <tr key={row.group_id} className="hover:bg-muted/30 transition-colors group">
+                    <td className="px-4 py-3.5 font-bold text-foreground group-hover:text-indigo-600 transition-colors">{row.group_name}</td>
+                    <td className="px-3 py-3.5 text-right font-semibold text-muted-foreground">{row.locations_count}</td>
+                    {tableCols.map(c => {
+                      const v = val(row, c)
+                      const avg = orgAvg[c]
+                      const vsAvg = (v !== null && avg) ? ((v - avg) / avg) * 100 : null
+                      const rate = isPct(c)
+                      return (
+                        <td key={c} className="px-3 py-3.5 text-right whitespace-nowrap">
+                          <span className="font-bold text-foreground">{fmt(v, rate)}</span>
+                          {vsAvg !== null && Math.abs(vsAvg) >= 1 && (
+                            <span className={`ml-2 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md ${vsAvg >= 0 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'}`}>
+                              {vsAvg >= 0 ? '+' : ''}{vsAvg.toFixed(0)}%
+                            </span>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

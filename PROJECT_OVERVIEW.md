@@ -1,15 +1,15 @@
-Last Updated: 2026-06-25T20:35:00Z
-Based On Commit: ab8573e
-Documentation Version: 1.3
+Last Updated: 2026-06-28T13:46:44Z
+Based On Commit: ee4cc61
+Documentation Version: 1.4
 
 # Project Overview
 
 * **Project Name:** Pinzo (formerly GMB MVP)
-* **Purpose:** A unified dashboard to manage Google Business Profile (GBP) locations, synchronize location data, track performance metrics, manage custom attributes, view/reply to reviews, manage location media/galleries, analyze search intelligence metrics, and manage billing plans.
-* **Business Goals:** Allow organizations to easily connect their Google accounts, manage their GBP presence, respond to reviews with AI assistance, track SLA commitments, monitor analytics, update business profiles, publish localized updates, upload and sync gallery media, monitor local search keywords/brand performance, and scale their organization with flexible location-based billing subscription plans.
-* **Problem Being Solved:** The difficulty of managing multiple Google Business Profile locations, reviews, attributes, insights, media galleries, local SEO keywords, and posts natively at scale while enforcing fair usage limits and tiered pricing.
+* **Purpose:** A unified dashboard to manage Google Business Profile (GBP) locations, synchronize location data, track performance metrics, manage custom attributes, view/reply to reviews, manage location media/galleries, analyze search intelligence metrics, generate public microsites, capture leads, and manage billing plans.
+* **Business Goals:** Allow organizations to easily connect their Google accounts, manage their GBP presence, respond to reviews with AI assistance, track SLA commitments, monitor analytics, update business profiles, publish localized updates, upload and sync gallery media, monitor local search keywords/brand performance, deploy custom public microsites for location lead generation, and scale their organization with flexible location-based billing subscription plans.
+* **Problem Being Solved:** The difficulty of managing multiple Google Business Profile locations, reviews, attributes, insights, media galleries, local SEO keywords, holiday hours, and posts natively at scale while enforcing fair usage limits, tiered pricing, and generating public pages with lead attribution tracking.
 * **Target Users:** Organizations and businesses managing one or more physical locations.
-* **Current Status:** Production MVP phase with location sync, AI replies, sentiment tagging, SLA tracking, post scheduling, analytics tracking, business attributes, listing moderation, media gallery sync, search intelligence/brand term metrics, profile health scoring, and a fully integrated Razorpay-based billing & subscription system.
+* **Current Status:** Production MVP phase with location sync, AI replies, sentiment tagging, SLA tracking, post scheduling, analytics tracking, business attributes, listing moderation, media gallery sync, search intelligence/brand term metrics, profile health scoring, public microsites with lead forms and first-touch UTM attribution tracking, holiday hours management, and a fully integrated Razorpay-based billing & subscription system.
 * **Key Features:**
   * **Multi-tenant & RBAC Isolation:** Multi-tenant organization support and explicit user-level location access control (RBAC scoping).
   * **Google OAuth Onboarding:** Seamless Google account connection and secure token persistence.
@@ -26,8 +26,14 @@ Documentation Version: 1.3
   * **AI Description Generation & Validation:** Policy-compliant business description generation utilizing tone nudges and automated validation rules (e.g. clinic safety checks, locality checks, and character length limits).
   * **Geo-grid Local Rank Scanner:** Interactive N×N grid rank scanner integrated with Google Maps SERP APIs to visualize local search engine visibility and track top competitor rankings.
   * **Reply Templates:** Custom response templates grouped by star ratings, supporting automated variable interpolation (e.g., reviewer and location names).
+  * **Public Microsites with Lead Capture & Attribution:** Automatic generation of SEO-optimized public location pages/microsites featuring an integrated contact/lead capture form. Includes client metadata extraction (IP/User-Agent) and first-touch/last-touch UTM parameter and click ID tracking (`utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `gclid`, `gbraid`, `wbraid`, `fbclid`, `fbp`, `fbc`) mapped to backend marketing attribution pipelines.
+  * **Holiday Hours Management:** Core platform scheduling and syncing of holiday-specific business hours and service schedules to Google Business Profile.
+  * **Advanced Leaderboard & Cohorts:** Enhanced scoring metrics (V6), cohort-based organization ranking, and location performance action engines with historical snapshot caching.
+  * **Web Push Notifications:** Subscription and delivery of real-time administrative and review alerts using Web Push integration.
+  * **Saved Comparison Views & Custom Groups:** Comparison engines and tag-based custom groups to query and inspect localized metric subgroups.
   * **Operational Activity Logs:** Comprehensive audit trails capturing system changes, API interactions, and manual overrides mapped to organizations.
   * **Subscription Billing & Location Quota Enforcement:** Tiered, graduated pricing integrated with Razorpay. Includes location quota limits, automatic grandfathering of pre-existing locations, mid-cycle proration calculations, immediate AI credit adjustments, UPI remandate billing fields, status banner warnings, and secure webhook event parsing with idempotency tracking.
+
 
 ---
 
@@ -146,6 +152,9 @@ project/
   * `local_rank.py`: SERP Geo-grid local search trackers.
   * `reply_templates.py`: Templates CRUD grouped by star ratings.
   * `microsites.py` / `public_microsites.py`: Dashboard settings and public landing views for microsites.
+  * `leads.py`: Endpoint for capturing and querying lead information submitted from public microsites.
+  * `holidays.py`: Endpoint for scheduling and syncing holiday hours.
+  * `push.py`: Endpoint for managing client Web Push subscription configurations.
   * `leaderboard.py`: Location leaderboard dashboard rankings.
   * `endpoints/comparison.py`: Side-by-side location comparisons.
   * `users.py`: User-specific metadata, profiles, and administration.
@@ -197,6 +206,8 @@ project/
 5. **Subscription Upgrade / Addon Flow:** User chooses to unlock locked location -> Pricing service computes prorated charge for the remaining cycle days -> Frontend creates Razorpay order/addon -> Razorpay webhook captures payment -> Organization quota increases -> Locations set to `active`.
 6. **Search Intelligence Flow:** User sets organization brand terms -> Celery sync triggers keyword performance harvesting -> Syncs data to `keyword_monthly_metrics` -> Frontend displays dashboard analytics filtered by brand vs non-brand search impressions.
 7. **Location Media Upload Flow:** User uploads photo/video to location gallery -> Saved locally, queued for asynchronous sync to GBP via Celery (`location_media`) -> Google updates state (resource names, status) -> Synced back to the dashboard database gallery.
+8. **Public Microsite Lead Capture & Attribution Flow:** Visitor lands on a public microsite -> Frontend captures first-touch UTM, click IDs, and client IP/UA -> Stored in localStorage -> Visitor submits a contact form -> Data sent to backend `leads` endpoint with captured attribution parameters -> Lead record stored with status `new`, capturing marketing touchpoints for server-side analytics.
+9. **Holiday Hours Scheduling & Sync Flow:** User updates special/holiday hours on the dashboard -> Hours saved to `holidays` -> Background sync processes and sends formatted updates to the GBP API -> Google Profile displays the adjusted schedules.
 
 ---
 
@@ -229,6 +240,12 @@ PostgreSQL 15
 * `billing_transaction`: Log of all processed payment transactions and subscription operations.
 * `billing_webhook_event`: Event log with status checking to ensure idempotent processing of webhook payloads.
 * `microsites`: Storage for microsite customization configurations, layouts, and public flags.
+* `leads`: Lead generation records captured from public microsite contact forms (stores organization/location bounds, user details, message content, and status tracking).
+* `holidays`: Special hours, custom holiday business hours, and service schedule metadata associated with locations.
+* `push_subscriptions`: Client subscription details for Web Push notifications.
+* `regions` & `region_locations`: Geographic groupings, locations, and regional grouping maps.
+* `post_media`: Tracks local post photo/video assets, formats, and storage details.
+* `campaign_audit_logs`: Operational audits and execution trails for bulk post campaigns.
 * `leaderboard_snapshots`: Historical location metrics aggregates for monthly leaderboard computations.
 * `saved_comparison_views`: Configurations for compared location subsets.
 * `custom_groups` & `custom_group_location`: Tag-based customized location folders.
@@ -240,10 +257,12 @@ PostgreSQL 15
 * Users belong to Organizations.
 * Locations belong to Organizations.
 * `user_location_access` maps Users to specific Locations.
-* Reviews, insights, attributes, media items, health scores, and keyword metrics belong to Locations.
+* Reviews, insights, attributes, media items, health scores, holiday hours, and keyword metrics belong to Locations.
 * Posts generate PostVariants that belong to Locations.
-* Transactions and webhook logs reference Organizations.
+* Transactions, webhook logs, and microsites reference Organizations.
 * Brand terms belong to Organizations.
+* Leads map to both Organizations and Locations.
+* Push subscriptions belong to Users.
 
 ## Migrations
 Managed by Alembic. Run `alembic upgrade head` before starting workers to prevent schema mismatch.
