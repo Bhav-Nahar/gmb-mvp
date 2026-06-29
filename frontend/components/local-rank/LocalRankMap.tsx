@@ -77,15 +77,16 @@ function resultRowHtml(r: RankResult, isUs: boolean): string {
   if (r.price_level && PRICE_LABEL[r.price_level]) meta.push(PRICE_LABEL[r.price_level])
   if (r.is_claimed === false) meta.push('Unclaimed')
   const img = r.image
-    ? `<img src="${escapeHtml(r.image)}" style="width:38px;height:38px;border-radius:6px;object-fit:cover;flex:0 0 auto" onerror="this.style.visibility='hidden'"/>`
-    : `<div style="width:38px;height:38px;border-radius:6px;background:#e5e7eb;flex:0 0 auto"></div>`
-  return `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 4px;border-radius:6px;${isUs ? 'background:#dcfce7' : ''}">
-    <div style="width:16px;font-weight:700;color:#374151;flex:0 0 auto;text-align:center;font-size:12px;line-height:38px">${r.rank}</div>
+    ? `<img src="${escapeHtml(r.image)}" style="width:38px;height:38px;border-radius:6px;object-fit:cover;flex:0 0 auto;box-shadow:0 2px 4px rgba(0,0,0,0.1)" onerror="this.style.visibility='hidden'"/>`
+    : `<div style="width:38px;height:38px;border-radius:6px;background:var(--muted);flex:0 0 auto;box-shadow:inset 0 2px 4px rgba(0,0,0,0.05)"></div>`
+  
+  return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px;border-radius:8px;margin-bottom:4px;transition:all 0.2s;${isUs ? 'background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2)' : 'background:var(--background);border:1px solid var(--border)'}">
+    <div style="width:20px;font-weight:800;color:var(--foreground);flex:0 0 auto;text-align:center;font-size:13px;line-height:38px">${r.rank}</div>
     ${img}
     <div style="min-width:0;flex:1">
-      <div style="font-weight:600;color:#111827;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.name)}${isUs ? ' · you' : ''}</div>
-      ${cats ? `<div style="color:#6b7280;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(cats)}</div>` : ''}
-      <div style="color:#6b7280;font-size:11px">${meta.join(' · ')}</div>
+      <div style="font-weight:700;color:var(--foreground);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.name)}${isUs ? ' <span style="color:#10b981">· you</span>' : ''}</div>
+      ${cats ? `<div style="color:var(--muted-foreground);font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">${escapeHtml(cats)}</div>` : ''}
+      <div style="color:var(--muted-foreground);font-size:10px;font-weight:500;margin-top:2px">${meta.join(' · ')}</div>
     </div>
   </div>`
 }
@@ -93,16 +94,16 @@ function resultRowHtml(r: RankResult, isUs: boolean): string {
 function popupHtml(c: RankCell): string {
   const rankLine = c.rank == null
     ? '<span style="color:#ef4444">Not in top 20 here</span>'
-    : `Your rank here: <span style="color:#16a34a">#${c.rank}</span>`
+    : `Your rank here: <span style="color:#10b981;font-size:16px">#${c.rank}</span>`
   const results = c.top_results || []
   const list = results.length
     ? results.slice(0, 10).map((r) => resultRowHtml(r, c.rank != null && r.rank === c.rank)).join('')
     : (c.top_competitor
-        ? `<div style="color:#6b7280;font-size:12px">#1 here: ${escapeHtml(c.top_competitor)}</div>`
-        : '<div style="color:#6b7280;font-size:12px">No results</div>')
-  return `<div style="min-width:255px;max-width:300px;font-family:system-ui,sans-serif">
-    <div style="font-weight:700;font-size:13px;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #e5e7eb">${rankLine}</div>
-    <div style="max-height:300px;overflow:auto">${list}</div>
+        ? `<div style="color:var(--muted-foreground);font-size:12px;font-weight:600">#1 here: ${escapeHtml(c.top_competitor)}</div>`
+        : '<div style="color:var(--muted-foreground);font-size:12px;font-weight:600">No results</div>')
+  return `<div style="min-width:260px;max-width:320px;font-family:inherit">
+    <div style="font-weight:800;font-size:13px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);color:var(--foreground)">${rankLine}</div>
+    <div style="max-height:320px;overflow-y:auto;padding-right:4px" class="custom-scrollbar">${list}</div>
   </div>`
 }
 
@@ -162,9 +163,9 @@ export function LocalRankMap({ cells, preview = false }: { cells: RankCell[]; pr
         const label = c.rank == null ? '20+' : String(c.rank)
         const icon = L.divIcon({
           className: '',
-          html: `<div style="background:${color};width:30px;height:30px;border-radius:9999px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)">${label}</div>`,
-          iconSize: [30, 30],
-          iconAnchor: [15, 15],
+          html: `<div style="background:${color};width:32px;height:32px;border-radius:9999px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:12px;border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.35), inset 0 2px 4px rgba(255,255,255,0.3);transition:transform 0.2s">${label}</div>`,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
         })
         L.marker([c.lat, c.lng], { icon }).addTo(layerRef.current).bindPopup(popupHtml(c), { maxWidth: 320 })
         pts.push([c.lat, c.lng])
@@ -180,5 +181,42 @@ export function LocalRankMap({ cells, preview = false }: { cells: RankCell[]; pr
     if (mapRef.current) { mapRef.current.remove(); mapRef.current = null }
   }, [])
 
-  return <div ref={containerRef} className="h-[70vh] min-h-[520px] w-full rounded-lg overflow-hidden border border-border z-0" />
+  return (
+    <>
+      <style dangerouslySetInnerHTML={{__html: `
+        .leaflet-popup-content-wrapper {
+          background: hsl(var(--card));
+          color: hsl(var(--foreground));
+          border: 1px solid hsl(var(--border) / 0.6);
+          border-radius: 12px;
+          box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+        }
+        .leaflet-popup-tip {
+          background: hsl(var(--card));
+          border-top: 1px solid hsl(var(--border) / 0.6);
+          border-left: 1px solid hsl(var(--border) / 0.6);
+        }
+        .leaflet-popup-close-button {
+          color: hsl(var(--muted-foreground)) !important;
+          margin-top: 4px !important;
+          margin-right: 4px !important;
+        }
+        .leaflet-popup-close-button:hover {
+          color: hsl(var(--foreground)) !important;
+          background: transparent !important;
+        }
+        .leaflet-container {
+          background: hsl(var(--muted) / 0.3);
+          font-family: inherit;
+        }
+        .leaflet-div-icon > div:hover {
+          transform: scale(1.15) translateY(-2px);
+          z-index: 1000 !important;
+        }
+      `}} />
+      <div ref={containerRef} className="h-[70vh] min-h-[520px] w-full rounded-lg overflow-hidden border-none z-0 shadow-inner" />
+    </>
+  )
 }
