@@ -212,6 +212,7 @@ async def reply_to_review(
     
     if getattr(payload, 'template_id', None) is not None:
         from app.models.reply_template import ReplyTemplate
+        review.reply_template_id = payload.template_id
         db.query(ReplyTemplate).filter(
             ReplyTemplate.id == payload.template_id,
             ReplyTemplate.organization_id == current_user.organization_id

@@ -117,22 +117,22 @@ export function InsightsTab({ locationId }: { locationId: number }) {
   return (
     <div className="space-y-6">
       {/* Subheader Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6">
         <div>
-          <h2 className="text-lg font-bold text-foreground">Location Analytics</h2>
+          <h2 className="text-xl font-extrabold tracking-tight text-foreground">Location Analytics</h2>
           {data?.last_insights_sync_at && (
-            <p className="text-xs text-muted-foreground mt-0.5">
+            <p className="text-[11px] font-bold text-muted-foreground mt-1">
               Last synchronized: {new Date(data.last_insights_sync_at).toLocaleString()}
             </p>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex flex-1 items-center gap-2 border border-border rounded-lg px-2.5 min-h-[44px] py-1.5 sm:flex-none sm:min-h-0 bg-muted/20">
-            <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+          <div className="flex flex-1 items-center gap-2 border border-border/50 rounded-xl px-3 min-h-[44px] py-2 sm:flex-none sm:min-h-0 bg-background/50 backdrop-blur-md shadow-sm">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
             <select
               value={range}
               onChange={(e) => setRange(e.target.value)}
-              className="w-full bg-transparent text-xs font-semibold text-foreground outline-none border-none cursor-pointer sm:w-auto"
+              className="w-full bg-transparent text-xs font-bold text-foreground outline-none border-none cursor-pointer sm:w-auto"
             >
               <option value="7">Last 7 Days</option>
               <option value="30">Last 30 Days</option>
@@ -142,12 +142,11 @@ export function InsightsTab({ locationId }: { locationId: number }) {
 
           <Button
             size="sm"
-            variant="outline"
             onClick={triggerManualSync}
             disabled={syncing || loading}
-            className="min-h-[44px] sm:h-8 sm:min-h-0 text-xs bg-indigo-600 border-indigo-500 hover:bg-indigo-700 text-white font-semibold"
+            className="min-h-[44px] sm:h-9 sm:min-h-0 text-xs bg-indigo-500 hover:bg-indigo-400 text-white font-bold shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all rounded-xl"
           >
-            <RefreshCw className={`mr-1.5 h-3 w-3 ${syncing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`mr-2 h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
             Sync Metrics
           </Button>
         </div>
@@ -167,11 +166,13 @@ export function InsightsTab({ locationId }: { locationId: number }) {
         <div className="space-y-6">
           {/* Attention Panel */}
           {data.attention_needed && (
-            <div className="flex items-start gap-3 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/10 p-4 text-amber-600 dark:text-amber-300">
-              <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-4 rounded-2xl border border-amber-500/30 bg-background/50 backdrop-blur-md shadow-sm p-5 text-amber-500">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500 shrink-0">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
               <div>
-                <span className="text-sm font-bold block mb-1">Needs Attention</span>
-                <span className="text-xs text-amber-700 dark:text-amber-200 leading-relaxed">
+                <span className="text-sm font-extrabold tracking-tight block mb-1">Needs Attention</span>
+                <span className="text-xs font-semibold text-muted-foreground leading-relaxed">
                   {data.attention_reason?.split(' | ').join(' • ')}
                 </span>
               </div>
@@ -209,7 +210,7 @@ export function InsightsTab({ locationId }: { locationId: number }) {
           <ConversionQuality kpis={data.kpis} />
 
           {/* Daily Trend chart with toggleable metrics + hover tooltip */}
-          <div className="glass-panel p-4 sm:p-6">
+          <div className="glass-panel border-border/40 rounded-2xl p-4 sm:p-6 shadow-sm overflow-hidden">
             <div className="flex flex-col gap-4 mb-6 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 className="text-base font-bold text-foreground">Daily Performance Trend</h3>

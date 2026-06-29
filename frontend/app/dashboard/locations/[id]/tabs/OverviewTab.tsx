@@ -38,7 +38,7 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
         {/* Health Score Card */}
-        <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm flex flex-col items-center justify-center text-center">
+        <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm flex flex-col items-center justify-center text-center">
           <h3 className="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
             <Activity className="w-4 h-4" />
             Profile Health
@@ -86,7 +86,7 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
         </div>
 
         {/* Action Required Panel (Recommendations) */}
-        <div className="md:col-span-2 bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm flex flex-col">
+        <div className="md:col-span-2 glass-panel border-border/40 rounded-2xl p-6 shadow-sm flex flex-col">
           <h3 className="text-sm font-medium text-foreground mb-4 flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
             Top Recommendations
@@ -152,7 +152,7 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
 
       {/* Breakdown Section */}
       {breakdown && (
-        <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm">
+        <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm">
           <h3 className="text-sm font-medium text-foreground mb-4">Score Breakdown</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
 

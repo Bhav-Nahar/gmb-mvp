@@ -22,6 +22,8 @@ import {
   RefreshCw
 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { Skeleton } from '@/components/ui/skeleton'
 
 interface LocationSnapshot {
   location_id: number
@@ -242,7 +244,21 @@ export default function LeaderboardPage() {
   }
 
   if (loading && !data) {
-    return <div className="p-8 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>
+    return (
+      <div className="p-6 max-w-7xl mx-auto space-y-8">
+        <div className="flex justify-between">
+          <Skeleton className="h-10 w-48 rounded-lg" />
+          <div className="flex gap-3"><Skeleton className="h-10 w-32 rounded-lg" /><Skeleton className="h-10 w-24 rounded-lg" /></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Skeleton className="h-24 rounded-xl" /><Skeleton className="h-24 rounded-xl" /><Skeleton className="h-24 rounded-xl" />
+        </div>
+        <Skeleton className="h-40 rounded-xl" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Skeleton className="h-32 rounded-xl" /><Skeleton className="h-32 rounded-xl" /><Skeleton className="h-32 rounded-xl" />
+        </div>
+      </div>
+    )
   }
 
   const isSmallOrg = data?.has_data && data.eligible_locations.length < 2
@@ -253,11 +269,11 @@ export default function LeaderboardPage() {
       {/* Header & Controls */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-3">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground flex items-center gap-3">
             <Trophy className="h-8 w-8 text-yellow-500" />
             Leaderboard
           </h1>
-          <p className="text-muted-foreground mt-1">Gamified performance ranking across your network.</p>
+          <p className="text-muted-foreground mt-1 font-semibold">Gamified performance ranking across your network.</p>
         </div>
         
         <div className="flex items-center gap-3">
@@ -265,33 +281,34 @@ export default function LeaderboardPage() {
             <button 
               onClick={handleSync}
               disabled={syncing}
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white shadow-[0_4px_14px_0_rgb(79,70,229,0.39)] hover:shadow-[0_6px_20px_rgba(79,70,229,0.23)] rounded-lg text-sm font-bold transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:hover:shadow-[0_4px_14px_0_rgb(79,70,229,0.39)]"
             >
               <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
               {syncing ? 'Syncing...' : 'Sync Now'}
             </button>
           )}
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 relative group">
             <select
-              className="bg-card border border-input rounded-lg text-sm px-3 py-2 text-foreground outline-none focus:ring-1 focus:ring-primary min-w-[150px]"
+              className="appearance-none bg-background/50 backdrop-blur-md border border-border/60 shadow-sm rounded-lg text-sm font-bold pl-4 pr-10 py-2.5 text-foreground outline-none focus:border-indigo-500 hover:border-indigo-500/30 transition-all min-w-[150px] cursor-pointer"
               value={selectedPeriod}
               onChange={(e) => setSelectedPeriod(e.target.value)}
             >
               <option value="" disabled>Select Period</option>
-              {periods.map(p => <option key={p} value={p}>{p}</option>)}
+              {periods.map(p => <option key={p} value={p} className="bg-background">{p}</option>)}
             </select>
+            <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none"><span className="text-[10px] opacity-50">▼</span></div>
           </div>
           <button 
             onClick={() => handleExport('csv')}
             disabled={!data?.has_data}
-            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm font-semibold hover:bg-muted transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2.5 bg-background/50 backdrop-blur-md border border-border/60 shadow-sm rounded-lg text-sm font-bold hover:bg-muted/50 hover:border-indigo-500/30 transition-all disabled:opacity-50"
           >
             <Download className="h-4 w-4" /> CSV
           </button>
           <button 
             onClick={() => handleExport('xlsx')}
             disabled={!data?.has_data}
-            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm font-semibold hover:bg-muted transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2.5 bg-background/50 backdrop-blur-md border border-border/60 shadow-sm rounded-lg text-sm font-bold hover:bg-muted/50 hover:border-indigo-500/30 transition-all disabled:opacity-50"
           >
             <Download className="h-4 w-4" /> XLSX
           </button>
@@ -318,66 +335,76 @@ export default function LeaderboardPage() {
         <>
           {/* Organization Benchmark Card */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-card border border-border rounded-xl p-5 flex items-center gap-4 shadow-sm">
-              <div className="h-12 w-12 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
-                <Star className="h-6 w-6 text-blue-500" />
+            <div className="glass-panel border-border/60 rounded-xl p-5 flex items-center gap-5 shadow-sm group hover:-translate-y-0.5 transition-all">
+              <div className="h-14 w-14 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                <Star className="h-7 w-7 text-blue-500" />
               </div>
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Org Avg Rating</p>
-                <p className="text-2xl font-bold text-foreground">{data.organization_benchmark.average_rating_raw?.toFixed(2) || 'N/A'}</p>
+                <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Org Avg Rating</p>
+                <p className="text-3xl font-black text-foreground mt-1">
+                  {data.organization_benchmark.average_rating_raw != null ? <AnimatedNumber value={data.organization_benchmark.average_rating_raw} isFloat formatter={(v) => v.toFixed(2)} /> : 'N/A'}
+                </p>
               </div>
             </div>
-            <div className="bg-card border border-border rounded-xl p-5 flex items-center gap-4 shadow-sm">
-              <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0">
-                <MessageSquare className="h-6 w-6 text-green-500" />
+            <div className="glass-panel border-border/60 rounded-xl p-5 flex items-center gap-5 shadow-sm group hover:-translate-y-0.5 transition-all">
+              <div className="h-14 w-14 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                <MessageSquare className="h-7 w-7 text-emerald-500" />
               </div>
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total Reviews</p>
-                <p className="text-2xl font-bold text-foreground">{data.organization_benchmark.total_reviews ?? 'N/A'}</p>
+                <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Total Reviews</p>
+                <p className="text-3xl font-black text-foreground mt-1">
+                  {data.organization_benchmark.total_reviews != null ? <AnimatedNumber value={data.organization_benchmark.total_reviews} /> : 'N/A'}
+                </p>
               </div>
             </div>
-            <div className="bg-card border border-border rounded-xl p-5 flex items-center gap-4 shadow-sm">
-              <div className="h-12 w-12 rounded-full bg-indigo-500/10 flex items-center justify-center shrink-0">
-                <Activity className="h-6 w-6 text-indigo-500" />
+            <div className="glass-panel border-border/60 rounded-xl p-5 flex items-center gap-5 shadow-sm group hover:-translate-y-0.5 transition-all">
+              <div className="h-14 w-14 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
+                <Activity className="h-7 w-7 text-indigo-500" />
               </div>
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Org Health Score</p>
-                <p className="text-2xl font-bold text-foreground">{data.organization_benchmark.health_score_raw?.toFixed(1) || 'N/A'}</p>
+                <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Org Health Score</p>
+                <p className="text-3xl font-black text-foreground mt-1">
+                  {data.organization_benchmark.health_score_raw != null ? <AnimatedNumber value={data.organization_benchmark.health_score_raw} isFloat formatter={(v) => v.toFixed(1)} /> : 'N/A'}
+                </p>
               </div>
             </div>
           </div>
 
           {/* Awards Grid - Only render if awards exist */}
           {!isSmallOrg && data.awards && Object.values(data.awards).some(v => v !== undefined && v !== null) && (
-            <div>
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Medal className="h-5 w-5 text-indigo-500"/> Monthly Awards</h3>
+            <div className="pt-4">
+              <h3 className="text-lg font-extrabold mb-4 flex items-center gap-2"><Medal className="h-5 w-5 text-indigo-500"/> Monthly Awards</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {data.awards.top_performer && (
-                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.top_performer?.location_id)!)} className="bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border border-yellow-500/20 rounded-xl p-4 cursor-pointer hover:border-yellow-500/40 transition-colors shadow-sm">
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-yellow-600 mb-1">Top Performer</p>
-                    <p className="text-sm font-bold text-foreground truncate">{data.awards.top_performer.location_name}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{data.awards.top_performer.composite_score?.toFixed(1)} pts</p>
+                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.top_performer?.location_id)!)} className="relative overflow-hidden bg-gradient-to-br from-yellow-500/20 to-amber-600/10 backdrop-blur-md border border-yellow-500/30 rounded-xl p-5 cursor-pointer hover:-translate-y-1 hover:shadow-lg transition-all shadow-sm group">
+                    <Trophy className="absolute -right-4 -bottom-4 h-24 w-24 text-yellow-500/10 transform group-hover:scale-110 transition-transform duration-500" />
+                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-yellow-600 mb-2 relative z-10">Top Performer</p>
+                    <p className="text-base font-black text-foreground truncate relative z-10">{data.awards.top_performer.location_name}</p>
+                    <p className="text-xs font-semibold text-yellow-700/80 dark:text-yellow-500/80 mt-1 relative z-10">{data.awards.top_performer.composite_score?.toFixed(1)} pts</p>
                   </div>
                 )}
                 {data.awards.most_improved && (
-                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.most_improved?.location_id)!)} className="bg-gradient-to-br from-green-500/10 to-green-600/5 border border-green-500/20 rounded-xl p-4 cursor-pointer hover:border-green-500/40 transition-colors shadow-sm">
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-green-600 mb-1">Most Improved</p>
-                    <p className="text-sm font-bold text-foreground truncate">{data.awards.most_improved.location_name}</p>
-                    <p className="text-xs text-green-600 font-semibold flex items-center mt-1"><TrendingUp className="h-3 w-3 mr-1"/>{data.awards.most_improved.rank_movement} ranks</p>
+                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.most_improved?.location_id)!)} className="relative overflow-hidden bg-gradient-to-br from-emerald-500/20 to-teal-600/10 backdrop-blur-md border border-emerald-500/30 rounded-xl p-5 cursor-pointer hover:-translate-y-1 hover:shadow-lg transition-all shadow-sm group">
+                    <TrendingUp className="absolute -right-4 -bottom-4 h-24 w-24 text-emerald-500/10 transform group-hover:scale-110 transition-transform duration-500" />
+                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-600 mb-2 relative z-10">Most Improved</p>
+                    <p className="text-base font-black text-foreground truncate relative z-10">{data.awards.most_improved.location_name}</p>
+                    <p className="text-xs text-emerald-700 dark:text-emerald-500 font-bold flex items-center mt-1 relative z-10"><TrendingUp className="h-3 w-3 mr-1"/>{data.awards.most_improved.rank_movement} ranks</p>
                   </div>
                 )}
                 {data.awards.highest_rated && (
-                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.highest_rated?.location_id)!)} className="bg-card border border-border rounded-xl p-4 cursor-pointer hover:bg-muted/50 transition-colors shadow-sm">
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground mb-1">Highest Rated</p>
-                    <p className="text-sm font-bold text-foreground truncate">{data.awards.highest_rated.location_name}</p>
-                    <p className="text-xs text-muted-foreground mt-1 flex items-center"><Star className="h-3 w-3 text-yellow-500 mr-1"/> {data.awards.highest_rated.average_rating_raw?.toFixed(2)}</p>
+                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.highest_rated?.location_id)!)} className="relative overflow-hidden bg-gradient-to-br from-blue-500/10 to-indigo-600/5 backdrop-blur-md border border-blue-500/20 rounded-xl p-5 cursor-pointer hover:-translate-y-1 hover:shadow-lg transition-all shadow-sm group">
+                    <Star className="absolute -right-4 -bottom-4 h-24 w-24 text-blue-500/10 transform group-hover:scale-110 transition-transform duration-500" />
+                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 mb-2 relative z-10">Highest Rated</p>
+                    <p className="text-base font-black text-foreground truncate relative z-10">{data.awards.highest_rated.location_name}</p>
+                    <p className="text-xs text-blue-700 dark:text-blue-500 font-bold mt-1 flex items-center relative z-10"><Star className="h-3 w-3 text-blue-600 mr-1"/> {data.awards.highest_rated.average_rating_raw?.toFixed(2)}</p>
                   </div>
                 )}
                 {data.awards.highest_review_velocity && (
-                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.highest_review_velocity?.location_id)!)} className="bg-card border border-border rounded-xl p-4 cursor-pointer hover:bg-muted/50 transition-colors shadow-sm">
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground mb-1">Review Champion</p>
-                    <p className="text-sm font-bold text-foreground truncate">{data.awards.highest_review_velocity.location_name}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{data.awards.highest_review_velocity.review_velocity_raw} reviews</p>
+                  <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.highest_review_velocity?.location_id)!)} className="relative overflow-hidden bg-gradient-to-br from-purple-500/10 to-fuchsia-600/5 backdrop-blur-md border border-purple-500/20 rounded-xl p-5 cursor-pointer hover:-translate-y-1 hover:shadow-lg transition-all shadow-sm group">
+                    <MessageSquare className="absolute -right-4 -bottom-4 h-24 w-24 text-purple-500/10 transform group-hover:scale-110 transition-transform duration-500" />
+                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-purple-600 mb-2 relative z-10">Review Champion</p>
+                    <p className="text-base font-black text-foreground truncate relative z-10">{data.awards.highest_review_velocity.location_name}</p>
+                    <p className="text-xs font-bold text-purple-700 dark:text-purple-500 mt-1 relative z-10">{data.awards.highest_review_velocity.review_velocity_raw} reviews</p>
                   </div>
                 )}
               </div>
@@ -386,27 +413,27 @@ export default function LeaderboardPage() {
 
           {/* Search and Toggle */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-8">
-            <div className="relative w-full sm:w-72">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <div className="relative w-full sm:w-72 group">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-indigo-500 transition-colors" />
               <input
                 type="text"
                 placeholder="Find a location..."
-                className="w-full bg-card border border-input rounded-lg pl-9 pr-4 py-2 text-sm focus:ring-1 focus:ring-primary outline-none"
+                className="w-full bg-background/50 backdrop-blur-md border border-border/60 shadow-sm rounded-lg pl-9 pr-4 py-2 text-sm focus:border-indigo-500 hover:border-indigo-500/30 outline-none transition-all"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
             </div>
             
-            <div className="flex items-center bg-muted p-1 rounded-lg border border-border">
+            <div className="flex items-center bg-background/50 backdrop-blur-md p-1 rounded-lg border border-border/60 shadow-sm">
               <button 
                 onClick={() => setViewMode('leaderboard')}
-                className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md transition-colors ${viewMode === 'leaderboard' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                className={`px-4 py-1.5 text-xs font-extrabold uppercase tracking-wider rounded-md transition-all ${viewMode === 'leaderboard' ? 'bg-indigo-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
               >
                 Cards
               </button>
               <button 
                 onClick={() => setViewMode('table')}
-                className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md transition-colors ${viewMode === 'table' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                className={`px-4 py-1.5 text-xs font-extrabold uppercase tracking-wider rounded-md transition-all ${viewMode === 'table' ? 'bg-indigo-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
               >
                 Table
               </button>
@@ -431,21 +458,21 @@ export default function LeaderboardPage() {
                     <div 
                       key={loc.location_id}
                       onClick={() => openDrillIn(loc)}
-                      className="bg-card border border-border rounded-xl p-5 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer relative overflow-hidden"
+                      className="glass-panel border-border/60 rounded-xl p-5 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-pointer relative overflow-hidden group"
                     >
                       {/* Medals for Top 3 */}
-                      {loc.rank === 1 && <div className="absolute top-0 right-0 w-12 h-12 bg-yellow-500/10 rounded-bl-3xl flex items-start justify-end p-2"><Trophy className="h-5 w-5 text-yellow-500" /></div>}
-                      {loc.rank === 2 && <div className="absolute top-0 right-0 w-12 h-12 bg-gray-400/10 rounded-bl-3xl flex items-start justify-end p-2"><Medal className="h-5 w-5 text-gray-400" /></div>}
-                      {loc.rank === 3 && <div className="absolute top-0 right-0 w-12 h-12 bg-orange-600/10 rounded-bl-3xl flex items-start justify-end p-2"><Medal className="h-5 w-5 text-orange-600" /></div>}
+                      {loc.rank === 1 && <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-yellow-500/20 to-transparent rounded-bl-3xl flex items-start justify-end p-2 border-l border-b border-yellow-500/10"><Trophy className="h-6 w-6 text-yellow-500 drop-shadow-md transform group-hover:scale-110 transition-transform" /></div>}
+                      {loc.rank === 2 && <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-gray-400/20 to-transparent rounded-bl-3xl flex items-start justify-end p-2 border-l border-b border-gray-400/10"><Medal className="h-6 w-6 text-gray-400 drop-shadow-md transform group-hover:scale-110 transition-transform" /></div>}
+                      {loc.rank === 3 && <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-orange-600/20 to-transparent rounded-bl-3xl flex items-start justify-end p-2 border-l border-b border-orange-600/10"><Medal className="h-6 w-6 text-orange-600 drop-shadow-md transform group-hover:scale-110 transition-transform" /></div>}
                       
-                      <div className="flex items-center gap-4 mb-4">
-                        <div className="text-3xl font-black text-muted-foreground/30 w-10">#{loc.rank}</div>
+                      <div className="flex items-center gap-4 mb-5">
+                        <div className="text-4xl font-black text-muted-foreground/20 w-12 tracking-tighter">#{loc.rank}</div>
                         <div>
-                          <h4 className="font-bold text-foreground text-lg leading-tight">{loc.location_name}</h4>
+                          <h4 className="font-extrabold text-foreground text-lg leading-tight group-hover:text-indigo-500 transition-colors">{loc.location_name}</h4>
                           <div className="mt-1 flex items-center gap-2">
                             <MovementIcon movement={loc.rank_movement} />
                             {loc.cohort && loc.cohort_rank && (
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-500/10 px-1.5 py-0.5 rounded">
+                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full">
                                 {loc.cohort} #{loc.cohort_rank}/{loc.cohort_size}
                               </span>
                             )}
@@ -453,13 +480,13 @@ export default function LeaderboardPage() {
                         </div>
                       </div>
                       
-                      <div className="pt-4 border-t border-border flex items-end justify-between">
+                      <div className="pt-4 border-t border-border/60 flex items-end justify-between">
                         <div>
-                          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Composite</p>
-                          <p className="text-xl font-black text-primary">{loc.composite_score?.toFixed(1)} <span className="text-xs font-normal text-muted-foreground">pts</span></p>
+                          <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">Composite</p>
+                          <p className="text-2xl font-black bg-gradient-to-br from-indigo-500 to-purple-500 bg-clip-text text-transparent">{loc.composite_score?.toFixed(1)} <span className="text-xs font-bold text-muted-foreground">pts</span></p>
                         </div>
                         {loc.streak_count >= 3 && (
-                          <div className="flex items-center gap-1 bg-orange-500/10 text-orange-600 px-2 py-1 rounded text-[10px] font-bold uppercase">
+                          <div className="flex items-center gap-1 bg-gradient-to-r from-orange-500/20 to-red-500/10 border border-orange-500/20 text-orange-600 dark:text-orange-400 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase shadow-sm">
                             🔥 {loc.streak_count} mo streak
                           </div>
                         )}
@@ -468,40 +495,40 @@ export default function LeaderboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="bg-card border border-border rounded-xl overflow-hidden overflow-x-auto shadow-sm">
+                <div className="glass-panel border-border/60 rounded-xl overflow-hidden overflow-x-auto shadow-sm">
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-muted/50 border-b border-border">
+                    <thead className="bg-muted/30 border-b border-border/60">
                       <tr>
-                        <th className="px-4 py-3 font-bold text-muted-foreground w-16">Rank</th>
-                        <th className="px-4 py-3 font-bold text-muted-foreground w-20">Move</th>
-                        <th className="px-4 py-3 font-bold text-muted-foreground">Location Name</th>
-                        <th className="px-4 py-3 font-bold text-muted-foreground">Cohort</th>
-                        <th className="px-4 py-3 font-bold text-muted-foreground text-right">Score</th>
-                        <th className="px-4 py-3 font-bold text-muted-foreground text-right">Rating</th>
-                        <th className="px-4 py-3 font-bold text-muted-foreground text-right">Reviews This Month</th>
-                        <th className="px-4 py-3 font-bold text-muted-foreground text-right">Health</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground w-16">Rank</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground w-20">Move</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground">Location Name</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground">Cohort</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">Score</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">Rating</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">Reviews This Month</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">Health</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-border">
+                    <tbody className="divide-y divide-border/60">
                       {filteredEligible.map(loc => (
                         <tr 
                           key={loc.location_id} 
-                          className="hover:bg-muted/30 cursor-pointer transition-colors"
+                          className="hover:bg-primary/5 cursor-pointer transition-colors group"
                           onClick={() => openDrillIn(loc)}
                         >
-                          <td className="px-4 py-3 font-black text-muted-foreground">#{loc.rank}</td>
-                          <td className="px-4 py-3"><MovementIcon movement={loc.rank_movement} /></td>
-                          <td className="px-4 py-3 font-semibold text-foreground flex items-center gap-2">
-                            {loc.location_name}
-                            {loc.streak_count >= 3 && <span title={`${loc.streak_count} month top streak`}>🔥</span>}
+                          <td className="px-5 py-4 font-black text-muted-foreground group-hover:text-primary transition-colors">#{loc.rank}</td>
+                          <td className="px-5 py-4"><MovementIcon movement={loc.rank_movement} /></td>
+                          <td className="px-5 py-4 font-bold text-foreground flex items-center gap-3">
+                            <span className="group-hover:text-primary transition-colors">{loc.location_name}</span>
+                            {loc.streak_count >= 3 && <span title={`${loc.streak_count} month top streak`} className="bg-orange-500/10 px-1.5 py-0.5 rounded text-[10px] border border-orange-500/20">🔥</span>}
                           </td>
-                          <td className="px-4 py-3 text-muted-foreground text-xs">
-                            {loc.cohort ? `${loc.cohort} #${loc.cohort_rank}/${loc.cohort_size}` : '—'}
+                          <td className="px-5 py-4 text-muted-foreground font-semibold text-xs">
+                            {loc.cohort ? <span className="bg-muted px-2 py-1 rounded-md">{loc.cohort} #{loc.cohort_rank}/{loc.cohort_size}</span> : '—'}
                           </td>
-                          <td className="px-4 py-3 text-right font-bold text-primary">{loc.composite_score?.toFixed(1)}</td>
-                          <td className="px-4 py-3 text-right">{loc.average_rating_raw?.toFixed(2)}</td>
-                          <td className="px-4 py-3 text-right">{loc.review_velocity_raw}</td>
-                          <td className="px-4 py-3 text-right">{loc.health_score_raw?.toFixed(1)}</td>
+                          <td className="px-5 py-4 text-right font-black text-primary">{loc.composite_score?.toFixed(1)}</td>
+                          <td className="px-5 py-4 text-right font-semibold">{loc.average_rating_raw?.toFixed(2)}</td>
+                          <td className="px-5 py-4 text-right font-semibold">{loc.review_velocity_raw}</td>
+                          <td className="px-5 py-4 text-right font-semibold">{loc.health_score_raw?.toFixed(1)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -570,29 +597,31 @@ export default function LeaderboardPage() {
 
       {/* Drill-In Modal/Drawer (Client Side Rendered Overlay) */}
       {selectedLocation && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm" onClick={() => setSelectedLocation(null)}>
+        <div className="fixed inset-0 z-50 flex justify-end bg-background/40 backdrop-blur-sm" onClick={() => setSelectedLocation(null)}>
           <div 
-            className="w-full max-w-md md:max-w-xl h-full bg-card border-l border-border shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300"
+            className="w-full max-w-md md:max-w-xl h-full bg-card/95 backdrop-blur-xl border-l border-border/50 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300"
             onClick={e => e.stopPropagation()}
           >
-            <div className="p-6 border-b border-border flex items-center justify-between bg-muted/30">
+            <div className="p-6 border-b border-border/50 flex items-center justify-between bg-muted/20">
               <div>
-                <h2 className="text-xl font-bold text-foreground">{selectedLocation.location_name}</h2>
-                <p className="text-sm text-muted-foreground mt-1">Rank #{selectedLocation.rank} • {selectedLocation.composite_score?.toFixed(1)} pts</p>
+                <h2 className="text-2xl font-extrabold text-foreground">{selectedLocation.location_name}</h2>
+                <p className="text-sm font-semibold text-muted-foreground mt-1">Rank #{selectedLocation.rank} • {selectedLocation.composite_score?.toFixed(1)} pts</p>
               </div>
-              <button onClick={() => setSelectedLocation(null)} className="p-2 hover:bg-muted rounded-full">
+              <button onClick={() => setSelectedLocation(null)} className="p-2 hover:bg-muted rounded-full transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-6 space-y-8">
+            <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
               {drawerLoading ? (
-                <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>
+                <div className="flex justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                </div>
               ) : (
                 <>
                   {/* Score Breakdown */}
                   <div>
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-4">Score Breakdown</h3>
+                    <h3 className="text-xs font-extrabold uppercase tracking-widest text-muted-foreground mb-4">Score Breakdown</h3>
                     <div className="space-y-3">
                       {Object.entries(selectedLocation.score_contributions).map(([key, val]) => {
                         const labelMap: Record<string, string> = {
@@ -603,9 +632,9 @@ export default function LeaderboardPage() {
                           response_rate: 'Response Rate'
                         }
                         return (
-                          <div key={key} className="flex items-center justify-between bg-muted/40 p-3 rounded-lg border border-border/50">
-                            <span className="text-sm font-semibold">{labelMap[key] || key}</span>
-                            <span className="text-sm font-bold text-primary">{val.toFixed(1)} pts</span>
+                          <div key={key} className="flex items-center justify-between bg-muted/30 p-4 rounded-xl border border-border/40 hover:bg-muted/50 transition-colors">
+                            <span className="text-sm font-bold text-foreground">{labelMap[key] || key}</span>
+                            <span className="text-sm font-black text-indigo-500 dark:text-indigo-400">{val.toFixed(1)} pts</span>
                           </div>
                         )
                       })}
@@ -685,39 +714,47 @@ export default function LeaderboardPage() {
                   {/* History Chart */}
                   {historyData && historyData.length > 1 && (
                     <div>
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-4">Rank History</h3>
-                      <div className="h-64 w-full bg-card border border-border rounded-xl p-4">
+                      <h3 className="text-xs font-extrabold uppercase tracking-widest text-muted-foreground mb-4">Rank History</h3>
+                      <div className="h-64 w-full bg-muted/20 border border-border/40 rounded-xl p-5 shadow-sm">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={historyData}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                            <defs>
+                              <linearGradient id="colorRank" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.5} />
                             <XAxis 
                               dataKey="period_label" 
                               tickLine={false}
                               axisLine={false}
-                              tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+                              tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))', fontWeight: 600 }}
                               dy={10}
                             />
                             <YAxis 
                               reversed 
                               tickLine={false}
                               axisLine={false}
-                              tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+                              tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))', fontWeight: 600 }}
                               domain={[1, 'dataMax']}
                               allowDecimals={false}
+                              width={30}
                             />
                             <Tooltip 
-                              contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
-                              itemStyle={{ color: 'hsl(var(--foreground))' }}
+                              contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontWeight: 'bold' }}
+                              itemStyle={{ color: 'hsl(var(--primary))', fontWeight: '900' }}
                               formatter={(value: any, name: any) => [`#${value}`, 'Rank']}
-                              labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px' }}
+                              labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px', fontSize: '12px' }}
+                              cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1, strokeDasharray: '4 4' }}
                             />
                             <Line 
                               type="monotone" 
                               dataKey="rank" 
                               stroke="hsl(var(--primary))" 
-                              strokeWidth={3}
-                              dot={{ r: 4, fill: 'hsl(var(--card))', strokeWidth: 2 }}
-                              activeDot={{ r: 6, fill: 'hsl(var(--primary))' }}
+                              strokeWidth={4}
+                              dot={{ r: 4, fill: 'hsl(var(--card))', strokeWidth: 2, stroke: 'hsl(var(--primary))' }}
+                              activeDot={{ r: 7, fill: 'hsl(var(--primary))', stroke: 'hsl(var(--background))', strokeWidth: 2 }}
                             />
                           </LineChart>
                         </ResponsiveContainer>

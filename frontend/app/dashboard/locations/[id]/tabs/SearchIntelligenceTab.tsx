@@ -12,6 +12,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { api } from '@/lib/api'
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+} from 'recharts'
 
 const RANGE_OPTIONS = [
   { label: 'Last 1 Month', value: 1 },
@@ -182,37 +186,37 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6">
         <div>
-          <h2 className="text-lg font-bold text-foreground">Search Intelligence</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">How customers find this location on Google.</p>
+          <h2 className="text-xl font-extrabold tracking-tight text-foreground">Search Intelligence</h2>
+          <p className="text-[11px] font-bold text-muted-foreground mt-1">How customers find this location on Google.</p>
           {syncState.insights_sync_in_progress ? (
-            <span className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400">
+            <span className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-widest bg-indigo-500/10 text-indigo-500">
               <RefreshCw className="h-3 w-3 animate-spin" /> Updating data in background…
             </span>
           ) : syncState.last_insights_sync_at ? (
-            <span className="text-[11px] text-muted-foreground mt-2 block">
+            <span className="text-[10px] font-bold text-muted-foreground mt-2 block">
               Last updated: {new Date(syncState.last_insights_sync_at).toLocaleString()}
             </span>
           ) : null}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex flex-1 items-center gap-2 border border-border rounded-lg px-3 min-h-[44px] py-2 sm:flex-none sm:min-h-0 bg-muted/20">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex flex-1 items-center gap-2 border border-border/50 rounded-xl px-3 min-h-[44px] py-2 sm:flex-none sm:min-h-0 bg-background/50 backdrop-blur-md shadow-sm">
             <Calendar className="h-4 w-4 text-muted-foreground" />
             <select value={months} onChange={(e) => setMonths(parseInt(e.target.value))}
-              className="w-full bg-transparent text-sm font-medium outline-none cursor-pointer sm:w-auto">
+              className="w-full bg-transparent text-xs font-bold text-foreground outline-none cursor-pointer sm:w-auto">
               {RANGE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
           </div>
-          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncState.insights_sync_in_progress} className="gap-2 flex-1 min-h-[44px] sm:flex-none sm:min-h-0">
-            <RefreshCw className={`w-4 h-4 ${syncState.insights_sync_in_progress ? 'animate-spin' : ''}`} /> Sync Now
+          <Button size="sm" onClick={handleSync} disabled={syncState.insights_sync_in_progress} className="gap-2 flex-1 min-h-[44px] sm:h-9 sm:flex-none sm:min-h-0 text-xs bg-indigo-500 hover:bg-indigo-400 text-white font-bold shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all rounded-xl">
+            <RefreshCw className={`w-3.5 h-3.5 ${syncState.insights_sync_in_progress ? 'animate-spin' : ''}`} /> Sync Now
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-2 flex-1 min-h-[44px] sm:flex-none sm:min-h-0">
-            <Download className="w-4 h-4" /> {exporting ? 'Exporting…' : 'Export CSV'}
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-2 flex-1 min-h-[44px] sm:h-9 sm:flex-none sm:min-h-0 text-xs font-bold shadow-sm hover:shadow hover:-translate-y-0.5 transition-all rounded-xl bg-background/50 backdrop-blur-md">
+            <Download className="w-3.5 h-3.5" /> {exporting ? 'Exporting…' : 'Export CSV'}
           </Button>
           <Dialog>
             <DialogTrigger render={
-              <Button size="sm" className="gap-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white w-full min-h-[44px] sm:w-auto sm:min-h-0">
+              <Button size="sm" className="gap-2 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white w-full min-h-[44px] sm:h-9 sm:w-auto sm:min-h-0 text-xs font-bold shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all rounded-xl">
                 <BarChart2 className="w-4 h-4" /> Brand Terms
               </Button>
             } />
@@ -249,116 +253,157 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-card rounded-xl p-4 sm:p-6 border border-border/60 shadow-sm">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Total Impressions</p>
-          <h3 className="text-2xl sm:text-3xl font-extrabold text-foreground">{(kpis?.total_impressions ?? 0).toLocaleString()}</h3>
-          <div className="mt-2"><Delta v={kpis?.impressions_mom ?? null} /> <span className="text-xs text-muted-foreground">vs prior period</span></div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        <div className="glass-panel border-border/40 rounded-2xl p-6 relative overflow-hidden shadow-sm group hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
+          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
+            <Search className="w-24 h-24" />
+          </div>
+          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">Total Impressions</p>
+          <h3 className="text-3xl sm:text-4xl font-extrabold text-foreground tracking-tight relative z-10">
+            <AnimatedNumber value={kpis?.total_impressions ?? 0} />
+          </h3>
+          <div className="mt-4 relative z-10"><Delta v={kpis?.impressions_mom ?? null} /> <span className="text-[10px] font-bold text-muted-foreground ml-1 uppercase tracking-widest">vs prior period</span></div>
         </div>
-        <div className="bg-card rounded-xl p-4 sm:p-6 border border-border/60 shadow-sm">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
+
+        <div className="glass-panel border-border/40 rounded-2xl p-6 relative overflow-hidden shadow-sm group hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
+          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
+            <BarChart2 className="w-24 h-24" />
+          </div>
+          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 flex items-center gap-1.5 relative z-10">
             Keywords Tracked
-            <span title="Google only reports keywords above a privacy threshold; low-volume terms may be hidden." className="cursor-help">
-              <Info className="h-3 w-3" />
+            <span title="Google only reports keywords above a privacy threshold; low-volume terms may be hidden." className="cursor-help text-muted-foreground/50">
+              <Info className="h-3.5 w-3.5" />
             </span>
           </p>
-          <h3 className="text-2xl sm:text-3xl font-extrabold text-foreground">{(kpis?.keywords_tracked ?? 0).toLocaleString()}</h3>
-          <p className="mt-2 text-xs text-muted-foreground">unique terms in period</p>
+          <h3 className="text-3xl sm:text-4xl font-extrabold text-foreground tracking-tight relative z-10">
+            <AnimatedNumber value={kpis?.keywords_tracked ?? 0} />
+          </h3>
+          <p className="mt-4 text-[10px] font-bold text-muted-foreground uppercase tracking-widest relative z-10">unique terms in period</p>
         </div>
-        <div className="bg-card rounded-xl p-4 sm:p-6 border border-border/60 shadow-sm">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Branded Impressions</p>
-          <h3 className="text-2xl sm:text-3xl font-extrabold text-indigo-600">{(kpis?.branded_pct ?? 0)}%</h3>
-          <p className="mt-2 text-xs text-muted-foreground">{(kpis?.branded_impressions ?? 0).toLocaleString()} impressions</p>
+
+        <div className="glass-panel border-border/40 rounded-2xl p-6 relative overflow-hidden shadow-sm group hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
+          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
+            <TrendingUp className="w-24 h-24 text-indigo-500" />
+          </div>
+          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">Branded Impressions</p>
+          <h3 className="text-3xl sm:text-4xl font-extrabold text-indigo-500 tracking-tight relative z-10">
+            <AnimatedNumber value={kpis?.branded_pct ?? 0} />%
+          </h3>
+          <p className="mt-4 text-[10px] font-bold text-muted-foreground uppercase tracking-widest relative z-10">{(kpis?.branded_impressions ?? 0).toLocaleString()} impressions</p>
         </div>
-        <div className="bg-card rounded-xl p-4 sm:p-6 border border-border/60 shadow-sm">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Non-Branded (Discovery)</p>
-          <h3 className="text-2xl sm:text-3xl font-extrabold text-emerald-600">{(kpis?.non_branded_pct ?? 0)}%</h3>
-          <p className="mt-2 text-xs text-muted-foreground">{(kpis?.non_branded_impressions ?? 0).toLocaleString()} impressions</p>
+
+        <div className="glass-panel border-border/40 rounded-2xl p-6 relative overflow-hidden shadow-sm group hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
+          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
+            <Search className="w-24 h-24 text-emerald-500" />
+          </div>
+          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">Non-Branded (Discovery)</p>
+          <h3 className="text-3xl sm:text-4xl font-extrabold text-emerald-500 tracking-tight relative z-10">
+            <AnimatedNumber value={kpis?.non_branded_pct ?? 0} />%
+          </h3>
+          <p className="mt-4 text-[10px] font-bold text-muted-foreground uppercase tracking-widest relative z-10">{(kpis?.non_branded_impressions ?? 0).toLocaleString()} impressions</p>
         </div>
       </div>
 
       {/* Trend chart */}
-      <div className="bg-card border border-border/60 rounded-xl p-4 sm:p-6 shadow-sm">
-        <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
+      <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm border border-border/60">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div>
             <h3 className="text-base font-bold text-foreground">Visibility Trend</h3>
-            <p className="text-xs text-muted-foreground">Monthly impressions — branded vs discovery</p>
+            <p className="text-xs text-muted-foreground mt-1">Monthly impressions — branded vs discovery</p>
           </div>
-          <div className="flex items-center gap-4 text-xs font-semibold">
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-indigo-500" />Branded</span>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />Discovery</span>
+          <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">
+            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-indigo-500 shadow-sm" />Branded</span>
+            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400 shadow-sm" />Discovery</span>
           </div>
         </div>
+        
         {trends.length === 0 ? (
-          <div className="h-56 flex items-center justify-center text-sm text-muted-foreground">No trend data for this range.</div>
+          <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">No trend data for this range.</div>
         ) : (
-          <div className="flex gap-3">
-            <div className="flex flex-col justify-between h-56 py-1 text-[10px] text-muted-foreground text-right w-10 shrink-0">
-              {[1, 0.75, 0.5, 0.25, 0].map((p) => (
-                <span key={p}>{Math.round(maxTrend * p).toLocaleString()}</span>
-              ))}
-            </div>
-            <div className="relative flex-1">
-              <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
-                {[0, 1, 2, 3, 4].map((i) => <div key={i} className="border-t border-border/40" />)}
-              </div>
-              <div className="relative flex items-end justify-around gap-2 sm:gap-3 h-56">
-                {trends.map((t) => {
-                  const brandedH = (t.branded / maxTrend) * 100
-                  const discoveryH = (t.non_branded / maxTrend) * 100
-                  return (
-                    <div key={t.month} className="flex flex-col items-center flex-1 h-full justify-end group">
-                      {t.total > 0 && (
-                        <span className="text-[10px] font-semibold text-foreground mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {t.total.toLocaleString()}
-                        </span>
-                      )}
-                      <div
-                        className="w-full max-w-[44px] mx-auto flex flex-col justify-end rounded-t-md overflow-hidden cursor-default"
-                        style={{ height: t.total > 0 ? `${Math.max(brandedH + discoveryH, 2)}%` : '2px' }}
-                        title={
-                          t.total > 0
-                            ? `${new Date(t.month + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}\nBranded: ${t.branded.toLocaleString()}\nDiscovery: ${t.non_branded.toLocaleString()}\nTotal: ${t.total.toLocaleString()}`
-                            : `${new Date(t.month + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}: no data`
-                        }
-                      >
-                        {t.total > 0 ? (
-                          <>
-                            <div className="bg-indigo-500 transition-all" style={{ height: `${(brandedH / (brandedH + discoveryH || 1)) * 100}%` }} />
-                            <div className="bg-emerald-400 transition-all" style={{ height: `${(discoveryH / (brandedH + discoveryH || 1)) * 100}%` }} />
-                          </>
-                        ) : (
-                          <div className="bg-border/60 h-full" />
-                        )}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground mt-2 whitespace-nowrap">
-                        {new Date(t.month + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' })}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+          <div className="h-72 w-full mt-4 -ml-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={trends} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-border/40" />
+                <XAxis 
+                  dataKey="month" 
+                  tickFormatter={(val) => new Date(val + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' })}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 11 }}
+                  className="text-muted-foreground"
+                  dy={10}
+                />
+                <YAxis 
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(val) => val.toLocaleString()}
+                  className="text-muted-foreground"
+                  dx={-10}
+                />
+                <Tooltip 
+                  content={({ active, payload, label }: any) => {
+                    if (active && payload && payload.length) {
+                      const branded = payload.find((p: any) => p.dataKey === 'branded')?.value || 0
+                      const discovery = payload.find((p: any) => p.dataKey === 'non_branded')?.value || 0
+                      const totalVal = payload.find((p: any) => p.dataKey === 'total')?.value || (branded + discovery)
+                      
+                      const formattedDate = new Date(label + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+                      
+                      return (
+                        <div className="glass-panel p-4 shadow-xl border border-border/50 text-sm rounded-xl">
+                          <p className="font-bold text-foreground mb-3 pb-2 border-b border-border/50">{formattedDate}</p>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-6">
+                              <span className="flex items-center gap-2 text-muted-foreground">
+                                <span className="h-2.5 w-2.5 rounded-sm bg-indigo-500 shadow-sm" />
+                                Branded
+                              </span>
+                              <span className="font-bold text-foreground">{branded.toLocaleString()}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-6">
+                              <span className="flex items-center gap-2 text-muted-foreground">
+                                <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400 shadow-sm" />
+                                Discovery
+                              </span>
+                              <span className="font-bold text-foreground">{discovery.toLocaleString()}</span>
+                            </div>
+                            <div className="pt-2 mt-2 border-t border-border/50 flex items-center justify-between gap-6">
+                              <span className="font-semibold text-foreground">Total</span>
+                              <span className="font-extrabold text-foreground">{totalVal.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    }
+                    return null
+                  }} 
+                  cursor={{ fill: 'transparent' }} 
+                />
+                <Bar dataKey="branded" stackId="a" fill="#6366f1" radius={[0, 0, 4, 4]} animationDuration={1000} />
+                <Bar dataKey="non_branded" stackId="a" fill="#34d399" radius={[4, 4, 0, 0]} animationDuration={1000} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         )}
       </div>
 
       {/* Top keywords */}
-      <div className="bg-card border border-border/60 rounded-xl overflow-hidden shadow-sm">
-        <div className="p-5 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
+      <div className="glass-panel border-border/40 rounded-2xl overflow-hidden shadow-sm">
+        <div className="p-6 border-b border-border/40 bg-muted/10 flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
           <div className="relative w-full max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search keywords…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input placeholder="Search keywords…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10 h-11 bg-background/50 border-border/50 rounded-xl" />
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select className="h-10 px-3 rounded-md border border-input bg-background text-sm"
+          <div className="flex flex-wrap items-center gap-3">
+            <select className="h-11 px-4 rounded-xl border border-border/50 bg-background/50 text-xs font-bold shadow-sm"
               value={isBrandFilter === null ? 'all' : isBrandFilter ? 'brand' : 'non-brand'}
               onChange={(e) => { const v = e.target.value; setIsBrandFilter(v === 'all' ? null : v === 'brand') }}>
               <option value="all">All Keywords</option>
               <option value="brand">Branded Only</option>
               <option value="non-brand">Discovery Only</option>
             </select>
-            <select className="h-10 px-3 rounded-md border border-input bg-background text-sm"
+            <select className="h-11 px-4 rounded-xl border border-border/50 bg-background/50 text-xs font-bold shadow-sm"
               value={sort} onChange={(e) => setSort(e.target.value)}>
               <option value="impressions_desc">Impressions ↓</option>
               <option value="impressions_asc">Impressions ↑</option>
@@ -370,62 +415,64 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="text-xs text-muted-foreground uppercase bg-muted/30 border-b border-border/60">
+            <thead className="text-[10px] font-extrabold tracking-widest text-muted-foreground uppercase bg-muted/20 border-b border-border/40">
               <tr>
-                <th className="px-6 py-4 font-semibold">
+                <th className="px-6 py-4">
                   <button onClick={() => handleHeaderSort('keyword')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
                     Keyword <SortIcon col="keyword" />
                   </button>
                 </th>
-                <th className="px-6 py-4 font-semibold text-right">
+                <th className="px-6 py-4 text-right">
                   <button onClick={() => handleHeaderSort('impressions')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors ml-auto">
                     Impressions <SortIcon col="impressions" />
                   </button>
                 </th>
-                <th className="px-6 py-4 font-semibold text-right">vs Prior</th>
-                <th className="px-6 py-4 font-semibold text-right">Category</th>
+                <th className="px-6 py-4 text-right">vs Prior</th>
+                <th className="px-6 py-4 text-right">Category</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
+                <tr><td colSpan={4} className="px-6 py-16 text-center text-muted-foreground">
                   <div className="flex flex-col items-center gap-3">
                     <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                    <p>Loading intelligence data…</p>
+                    <p className="text-xs font-bold uppercase tracking-widest">Loading intelligence data…</p>
                   </div>
                 </td></tr>
               ) : error ? (
-                <tr><td colSpan={4} className="px-6 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <AlertCircle className="h-6 w-6 text-amber-500" />
-                    <p className="font-medium text-foreground">Couldn&apos;t load search keywords</p>
-                    <button onClick={fetchKeywords} className="text-sm font-medium text-indigo-600 hover:underline">Retry</button>
+                <tr><td colSpan={4} className="px-6 py-16 text-center">
+                  <div className="flex flex-col items-center gap-3 text-muted-foreground">
+                    <div className="p-3 bg-red-500/10 rounded-2xl text-red-500">
+                      <AlertCircle className="h-6 w-6" />
+                    </div>
+                    <p className="font-extrabold text-foreground">Couldn&apos;t load search keywords</p>
+                    <button onClick={fetchKeywords} className="text-xs font-bold text-indigo-500 hover:underline uppercase tracking-widest">Retry</button>
                   </div>
                 </td></tr>
               ) : keywords.length === 0 ? (
-                <tr><td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
-                  No keywords found. Try a wider date range or click <span className="font-semibold">Sync Now</span>.
+                <tr><td colSpan={4} className="px-6 py-16 text-center text-muted-foreground text-sm font-semibold">
+                  No keywords found. Try a wider date range or click <span className="font-extrabold text-foreground">Sync Now</span>.
                 </td></tr>
               ) : (
                 keywords.map((kw: any, idx) => (
-                  <tr key={idx} className="border-b border-border/40 hover:bg-muted/20">
-                    <td className="px-6 py-4 font-medium text-foreground">{kw.keyword}</td>
-                    <td className="px-6 py-4 text-right font-semibold text-indigo-600">{(kw.impressions ?? 0).toLocaleString()}</td>
-                    <td className="px-6 py-4 text-right">
+                  <tr key={idx} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
+                    <td className="px-6 py-5 font-bold text-foreground">{kw.keyword}</td>
+                    <td className="px-6 py-5 text-right font-extrabold text-indigo-500">{(kw.impressions ?? 0).toLocaleString()}</td>
+                    <td className="px-6 py-5 text-right">
                       <span title={`Prior period: ${(kw.impressions_prior ?? 0).toLocaleString()} impressions`}>
                         {kw.mom_growth === null && (kw.impressions_prior ?? 0) === 0 && (kw.impressions ?? 0) > 0 ? (
-                          <span className="inline-flex items-center text-xs font-bold text-emerald-600">
-                            <TrendingUp className="h-3 w-3 mr-0.5" /> New
+                          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-extrabold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded">
+                            <TrendingUp className="h-3 w-3 mr-1" /> New
                           </span>
                         ) : (
                           <Delta v={kw.mom_growth ?? null} />
                         )}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-5 text-right">
                       {kw.is_brand_term
-                        ? <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 shadow-none">Brand</Badge>
-                        : <Badge variant="outline" className="text-muted-foreground shadow-none">Discovery</Badge>}
+                        ? <Badge className="bg-indigo-500/10 text-indigo-500 border-indigo-500/20 shadow-none uppercase font-extrabold tracking-widest text-[9px] px-2 py-0.5">Brand</Badge>
+                        : <Badge variant="outline" className="text-muted-foreground border-border/50 shadow-none uppercase font-extrabold tracking-widest text-[9px] px-2 py-0.5">Discovery</Badge>}
                     </td>
                   </tr>
                 ))
@@ -434,7 +481,7 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
           </table>
         </div>
 
-        <div className="p-4 border-t border-border/60 flex items-center justify-between bg-muted/20">
+        <div className="p-4 border-t border-border/40 flex items-center justify-between bg-muted/10">
           <p className="text-sm text-muted-foreground">
             Showing <span className="font-semibold">{total === 0 ? 0 : Math.min((page - 1) * PAGE_SIZE + 1, total)}</span> to <span className="font-semibold">{Math.min(page * PAGE_SIZE, total)}</span> of <span className="font-semibold">{total}</span>
           </p>

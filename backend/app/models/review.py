@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, UniqueConstraint, Index, func, JSON
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, UniqueConstraint, Index, func, JSON, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -18,6 +18,14 @@ class Review(Base):
     is_replied = Column(Boolean, default=False, nullable=False)
     reply_text = Column(Text, nullable=True)
     reply_created_at = Column(DateTime(timezone=True), nullable=True)
+    # Which template produced this reply (auto or manual). reply_text holds the
+    # rendered string, so the exact wording survives later template edits; this
+    # FK is for analytics ("template #7 used N times"). SET NULL if the template
+    # is deleted.
+    reply_template_id = Column(Integer, ForeignKey("reply_templates.id", ondelete="SET NULL"), nullable=True)
+    # Failed auto-reply attempts. Gates the auto-reply query (< MAX_AUTO_REPLY_ATTEMPTS)
+    # so a permanently-failing review (e.g. deleted on Google) can't starve the batch forever.
+    auto_reply_attempts = Column(Integer, default=0, server_default=text("0"), nullable=False)
     review_created_at = Column(DateTime(timezone=True), nullable=False)
     review_updated_at = Column(DateTime(timezone=True), nullable=True)
     raw_payload = Column(JSON().with_variant(JSONB, 'postgresql'), nullable=True)

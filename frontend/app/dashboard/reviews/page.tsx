@@ -916,7 +916,7 @@ export default function ReviewsPage(props: any) {
                                       <button
                                         key={template.id}
                                         onClick={() => {
-                                          const text = resolveTemplateVariables(template.body, selectedReview.reviewer_name, selectedReview.location_name)
+                                          const text = resolveTemplateVariables(template.body, selectedReview.reviewer_name, selectedReview.location_name, { rating: String(selectedReview.rating ?? '') })
                                           if (replyText.trim()) {
                                             setPendingTemplate({ id: template.id, text })
                                             return
@@ -1005,7 +1005,7 @@ export default function ReviewsPage(props: any) {
                                        <button
                                          key={template.id}
                                          onClick={() => {
-                                           const text = resolveTemplateVariables(template.body, selectedReview.reviewer_name, selectedReview.location_name)
+                                           const text = resolveTemplateVariables(template.body, selectedReview.reviewer_name, selectedReview.location_name, { rating: String(selectedReview.rating ?? '') })
                                            setReplyText(text)
                                            setReplyingTemplateId(template.id)
                                            setReplyingTo(selectedReview.id)

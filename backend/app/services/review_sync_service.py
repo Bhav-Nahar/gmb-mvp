@@ -208,6 +208,13 @@ class ReviewSyncService:
                         "organization_id": organization_id
                     }
                 )
+                celery_app.send_task(
+                    "app.tasks.auto_reply_reviews_task",
+                    kwargs={
+                        "location_id": location_id,
+                        "organization_id": organization_id
+                    }
+                )
             
             # Update location summary stats
             stats = db.query(

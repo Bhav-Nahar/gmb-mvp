@@ -879,6 +879,31 @@ def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> 
             pass
         db.close()
 
+@shared_task(bind=True, name="app.tasks.auto_reply_reviews_task", max_retries=2)
+def auto_reply_reviews_task(self, location_id: int, organization_id: int) -> dict:
+    """
+    Auto-reply to newly-synced positive reviews from reply templates.
+    Thin entry point: owns the Redis lock; orchestration lives in
+    ReviewAutoReplyService so it stays unit-testable.
+    """
+    from app.services.review_auto_reply_service import ReviewAutoReplyService
+
+    r = _get_redis()
+    lock = r.lock(f"lock:auto_reply:{organization_id}:{location_id}", timeout=300)
+    if not lock.acquire(blocking=False):
+        return {"status": "skipped", "reason": "already running"}
+
+    db: Session = SessionLocal()
+    try:
+        return run_async(ReviewAutoReplyService(db).run(organization_id, location_id))
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
+        db.close()
+
+
 @shared_task(bind=True, name="app.tasks.process_review_sentiment_task", max_retries=2)
 def process_review_sentiment_task(self, review_id: int) -> dict:
     import asyncio

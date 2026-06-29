@@ -25,6 +25,10 @@ class Organization(Base):
     monthly_ai_credits_balance = Column(Integer, nullable=True, default=10, server_default=text("10"))
     topup_ai_credits_balance = Column(Integer, nullable=True, default=0, server_default=text("0"))
     ai_credits_reset_date = Column(DateTime(timezone=True), nullable=True)
+    # When set, newly-synced reviews (rating >= 4) received AFTER this timestamp are
+    # auto-replied from a reply template, across all of the org's active locations.
+    # NULL = off. Timestamp (not bool) so enabling never machine-guns the backlog.
+    auto_reply_enabled_at = Column(DateTime(timezone=True), nullable=True)
     razorpay_customer_id = Column(String, index=True, nullable=True)
     razorpay_subscription_id = Column(String, nullable=True)
     subscription_ends_at = Column(DateTime(timezone=True), nullable=True)

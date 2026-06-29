@@ -7,13 +7,18 @@ import {
   CreateTemplatePayload,
   UpdateTemplatePayload,
   STAR_RATING_LIMITS,
+  MIN_TEMPLATES_FOR_AUTO_REPLY,
+  INSERTABLE_VARIABLES,
   fetchTemplates,
   createTemplate,
   updateTemplate,
   deleteTemplate,
+  getAutoReplyStatus,
+  setAutoReply,
+  getTemplateAnalytics,
 } from '@/lib/api/reply-templates'
 import { resolveTemplateVariables } from '@/lib/utils/template-utils'
-import { Plus, Edit2, Trash2, Save, X, Star } from 'lucide-react'
+import { Plus, Edit2, Trash2, Save, X, Star, Sparkles } from 'lucide-react'
 
 // Placeholder UI components for standard shadcn patterns since we don't have
 // direct access to the actual UI components library in this environment, we'll
@@ -46,6 +51,14 @@ export default function ReplyTemplatesSettingsPage() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [templateToDelete, setTemplateToDelete] = useState<ReplyTemplate | null>(null)
 
+  // Auto-reply (org-wide) state
+  const [autoReplyEnabledAt, setAutoReplyEnabledAt] = useState<string | null>(null)
+  const [autoReplyBusy, setAutoReplyBusy] = useState(false)
+
+  // Analytics
+  const [lastUsed, setLastUsed] = useState<Record<string, string>>({})
+  const [autoReplies30d, setAutoReplies30d] = useState(0)
+
   useEffect(() => {
     if (['Owner', 'Admin'].includes(userRole)) {
       loadTemplates()
@@ -65,6 +78,35 @@ export default function ReplyTemplatesSettingsPage() {
       setErrorAlert(e.message || 'Failed to load templates.')
     } finally {
       setLoading(false)
+    }
+    try {
+      const status = await getAutoReplyStatus()
+      setAutoReplyEnabledAt(status.enabled_at)
+    } catch (e: any) {
+      console.error('Failed to load auto-reply status', e)
+    }
+    try {
+      const analytics = await getTemplateAnalytics()
+      setLastUsed(analytics.last_used)
+      setAutoReplies30d(analytics.auto_replies_30d)
+    } catch (e: any) {
+      console.error('Failed to load template analytics', e)
+    }
+  }
+
+  const handleToggleAutoReply = async () => {
+    const turningOn = !autoReplyEnabledAt
+    setAutoReplyBusy(true)
+    setErrorAlert('')
+    setSuccessAlert('')
+    try {
+      const res = await setAutoReply(turningOn)
+      setAutoReplyEnabledAt(turningOn ? (res.enabled_at ?? new Date().toISOString()) : null)
+      setSuccessAlert(turningOn ? 'Auto-reply enabled for new 4–5★ reviews.' : 'Auto-reply disabled.')
+    } catch (e: any) {
+      setErrorAlert(e.message || 'Failed to update auto-reply.')
+    } finally {
+      setAutoReplyBusy(false)
     }
   }
 
@@ -95,6 +137,11 @@ export default function ReplyTemplatesSettingsPage() {
   const currentCount = templatesByStar[activeStar]?.length || 0
   const limit = STAR_RATING_LIMITS[activeStar] || 0
   const canAdd = currentCount < limit
+
+  const positiveTemplateCount = templatesByStar[4].length + templatesByStar[5].length
+  const canEnableAutoReply = positiveTemplateCount >= MIN_TEMPLATES_FOR_AUTO_REPLY
+  // Auto-reply fires for both 4★ and 5★; a rating with no template is silently skipped.
+  const missingPositiveRatings = [4, 5].filter(r => templatesByStar[r].length === 0)
 
   const openAddDialog = () => {
     setEditingTemplate(null)
@@ -163,11 +210,16 @@ export default function ReplyTemplatesSettingsPage() {
     if (!templateToDelete) return
     setErrorAlert('')
     try {
-      await deleteTemplate(templateToDelete.id)
+      const res = await deleteTemplate(templateToDelete.id)
       setTemplates(templates.filter(t => t.id !== templateToDelete.id))
       setIsDeleteDialogOpen(false)
       setTemplateToDelete(null)
-      setSuccessAlert('Template deleted successfully.')
+      if (res?.auto_reply_disabled) {
+        setAutoReplyEnabledAt(null)
+        setSuccessAlert('Template deleted. Auto-reply was turned off — it needs at least ' + MIN_TEMPLATES_FOR_AUTO_REPLY + ' templates for 4★/5★ reviews.')
+      } else {
+        setSuccessAlert('Template deleted successfully.')
+      }
     } catch (e: any) {
       console.error(e)
       setErrorAlert(e.message || 'Failed to delete template.')
@@ -180,10 +232,56 @@ export default function ReplyTemplatesSettingsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Reply Templates</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Pre-written replies for each star rating. Use <code className="bg-muted px-1.5 py-0.5 rounded text-primary text-xs">{'{'}{'{'}reviewer_name{'}'}{'}'}</code> and <code className="bg-muted px-1.5 py-0.5 rounded text-primary text-xs">{'{'}{'{'}location_name{'}'}{'}'}</code> as variables.
+            Pre-written replies for each star rating. Insert variables like <code className="bg-muted px-1.5 py-0.5 rounded text-primary text-xs">{'{'}{'{'}first_name{'}'}{'}'}</code>, <code className="bg-muted px-1.5 py-0.5 rounded text-primary text-xs">{'{'}{'{'}city{'}'}{'}'}</code> and more from the editor.
           </p>
         </div>
       </div>
+
+      {/* Org-wide Auto-Reply toggle */}
+      {!loading && (
+        <div className="border border-primary/20 bg-primary/5 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-2 text-sm text-muted-foreground">
+            <Sparkles className="w-4 h-4 mt-0.5 text-primary shrink-0" />
+            <div>
+              <div className="font-semibold text-foreground">
+                Auto-reply to new 4–5★ reviews
+                {autoReplyEnabledAt && (
+                  <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-green-500">On</span>
+                )}
+              </div>
+              <div className="text-xs">
+                Automatically posts one of your positive-rating templates to new reviews across all locations. Replies are public and can’t be unsent.
+                {!canEnableAutoReply && !autoReplyEnabledAt && (
+                  <span className="block text-amber-500 mt-1">
+                    Add at least {MIN_TEMPLATES_FOR_AUTO_REPLY} templates for 4★/5★ reviews to enable this ({positiveTemplateCount} so far).
+                  </span>
+                )}
+                {autoReplyEnabledAt && missingPositiveRatings.map(r => (
+                  <span key={r} className="block text-amber-500 mt-1">
+                    No {r}★ template — {r}★ reviews won’t be auto-answered.
+                  </span>
+                ))}
+                {autoReplyEnabledAt && (
+                  <span className="block text-green-600 mt-1">
+                    {autoReplies30d} auto-{autoReplies30d === 1 ? 'reply' : 'replies'} in the last 30 days.
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleToggleAutoReply}
+            disabled={autoReplyBusy || (!autoReplyEnabledAt && !canEnableAutoReply)}
+            className={`w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+              autoReplyEnabledAt
+                ? 'bg-background border border-border text-foreground hover:bg-muted'
+                : 'text-primary-foreground bg-primary hover:bg-primary/90'
+            }`}
+          >
+            {autoReplyBusy ? 'Saving…' : autoReplyEnabledAt ? 'Turn Off' : 'Turn On'}
+          </button>
+        </div>
+      )}
 
       {errorAlert && !isDialogOpen && (
         <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg text-sm">
@@ -276,6 +374,9 @@ export default function ReplyTemplatesSettingsPage() {
                     <div className="flex items-center gap-4 mt-4 text-xs text-muted-foreground">
                       <span>Order: {template.display_order}</span>
                       <span>Used: {template.usage_count} times</span>
+                      {lastUsed[String(template.id)] && (
+                        <span>Last used: {new Date(lastUsed[String(template.id)]).toLocaleDateString()}</span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -327,7 +428,7 @@ export default function ReplyTemplatesSettingsPage() {
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">Insert:</span>
-                  {['reviewer_name', 'location_name'].map(v => (
+                  {INSERTABLE_VARIABLES.map(v => (
                     <button
                       key={v}
                       type="button"
@@ -355,7 +456,7 @@ export default function ReplyTemplatesSettingsPage() {
               <div className="pt-4 mt-4 border-t border-border">
                 <h4 className="text-sm font-medium text-muted-foreground mb-2">Live Preview</h4>
                 <div className="p-4 bg-muted/30 border border-border rounded-lg text-sm text-foreground whitespace-pre-wrap min-h-[80px]">
-                  {formBody.trim() ? resolveTemplateVariables(formBody, "John", "Your Location") : <span className="text-muted-foreground italic">Start typing to see preview...</span>}
+                  {formBody.trim() ? resolveTemplateVariables(formBody, "John", "Your Location", { city: "Mumbai", phone: "+91 98765 43210", website: "example.com", rating: String(activeStar) }) : <span className="text-muted-foreground italic">Start typing to see preview...</span>}
                 </div>
               </div>
             </div>

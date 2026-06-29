@@ -37,6 +37,7 @@ import {
 import Link from 'next/link'
 import { UpgradeModal } from '@/components/modals/UpgradeModal'
 import { RemandateBanner } from '@/components/billing/RemandateBanner'
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 
 interface Location {
   id: number
@@ -745,16 +746,16 @@ function DashboardContent() {
 
       <div className="w-full">
         <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 space-y-6 sm:space-y-8">
-          {/* Action alerts */}
+          {/* Alerts & Banners */}
           {errorAlert && (
-            <div className="flex items-center gap-3 rounded-xl bg-red-500/10 border border-red-500/20 p-4 text-sm font-medium text-red-400">
+            <div className="flex items-center gap-3 rounded-2xl bg-red-500/10 border border-red-500/20 p-4 text-sm font-semibold text-red-400 backdrop-blur-md shadow-sm">
               <AlertTriangle className="h-5 w-5 shrink-0" />
               <span>{errorAlert}</span>
             </div>
           )}
 
           {successAlert && (
-            <div className="flex items-center gap-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-sm font-medium text-emerald-400">
+            <div className="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-sm font-semibold text-emerald-400 backdrop-blur-md shadow-sm">
               <CheckCircle2 className="h-5 w-5 shrink-0" />
               <span>{successAlert}</span>
             </div>
@@ -765,17 +766,19 @@ function DashboardContent() {
 
           {/* Billing / quota bar — only when something needs attention (locked locations) */}
           {userRole !== 'Viewer' && billing && (billing.pending_location_count ?? 0) > 0 && (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-amber-500/5 border border-amber-500/20 px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-amber-500">
-                <Lock className="h-4 w-4 shrink-0" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-background/50 backdrop-blur-md border border-amber-500/30 px-5 py-4 shadow-sm">
+              <div className="flex items-center gap-3 text-sm font-semibold text-foreground">
+                <div className="p-2 rounded-lg bg-amber-500/10 text-amber-500 shrink-0">
+                  <Lock className="h-4 w-4" />
+                </div>
                 <span>
-                  {billing.pending_location_count} location{billing.pending_location_count === 1 ? '' : 's'} locked &middot;{' '}
-                  {billing.active_location_count ?? 0} of {(billing.active_location_count ?? 0) + (billing.pending_location_count ?? 0)} active on your plan
+                  <span className="text-amber-500 font-bold">{billing.pending_location_count} location{billing.pending_location_count === 1 ? '' : 's'} locked</span> &middot;{' '}
+                  <span className="text-muted-foreground">{billing.active_location_count ?? 0} of {(billing.active_location_count ?? 0) + (billing.pending_location_count ?? 0)} active on your plan</span>
                 </span>
               </div>
               <button
                 onClick={() => setShowUpgrade(true)}
-                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm cursor-pointer transition-colors shrink-0"
+                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow hover:shadow-lg hover:-translate-y-0.5 cursor-pointer transition-all shrink-0"
               >
                 <Sparkles className="h-3.5 w-3.5" />
                 Upgrade to unlock
@@ -783,33 +786,33 @@ function DashboardContent() {
             </div>
           )}
 
-          {/* Compact Google connection strip — whispers when healthy, shouts on error */}
+          {/* Compact Google connection strip */}
           {userRole !== 'Viewer' && (
             (tokenStatus?.status === 'active' || tokenStatus?.status === 'requires_refresh') ? (
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
-                <div className="flex items-center gap-2 min-w-0 text-xs font-semibold">
-                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 shrink-0"></span>
-                  <span className="truncate text-foreground">{tokenStatus.google_email || 'Google connected'}</span>
-                  <span className="text-muted-foreground/40 hidden sm:inline">&middot;</span>
-                  <span className="text-muted-foreground hidden sm:inline">
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/50 bg-background/50 backdrop-blur-md px-5 py-3 shadow-sm">
+                <div className="flex items-center gap-3 min-w-0 text-xs font-semibold">
+                  <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0 shadow-[0_0_10px_rgba(16,185,129,0.5)]"></span>
+                  <span className="truncate text-foreground font-bold">{tokenStatus.google_email || 'Google connected'}</span>
+                  <span className="text-border hidden sm:inline">&middot;</span>
+                  <span className="text-muted-foreground hidden sm:inline font-medium">
                     Synced {relativeTime(locations[0]?.last_synced_at) || getLastSyncedTime}
                   </span>
                   {tokenStatus.status === 'requires_refresh' && (
-                    <span className="ml-1 text-indigo-400 hidden md:inline">&middot; token refresh pending</span>
+                    <span className="ml-1 text-indigo-400 hidden md:inline font-bold">&middot; token refresh pending</span>
                   )}
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0 relative">
+                <div className="flex items-center gap-2 shrink-0 relative">
                   <button
                     onClick={handleTriggerSync}
                     disabled={syncing}
-                    className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] sm:min-h-0 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors cursor-pointer"
+                    className="flex items-center gap-2 px-4 py-2 min-h-[40px] sm:min-h-0 rounded-xl text-xs font-bold text-white bg-indigo-500 hover:bg-indigo-400 shadow-md hover:shadow-lg disabled:opacity-50 transition-all cursor-pointer"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
                     <span>{syncing ? 'Syncing...' : 'Sync'}</span>
                   </button>
                   <button
                     onClick={() => setConnMenuOpen(o => !o)}
-                    className="flex items-center justify-center h-10 w-10 sm:h-auto sm:w-auto sm:p-1.5 rounded-lg text-muted-foreground hover:bg-muted/40 transition-colors cursor-pointer"
+                    className="flex items-center justify-center h-10 w-10 sm:h-auto sm:w-auto sm:p-2 rounded-xl text-muted-foreground hover:bg-muted transition-colors cursor-pointer"
                     aria-label="Connection options"
                   >
                     <MoreHorizontal className="h-4 w-4" />
@@ -817,12 +820,12 @@ function DashboardContent() {
                   {connMenuOpen && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setConnMenuOpen(false)} />
-                      <div className="absolute right-0 top-full mt-1 z-20 w-40 rounded-lg border border-border bg-card shadow-lg py-1">
+                      <div className="absolute right-0 top-full mt-2 z-20 w-48 rounded-2xl border border-border/50 bg-card/95 backdrop-blur-xl shadow-xl py-2">
                         <button
                           onClick={() => { setConnMenuOpen(false); handleDisconnectGoogle(); }}
-                          className="flex items-center gap-2 w-full px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-colors cursor-pointer"
+                          className="flex items-center gap-3 w-full px-4 py-2.5 text-xs font-bold text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-colors cursor-pointer"
                         >
-                          <LogOut className="h-3.5 w-3.5" />
+                          <LogOut className="h-4 w-4" />
                           Disconnect Google
                         </button>
                       </div>
@@ -831,28 +834,32 @@ function DashboardContent() {
                 </div>
               </div>
             ) : tokenStatus?.status === 'expired' ? (
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-amber-500/5 border border-amber-500/20 px-4 py-3 text-xs font-semibold text-amber-400">
-                <span className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 shrink-0" />
-                  Google account expired or revoked — reconnect to resume background sync.
-                </span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-background/50 backdrop-blur-md border border-amber-500/30 px-5 py-4 shadow-sm">
+                <div className="flex items-center gap-3 text-sm font-semibold text-foreground">
+                  <div className="p-2 rounded-lg bg-amber-500/10 text-amber-500 shrink-0">
+                    <AlertTriangle className="h-4 w-4" />
+                  </div>
+                  <span>Google account expired or revoked — reconnect to resume background sync.</span>
+                </div>
                 <button
                   onClick={handleConnectGoogle}
-                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white gradient-border-btn shadow cursor-pointer shrink-0"
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-amber-500 to-orange-500 shadow hover:shadow-lg hover:-translate-y-0.5 cursor-pointer transition-all shrink-0"
                 >
                   <PlusCircle className="h-3.5 w-3.5" />
                   Reconnect
                 </button>
               </div>
             ) : (
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-xs font-semibold text-muted-foreground shadow-sm">
-                <span className="flex items-center gap-2">
-                  <HelpCircle className="h-4 w-4 shrink-0" />
-                  {tokenStatus ? 'Sandbox mode — connect Google for live storefront data.' : 'Connect your Google Business Profile to get started.'}
-                </span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-border/50 bg-background/50 backdrop-blur-md px-5 py-4 shadow-sm">
+                <div className="flex items-center gap-3 text-sm font-semibold text-foreground">
+                  <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
+                    <HelpCircle className="h-4 w-4" />
+                  </div>
+                  <span>{tokenStatus ? 'Sandbox mode — connect Google for live storefront data.' : 'Connect your Google Business Profile to get started.'}</span>
+                </div>
                 <button
                   onClick={handleConnectGoogle}
-                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white gradient-border-btn shadow cursor-pointer shrink-0"
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-primary shadow hover:shadow-lg hover:-translate-y-0.5 cursor-pointer transition-all shrink-0"
                 >
                   <PlusCircle className="h-3.5 w-3.5" />
                   Connect Google Account
@@ -862,57 +869,65 @@ function DashboardContent() {
           )}
 
           {/* Health Score + storefront status — top section, clickable to filter the grid */}
-          <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
-            <div className="relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm">
+          <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            <div className="relative overflow-hidden text-left glass-panel rounded-2xl p-6 shadow-sm border-border/40">
               <div className="absolute -right-4 -top-4 opacity-[0.03] pointer-events-none">
-                <Sparkles className="w-24 h-24 text-foreground" />
+                <Sparkles className="w-32 h-32 text-foreground" />
               </div>
-              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">Avg Health Score</div>
-              <div className={`text-3xl font-black relative z-10 ${healthSummary?.average_score ? (healthSummary.average_score >= 75 ? 'text-emerald-600 dark:text-emerald-400' : healthSummary.average_score >= 60 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400') : 'text-muted-foreground'}`}>
-                {healthSummary ? healthSummary.average_score : '--'}
+              <div className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">Avg Health Score</div>
+              <div className={`text-4xl font-black relative z-10 tracking-tight ${healthSummary?.average_score ? (healthSummary.average_score >= 75 ? 'text-emerald-500' : healthSummary.average_score >= 60 ? 'text-amber-500' : 'text-rose-500') : 'text-muted-foreground'}`}>
+                {healthSummary ? <AnimatedNumber value={healthSummary.average_score} /> : '--'}
               </div>
             </div>
             <button
               onClick={() => focusStorefronts('all')}
-              className="group relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm hover:border-primary/50 hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
+              className="group relative overflow-hidden text-left glass-panel rounded-2xl p-6 shadow-sm border-border/40 hover:border-primary/50 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-pointer"
             >
               <div className="absolute -right-4 -top-4 opacity-[0.03] group-hover:opacity-10 group-hover:scale-110 transition-all pointer-events-none">
-                <MapPin className="w-24 h-24 text-primary" />
+                <MapPin className="w-32 h-32 text-primary" />
               </div>
-              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">Total Locations</div>
-              <div className="text-3xl font-black text-foreground relative z-10 group-hover:text-primary transition-colors">{totalLocations}</div>
+              <div className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">Total Locations</div>
+              <div className="text-4xl font-black text-foreground relative z-10 group-hover:text-primary transition-colors tracking-tight">
+                <AnimatedNumber value={totalLocations} />
+              </div>
             </button>
             <button
               onClick={() => focusStorefronts('unverified')}
               disabled={unverifiedCount === 0}
-              className={`group relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm transition-all ${unverifiedCount === 0 ? 'opacity-50 cursor-default' : 'hover:border-amber-500/50 hover:shadow-md hover:-translate-y-0.5 cursor-pointer'}`}
+              className={`group relative overflow-hidden text-left glass-panel rounded-2xl p-6 shadow-sm border-border/40 transition-all duration-300 ${unverifiedCount === 0 ? 'opacity-60 cursor-default' : 'hover:border-amber-500/50 hover:shadow-lg hover:-translate-y-1 cursor-pointer'}`}
             >
               <div className={`absolute -right-4 -top-4 opacity-[0.03] transition-all pointer-events-none ${unverifiedCount > 0 ? 'group-hover:opacity-10 group-hover:scale-110 text-amber-500' : ''}`}>
-                <AlertTriangle className="w-24 h-24" />
+                <AlertTriangle className="w-32 h-32" />
               </div>
-              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">Unverified</div>
-              <div className={`text-3xl font-black relative z-10 transition-colors ${unverifiedCount === 0 ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}>{unverifiedCount}</div>
+              <div className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">Unverified</div>
+              <div className={`text-4xl font-black relative z-10 transition-colors tracking-tight ${unverifiedCount === 0 ? 'text-muted-foreground' : 'text-amber-500'}`}>
+                <AnimatedNumber value={unverifiedCount} />
+              </div>
             </button>
             <button
               onClick={() => focusStorefronts('suspended')}
               disabled={suspendedCount === 0}
-              className={`group relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm transition-all ${suspendedCount === 0 ? 'opacity-50 cursor-default' : 'hover:border-rose-500/50 hover:shadow-md hover:-translate-y-0.5 cursor-pointer'}`}
+              className={`group relative overflow-hidden text-left glass-panel rounded-2xl p-6 shadow-sm border-border/40 transition-all duration-300 ${suspendedCount === 0 ? 'opacity-60 cursor-default' : 'hover:border-rose-500/50 hover:shadow-lg hover:-translate-y-1 cursor-pointer'}`}
             >
               <div className={`absolute -right-4 -top-4 opacity-[0.03] transition-all pointer-events-none ${suspendedCount > 0 ? 'group-hover:opacity-10 group-hover:scale-110 text-rose-500' : ''}`}>
-                <XCircle className="w-24 h-24" />
+                <XCircle className="w-32 h-32" />
               </div>
-              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">Suspended</div>
-              <div className={`text-3xl font-black relative z-10 transition-colors ${suspendedCount === 0 ? 'text-muted-foreground' : 'text-rose-600 dark:text-rose-400'}`}>{suspendedCount}</div>
+              <div className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">Suspended</div>
+              <div className={`text-4xl font-black relative z-10 transition-colors tracking-tight ${suspendedCount === 0 ? 'text-muted-foreground' : 'text-rose-500'}`}>
+                <AnimatedNumber value={suspendedCount} />
+              </div>
             </button>
             <button
               onClick={() => focusStorefronts('all')}
-              className="group relative overflow-hidden text-left glass-panel rounded-xl p-5 shadow-sm hover:border-indigo-500/50 hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
+              className="group relative overflow-hidden text-left glass-panel rounded-2xl p-6 shadow-sm border-border/40 hover:border-indigo-500/50 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-pointer"
             >
               <div className="absolute -right-4 -top-4 opacity-[0.03] group-hover:opacity-10 group-hover:scale-110 transition-all pointer-events-none">
-                <Clock className="w-24 h-24 text-indigo-500" />
+                <Clock className="w-32 h-32 text-indigo-500" />
               </div>
-              <div className="text-sm font-semibold text-muted-foreground mb-1 relative z-10">SLA Needs Response</div>
-              <div className={`text-3xl font-black relative z-10 transition-colors ${slaNeedsResponseCount === 0 ? 'text-muted-foreground' : 'text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-500'}`}>{slaNeedsResponseCount}</div>
+              <div className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">SLA Pending</div>
+              <div className={`text-4xl font-black relative z-10 transition-colors tracking-tight ${slaNeedsResponseCount === 0 ? 'text-muted-foreground' : 'text-indigo-500'}`}>
+                <AnimatedNumber value={slaNeedsResponseCount} />
+              </div>
             </button>
           </section>
 
@@ -927,66 +942,66 @@ function DashboardContent() {
             const respRate = reputationSummary.response_rate
             return (
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                <div className="glass-panel p-5 flex items-center gap-4">
-                  <div className="p-2.5 rounded-xl bg-amber-400/10 text-amber-400 shrink-0">
-                    <Star className="h-5 w-5 fill-amber-400" />
+                <div className="glass-panel p-6 flex items-center gap-5 border-border/40">
+                  <div className="p-3 rounded-2xl bg-gradient-to-br from-amber-400/20 to-orange-500/20 text-amber-500 shrink-0 shadow-inner">
+                    <Star className="h-6 w-6 fill-amber-500" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-2xl font-extrabold text-foreground leading-none">
-                      {rating && rating > 0 ? rating.toFixed(1) : '—'}
+                    <div className="text-3xl font-black text-foreground leading-none tracking-tight">
+                      {rating && rating > 0 ? <AnimatedNumber value={rating} isFloat formatter={(v) => v.toFixed(1)} /> : '—'}
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1 truncate">
-                      Avg rating across {n} location{n === 1 ? '' : 's'}
+                    <div className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground mt-2 truncate">
+                      Avg rating across {n} loc{n === 1 ? '' : 's'}
                     </div>
                   </div>
                 </div>
 
-                <div className="glass-panel p-5 flex items-center gap-4">
-                  <div className="p-2.5 rounded-xl bg-sky-400/10 text-sky-400 shrink-0">
-                    <MessageCircle className="h-5 w-5" />
+                <div className="glass-panel p-6 flex items-center gap-5 border-border/40">
+                  <div className="p-3 rounded-2xl bg-gradient-to-br from-sky-400/20 to-indigo-500/20 text-sky-500 shrink-0 shadow-inner">
+                    <MessageCircle className="h-6 w-6" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-2xl font-extrabold text-foreground leading-none tabular-nums">
-                      {reputationSummary.total_reviews_all_time.toLocaleString()}
+                    <div className="text-3xl font-black text-foreground leading-none tabular-nums tracking-tight">
+                      <AnimatedNumber value={reputationSummary.total_reviews_all_time} />
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1 truncate">
+                    <div className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground mt-2 truncate">
                       Total reviews
                     </div>
                   </div>
                 </div>
 
-                <div className="glass-panel p-5 flex items-center gap-4">
-                  <div className="p-2.5 rounded-xl bg-pink-400/10 text-pink-400 shrink-0">
-                    <Zap className="h-5 w-5" />
+                <div className="glass-panel p-6 flex items-center gap-5 border-border/40">
+                  <div className="p-3 rounded-2xl bg-gradient-to-br from-pink-400/20 to-rose-500/20 text-pink-500 shrink-0 shadow-inner">
+                    <Zap className="h-6 w-6" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-2xl font-extrabold text-foreground leading-none">
-                        {vel.current.toFixed(1)}<span className="text-sm font-bold text-muted-foreground ml-0.5">/day</span>
+                      <span className="text-3xl font-black text-foreground leading-none tracking-tight">
+                        <AnimatedNumber value={vel.current} isFloat formatter={(v) => v.toFixed(1)} /><span className="text-sm font-bold text-muted-foreground ml-1">/day</span>
                       </span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 truncate">
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">Reviews / day</span>
                       {pct !== null && (
-                        <span className={`flex items-center text-xs font-bold ${up ? 'text-emerald-500' : down ? 'text-rose-500' : 'text-gray-500'}`}>
+                        <span className={`flex items-center text-[10px] font-black px-1.5 py-0.5 rounded-full ${up ? 'bg-emerald-500/10 text-emerald-500' : down ? 'bg-rose-500/10 text-rose-500' : 'bg-muted text-muted-foreground'}`}>
                           {pct === 0 ? <Minus className="h-3 w-3 mr-0.5" /> : up ? <TrendingUp className="h-3 w-3 mr-0.5" /> : <TrendingDown className="h-3 w-3 mr-0.5" />}
                           {Math.abs(pct).toFixed(0)}%
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1 truncate">
-                      Reviews / day · last 30 days
-                    </div>
                   </div>
                 </div>
 
-                <div className="glass-panel p-5 flex items-center gap-4">
-                  <div className="p-2.5 rounded-xl bg-emerald-400/10 text-emerald-400 shrink-0">
-                    <MessageSquare className="h-5 w-5" />
+                <div className="glass-panel p-6 flex items-center gap-5 border-border/40">
+                  <div className="p-3 rounded-2xl bg-gradient-to-br from-emerald-400/20 to-teal-500/20 text-emerald-500 shrink-0 shadow-inner">
+                    <MessageSquare className="h-6 w-6" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-2xl font-extrabold text-foreground leading-none">
-                      {respRate !== null && respRate !== undefined ? `${respRate.toFixed(0)}%` : '—'}
+                    <div className="text-3xl font-black text-foreground leading-none tracking-tight">
+                      {respRate !== null && respRate !== undefined ? <><AnimatedNumber value={respRate} isFloat formatter={(v) => v.toFixed(0)} />%</> : '—'}
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1 truncate">
-                      Review response rate
+                    <div className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground mt-2 truncate">
+                      Response rate
                     </div>
                   </div>
                 </div>
@@ -998,47 +1013,47 @@ function DashboardContent() {
           {topKeywords && totalLocations > 0 && (
             <Link
               href="/dashboard/insights/search-intelligence"
-              className="block glass-panel p-5 group hover:border-primary/40 transition-colors"
+              className="block glass-panel p-6 group hover:border-primary/40 transition-all duration-300 shadow-sm border-border/40"
             >
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 rounded-lg bg-sky-400/10 text-sky-400 shrink-0">
-                    <Search className="h-4 w-4" />
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-sky-500/10 text-sky-500 shrink-0">
+                    <Search className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-foreground leading-none">Top Search Queries</h3>
-                    <p className="text-[11px] text-muted-foreground mt-1">How customers find you · last month</p>
+                    <h3 className="text-base font-extrabold text-foreground leading-none">Top Search Queries</h3>
+                    <p className="text-[11px] font-semibold text-muted-foreground mt-1">How customers find you · last month</p>
                   </div>
                 </div>
-                <span className="flex items-center gap-1 text-xs font-semibold text-primary group-hover:gap-1.5 transition-all">
+                <span className="flex items-center gap-1 text-[11px] font-extrabold uppercase tracking-widest text-primary group-hover:gap-2 transition-all">
                   View all <ArrowRight className="h-3.5 w-3.5" />
                 </span>
               </div>
 
               {topKeywords.length === 0 ? (
-                <div className="py-6 text-center text-xs text-muted-foreground">
+                <div className="py-8 text-center text-sm font-medium text-muted-foreground">
                   No search-query data yet. Open Search Intelligence to sync the latest keywords.
                 </div>
               ) : (
-              <ul className="divide-y divide-border/40">
+              <ul className="flex flex-col gap-1">
                 {topKeywords.map((kw, idx) => {
                   const pct = kw.mom_growth
                   const up = pct !== null && pct > 0
                   const down = pct !== null && pct < 0
                   return (
-                    <li key={idx} className="flex items-center gap-3 py-2.5">
-                      <span className="text-xs font-bold text-muted-foreground/50 w-4 shrink-0 tabular-nums">{idx + 1}</span>
-                      <span className="text-sm text-foreground truncate flex-1 min-w-0">{kw.keyword}</span>
-                      <span className={`hidden sm:inline-flex shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                        kw.is_brand_term ? 'bg-indigo-500/10 text-indigo-400' : 'bg-muted/50 text-muted-foreground'
+                    <li key={idx} className="flex items-center gap-4 py-3 px-3 rounded-xl hover:bg-primary/5 transition-colors group/row">
+                      <span className="text-[10px] font-black text-muted-foreground/30 w-4 shrink-0 tabular-nums">0{idx + 1}</span>
+                      <span className="text-sm font-bold text-foreground truncate flex-1 min-w-0 group-hover/row:text-primary transition-colors">{kw.keyword}</span>
+                      <span className={`hidden sm:inline-flex shrink-0 px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-widest ${
+                        kw.is_brand_term ? 'border border-indigo-500/20 bg-indigo-500/10 text-indigo-500' : 'border border-border/50 bg-muted/30 text-muted-foreground'
                       }`}>
                         {kw.is_brand_term ? 'Brand' : 'Discovery'}
                       </span>
-                      <span className="text-sm font-semibold text-foreground tabular-nums shrink-0 w-16 text-right">
+                      <span className="text-sm font-black text-foreground tabular-nums shrink-0 w-20 text-right">
                         {kw.impressions.toLocaleString()}
                       </span>
-                      <span className={`flex items-center justify-end text-[11px] font-bold w-14 shrink-0 ${
-                        up ? 'text-emerald-500' : down ? 'text-rose-500' : 'text-muted-foreground/60'
+                      <span className={`flex items-center justify-end text-[11px] font-black w-16 shrink-0 ${
+                        up ? 'text-emerald-500' : down ? 'text-rose-500' : 'text-muted-foreground/50'
                       }`}>
                         {pct === null ? (
                           kw.impressions_prior === 0 && kw.impressions > 0 ? 'New' : '—'
@@ -1058,41 +1073,45 @@ function DashboardContent() {
           )}
 
           {/* Synced Locations */}
-          <section ref={storefrontsRef} className="space-y-4 scroll-mt-20">
+          <section ref={storefrontsRef} className="space-y-6 scroll-mt-20">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <MapPin className="h-5 w-5 text-primary" />
-                <h3 className="text-lg font-bold tracking-tight text-foreground">
-                  Synced Storefronts ({locations.length})
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-xl text-primary">
+                  <MapPin className="h-5 w-5" />
+                </div>
+                <h3 className="text-xl font-extrabold tracking-tight text-foreground">
+                  Synced Storefronts <span className="text-muted-foreground font-medium">({locations.length})</span>
                 </h3>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => setActiveFilter('all')}
-                  className={`px-3 py-1.5 min-h-[40px] sm:min-h-0 rounded-md text-xs font-medium transition-colors ${activeFilter === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
-                >
-                  All
-                </button>
-                <button 
-                  onClick={() => setActiveFilter('unverified')}
-                  className={`px-3 py-1.5 min-h-[40px] sm:min-h-0 rounded-md text-xs font-medium transition-colors ${activeFilter === 'unverified' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
-                >
-                  Unverified
-                </button>
-                <button 
-                  onClick={() => setActiveFilter('suspended')}
-                  className={`px-3 py-1.5 min-h-[40px] sm:min-h-0 rounded-md text-xs font-medium transition-colors ${activeFilter === 'suspended' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
-                >
-                  Suspended
-                </button>
+                <div className="flex bg-background/50 backdrop-blur-md p-1 rounded-xl border border-border/50 shadow-sm">
+                  <button
+                    onClick={() => setActiveFilter('all')}
+                    className={`px-4 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-widest transition-all ${activeFilter === 'all' ? 'bg-primary text-primary-foreground shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
+                  >
+                    All
+                  </button>
+                  <button 
+                    onClick={() => setActiveFilter('unverified')}
+                    className={`px-4 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-widest transition-all ${activeFilter === 'unverified' ? 'bg-amber-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
+                  >
+                    Unverified
+                  </button>
+                  <button 
+                    onClick={() => setActiveFilter('suspended')}
+                    className={`px-4 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-widest transition-all ${activeFilter === 'suspended' ? 'bg-rose-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
+                  >
+                    Suspended
+                  </button>
+                </div>
 
                 {/* Grid / Table view toggle — cards for browsing, table for scale */}
-                <div className="ml-1 flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
+                <div className="ml-2 flex items-center gap-1 rounded-xl border border-border/50 bg-background/50 backdrop-blur-md p-1 shadow-sm">
                   <button
                     onClick={() => setViewMode('grid')}
                     aria-label="Card view"
                     title="Card view"
-                    className={`flex items-center justify-center h-9 w-9 sm:h-7 sm:w-7 rounded transition-colors ${viewMode === 'grid' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    className={`flex items-center justify-center h-8 w-8 rounded-lg transition-all ${viewMode === 'grid' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
                   >
                     <LayoutGrid className="h-4 w-4" />
                   </button>
@@ -1109,36 +1128,40 @@ function DashboardContent() {
             </div>
 
             {loadingLocations ? (
-              <div className="flex h-48 w-full items-center justify-center rounded-2xl border border-border glass-panel">
-                <div className="flex flex-col items-center gap-2">
-                  <RefreshCw className="h-6 w-6 animate-spin text-indigo-500" />
-                  <p className="text-xs text-muted-foreground">Fetching business locations...</p>
+              <div className="flex h-48 w-full items-center justify-center rounded-2xl border border-border/40 glass-panel shadow-sm">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="p-3 bg-indigo-500/10 rounded-2xl">
+                    <RefreshCw className="h-6 w-6 animate-spin text-indigo-500" />
+                  </div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Fetching business locations...</p>
                 </div>
               </div>
             ) : locations.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-border bg-card shadow-sm">
-                <MapPin className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm font-bold text-foreground">No active storefronts found</p>
-                <p className="text-xs text-muted-foreground max-w-sm mt-1">
+              <div className="flex flex-col items-center justify-center p-12 text-center rounded-2xl border border-border/40 bg-card/50 backdrop-blur-md shadow-sm">
+                <div className="p-4 bg-muted/50 rounded-2xl mb-4">
+                  <MapPin className="h-10 w-10 text-muted-foreground/50" />
+                </div>
+                <p className="text-base font-extrabold text-foreground">No active storefronts found</p>
+                <p className="text-sm font-semibold text-muted-foreground max-w-sm mt-2">
                   We found no GBP storefront locations linked to this account. Refresh or connect a profile.
                 </p>
               </div>
             ) : viewMode === 'table' ? (
               /* Upgraded Premium Table View */
-              <div className="overflow-x-auto rounded-xl glass-panel shadow-sm">
+              <div className="overflow-x-auto rounded-2xl glass-panel shadow-sm border-border/40">
                 <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="border-b border-border/60 text-left text-[10px] uppercase tracking-wider text-muted-foreground bg-muted/30">
-                      <th className="px-5 py-4 font-extrabold">Storefront</th>
-                      <th className="px-4 py-4 font-extrabold">Health</th>
-                      <th className="px-4 py-4 font-extrabold">Rating</th>
-                      <th className="px-4 py-4 font-extrabold hidden md:table-cell">To reply</th>
-                      <th className="px-4 py-4 font-extrabold">Status</th>
-                      <th className="px-4 py-4 font-extrabold">Microsite</th>
-                      <th className="px-5 py-4 font-extrabold text-right hidden md:table-cell">Last sync</th>
+                    <tr className="border-b border-border/40 text-left text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground bg-muted/20">
+                      <th className="px-6 py-4">Storefront</th>
+                      <th className="px-5 py-4">Health</th>
+                      <th className="px-5 py-4">Rating</th>
+                      <th className="px-5 py-4 hidden md:table-cell">To reply</th>
+                      <th className="px-5 py-4">Status</th>
+                      <th className="px-5 py-4">Microsite</th>
+                      <th className="px-6 py-4 text-right hidden md:table-cell">Last sync</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border/40 font-medium bg-card/40 backdrop-blur-sm">
+                  <tbody className="divide-y divide-border/20 font-medium bg-card/20 backdrop-blur-md">
                     {sortedLocations.map((loc, index) => {
                       const isBlocked = loc.billing_status
                         ? loc.billing_status === 'pending_payment'
@@ -1149,51 +1172,51 @@ function DashboardContent() {
                         <tr
                           key={loc.id}
                           onClick={() => isBlocked ? setShowUpgrade(true) : router.push(`/dashboard/locations/${loc.id}`)}
-                          className={`group transition-all duration-200 cursor-pointer ${isBlocked ? 'opacity-60 hover:bg-amber-500/5 active:bg-amber-500/10' : 'hover:bg-muted/40 hover:shadow-[inset_4px_0_0_0_hsl(var(--primary))] active:bg-muted/60'}`}
+                          className={`group transition-all duration-300 cursor-pointer ${isBlocked ? 'opacity-60 hover:bg-amber-500/5 active:bg-amber-500/10' : 'hover:bg-muted/30 hover:shadow-[inset_4px_0_0_0_hsl(var(--primary))]'}`}
                         >
-                          <td className="px-5 py-3.5 max-w-xs">
-                            <div className={`font-bold truncate transition-colors ${isBlocked ? 'text-foreground' : 'text-foreground group-hover:text-primary'}`}>{loc.location_name}</div>
-                            <div className="text-xs sm:text-[11px] text-muted-foreground truncate mt-0.5">
-                              <span className="uppercase font-semibold tracking-wide text-primary/80">{loc.primary_category || 'Storefront'}</span>
-                              {addr && <span> &middot; {addr}</span>}
+                          <td className="px-6 py-4 max-w-xs">
+                            <div className={`font-extrabold truncate transition-colors text-sm ${isBlocked ? 'text-foreground' : 'text-foreground group-hover:text-primary'}`}>{loc.location_name}</div>
+                            <div className="flex items-center gap-1.5 mt-1.5 truncate">
+                              <span className="text-[9px] uppercase font-black tracking-widest text-primary/80 bg-primary/10 px-1.5 py-0.5 rounded">{loc.primary_category || 'Storefront'}</span>
+                              {addr && <span className="text-[11px] font-semibold text-muted-foreground truncate ml-1">{addr}</span>}
                             </div>
                           </td>
-                          <td className="px-4 py-3.5">
+                          <td className="px-5 py-4">
                             {loc.health_score != null ? (
-                              <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-bold border shadow-sm ${healthClasses(loc.health_score)}`}>
+                              <span className={`inline-flex items-center px-2 py-1 rounded text-[11px] font-black tracking-wider border shadow-sm ${healthClasses(loc.health_score)}`}>
                                 {loc.health_score}
                               </span>
-                            ) : <span className="text-muted-foreground/50">—</span>}
+                            ) : <span className="text-muted-foreground/30 font-black">—</span>}
                           </td>
-                          <td className="px-4 py-3.5 whitespace-nowrap">
+                          <td className="px-5 py-4 whitespace-nowrap">
                             {loc.average_rating != null ? (
-                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border shadow-sm ${
-                                loc.average_rating >= 4.5 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 
-                                loc.average_rating >= 3.5 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20' : 
-                                'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-black border shadow-sm ${
+                                loc.average_rating >= 4.5 ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 
+                                loc.average_rating >= 3.5 ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' : 
+                                'bg-rose-500/10 text-rose-500 border-rose-500/20'
                               }`}>
-                                <Star className="h-3.5 w-3.5 fill-current drop-shadow-sm" />
+                                <Star className="h-3 w-3 fill-current" />
                                 {Number(loc.average_rating).toFixed(1)}
-                                {loc.total_reviews != null && <span className="opacity-70 font-semibold ml-0.5">({loc.total_reviews})</span>}
+                                {loc.total_reviews != null && <span className="opacity-60 ml-0.5">({loc.total_reviews})</span>}
                               </span>
-                            ) : <span className="text-muted-foreground/50">—</span>}
+                            ) : <span className="text-muted-foreground/30 font-black">—</span>}
                           </td>
-                          <td className="px-4 py-3.5 hidden md:table-cell">
+                          <td className="px-5 py-4 hidden md:table-cell">
                             {pending > 0 ? (
-                              <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 shadow-sm">{pending} pending</span>
-                            ) : <span className="text-muted-foreground/50">—</span>}
+                              <span className="inline-flex items-center px-2 py-1 rounded text-[10px] uppercase font-extrabold tracking-widest bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 shadow-sm">{pending} pending</span>
+                            ) : <span className="text-muted-foreground/30 font-black">—</span>}
                           </td>
-                          <td className="px-4 py-3.5">
+                          <td className="px-5 py-4">
                             {isBlocked ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-sm">
+                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] uppercase font-extrabold tracking-widest bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-sm">
                                 <Lock className="h-3 w-3" /> Locked
                               </span>
-                            ) : (renderStateBadge(loc) ?? <span className="text-muted-foreground/50 text-xs">—</span>)}
+                            ) : (renderStateBadge(loc) ?? <span className="text-muted-foreground/30 font-black">—</span>)}
                           </td>
-                          <td className="px-4 py-3.5">
+                          <td className="px-5 py-4">
                             {!isBlocked && renderMicrositeBadge(loc.microsite_status)}
                           </td>
-                          <td className="px-5 py-3.5 text-right whitespace-nowrap text-xs font-medium text-muted-foreground hidden md:table-cell" title={loc.last_synced_at ? new Date(loc.last_synced_at).toLocaleString() : ''}>
+                          <td className="px-6 py-4 text-right whitespace-nowrap text-[11px] font-bold text-muted-foreground hidden md:table-cell" title={loc.last_synced_at ? new Date(loc.last_synced_at).toLocaleString() : ''}>
                             {relativeTime(loc.last_synced_at) ?? 'never'}
                           </td>
                         </tr>
@@ -1222,32 +1245,32 @@ function DashboardContent() {
                     onClick={(e) => {
                       if (isBlocked) e.preventDefault();
                     }}
-                    className={`glass-panel text-card-foreground border border-border rounded-2xl p-6 flex flex-col justify-between space-y-5 transition-all duration-300 shadow-sm group block ${isBlocked ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:border-primary/50 hover:shadow-lg hover:-translate-y-0.5'}`}
+                    className={`glass-panel border-border/40 rounded-2xl p-7 flex flex-col justify-between space-y-6 transition-all duration-500 shadow-sm group block ${isBlocked ? 'opacity-60 grayscale cursor-not-allowed' : 'hover:border-primary/50 hover:shadow-lg hover:-translate-y-1'}`}
                   >
-                    <div className="space-y-3">
+                    <div className="space-y-5">
                       {/* Title row: health anchor · name + category + one state badge · sync */}
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-4 min-w-0 flex-1">
                           {/* Health score as the card's visual anchor */}
                           {loc.health_score != null ? (
                             <div
-                              className={`flex flex-col items-center justify-center h-11 w-11 shrink-0 rounded-lg border ${healthClasses(loc.health_score)}`}
+                              className={`flex flex-col items-center justify-center h-14 w-14 shrink-0 rounded-xl border ${healthClasses(loc.health_score)} shadow-inner`}
                               title={`Health ${loc.health_score}${loc.health_score_label ? ` (${loc.health_score_label})` : ''}`}
                             >
-                              <span className="text-sm font-bold leading-none">{loc.health_score}</span>
-                              <span className="text-[8px] uppercase font-bold tracking-wide opacity-70 mt-0.5">Health</span>
+                              <span className="text-xl font-black leading-none">{loc.health_score}</span>
+                              <span className="text-[8px] uppercase font-extrabold tracking-widest opacity-80 mt-1">Health</span>
                             </div>
                           ) : (
-                            <div className="flex items-center justify-center h-11 w-11 shrink-0 rounded-lg border border-border bg-muted/30 text-muted-foreground text-[9px] font-bold">N/A</div>
+                            <div className="flex items-center justify-center h-14 w-14 shrink-0 rounded-xl border border-border bg-muted/20 text-muted-foreground text-[10px] font-black">N/A</div>
                           )}
 
-                          <div className="min-w-0">
-                            <h4 className={`text-base font-bold leading-tight flex items-center gap-1.5 ${isBlocked ? 'text-muted-foreground' : 'text-foreground group-hover:text-primary'} transition-colors`}>
+                          <div className="min-w-0 pt-0.5">
+                            <h4 className={`text-lg font-extrabold leading-tight flex items-center gap-1.5 ${isBlocked ? 'text-muted-foreground' : 'text-foreground group-hover:text-primary'} transition-colors tracking-tight`}>
                               <span className="truncate">{loc.location_name}</span>
-                              {!isBlocked && <ChevronRight className="h-4 w-4 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />}
+                              {!isBlocked && <ChevronRight className="h-4 w-4 shrink-0 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />}
                             </h4>
-                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                              <span className="text-[10px] uppercase font-bold tracking-wider text-primary">{loc.primary_category || 'Storefront'}</span>
+                            <div className="flex flex-wrap items-center gap-2 mt-2">
+                              <span className="text-[10px] uppercase font-black tracking-widest text-primary/80 bg-primary/5 px-2 py-0.5 rounded">{loc.primary_category || 'Storefront'}</span>
                               {isBlocked ? (
                                 <button
                                   type="button"
@@ -1258,13 +1281,13 @@ function DashboardContent() {
                                     e.stopPropagation();
                                     setShowUpgrade(true);
                                   }}
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30 dark:hover:bg-amber-500/25 cursor-pointer transition-colors"
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] uppercase font-extrabold tracking-widest bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-sm hover:bg-amber-500/20 cursor-pointer transition-colors"
                                 >
                                   <Sparkles className="h-3 w-3" />
                                   Upgrade to Reactivate
                                 </button>
                               ) : (
-                                <div className="flex flex-wrap items-center gap-1.5">
+                                <div className="flex flex-wrap items-center gap-2">
                                   {renderStateBadge(loc)}
                                   {renderMicrositeBadge(loc.microsite_status)}
                                 </div>
@@ -1276,31 +1299,31 @@ function DashboardContent() {
                       </div>
 
                       {/* Metrics row — quiet, uniform, no longer competing with status */}
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-[11px] font-semibold">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] font-extrabold uppercase tracking-widest bg-muted/10 p-3 rounded-xl border border-border/20">
                         {loc.average_rating != null && (
-                          <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400">
-                            <Star className="h-3 w-3 fill-current" />
+                          <span className="inline-flex items-center gap-1 text-amber-500">
+                            <Star className="h-3.5 w-3.5 fill-current" />
                             {Number(loc.average_rating).toFixed(1)}
-                            {loc.total_reviews != null && <span className="text-muted-foreground font-normal">({loc.total_reviews})</span>}
+                            {loc.total_reviews != null && <span className="text-muted-foreground/60 font-semibold ml-0.5">({loc.total_reviews})</span>}
                           </span>
                         )}
                         {sla?.sla_enabled && (
-                          <span className="text-muted-foreground">
-                            <span className="text-muted-foreground/40 mr-2">&middot;</span>
+                          <span className="text-muted-foreground/70 flex items-center gap-2">
+                            <span className="h-1 w-1 rounded-full bg-border"></span>
                             {sla.avg_response_hours != null ? `${sla.avg_response_hours}h SLA` : 'SLA: No data'}
                           </span>
                         )}
                         {pending > 0 && (
-                          <span className="inline-flex items-center gap-1 text-indigo-700 dark:text-indigo-400">
-                            <span className="text-muted-foreground/40 mr-1">&middot;</span>
+                          <span className="inline-flex items-center gap-2 text-indigo-500">
+                            <span className="h-1 w-1 rounded-full bg-border"></span>
                             {pending} to reply
                           </span>
                         )}
                       </div>
 
                       {addr && (
-                        <p className="text-xs text-muted-foreground/90 font-medium leading-relaxed flex items-start gap-1.5">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60 mt-0.5" />
+                        <p className="text-[11px] text-muted-foreground/80 font-bold leading-relaxed flex items-start gap-2">
+                          <MapPin className="h-4 w-4 shrink-0 text-muted-foreground/40 mt-0.5" />
                           <span>{addr}</span>
                         </p>
                       )}
