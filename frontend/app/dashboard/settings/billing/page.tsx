@@ -318,7 +318,7 @@ export default function BillingPage() {
             <Button variant="outline" className="w-full h-11 sm:w-auto sm:h-8" onClick={() => setShowTopUpModal(true)}>
               Buy Credits
             </Button>
-            <Button className="w-full h-11 sm:w-auto sm:h-8" onClick={() => { trackBeginCheckout({ user_id: user?.id }); setShowUpgradeModal(true); }}>Upgrade Plan</Button>
+            <Button className="w-full h-11 sm:w-auto sm:h-8" onClick={() => { trackBeginCheckout({ user_id: user?.id, email: user?.email }); setShowUpgradeModal(true); }}>Upgrade Plan</Button>
           </div>
         </div>
       </div>

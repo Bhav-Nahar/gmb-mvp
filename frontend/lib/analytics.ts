@@ -9,6 +9,7 @@ type EventParams = {
   event_id?: string
   lead_id?: string
   user_id?: string
+  email?: string // raw; hashed in GTM before any send (never to GA4 unhashed)
   lead_magnet?: "7_day_trial" | "custom_plan" | "direct_plan"
   user_type?: "agency" | "brand" | "local_business"
   business_category?: string
@@ -33,17 +34,55 @@ export function generateEventId(): string {
   return "evt_" + crypto.randomUUID()
 }
 
-// The only function that pushes to the dataLayer. Strips empty values, auto-adds page_path.
-export function track(event: string, params: EventParams = {}): void {
-  if (typeof window === "undefined") return
-  const clean: Record<string, any> = { event }
+// Drop empty values so we never push "" / null / undefined.
+function strip(params: EventParams): Record<string, any> {
+  const clean: Record<string, any> = {}
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") clean[k] = v
   }
+  return clean
+}
+
+// The only function that pushes to the dataLayer. Strips empty values, auto-adds page_path.
+// `group` nests the params under that key, e.g. { event, user: {...} }. Omit for a flat push.
+export function track(event: string, params: EventParams = {}, group?: string): void {
+  if (typeof window === "undefined") return
+  const clean = strip(params)
   if (clean.page_path === undefined) clean.page_path = window.location.pathname
+  let payload: Record<string, any>
+  if (group) {
+    // event_id stays top-level (alongside event); everything else nests under `group`.
+    const { event_id, ...rest } = clean
+    payload = { event, ...(event_id ? { event_id } : {}), [group]: rest }
+  } else {
+    payload = { event, ...clean }
+  }
   window.dataLayer = window.dataLayer || []
-  window.dataLayer.push(clean)
-  if (process.env.NEXT_PUBLIC_ANALYTICS_DEBUG) console.debug("[dataLayer]", clean)
+  // GTM merges objects across pushes, so a field set in a prior event leaks into this
+  // one. Clear the wrapper first so each event only carries what it explicitly sets.
+  if (group) window.dataLayer.push({ [group]: null })
+  window.dataLayer.push(payload)
+  if (process.env.NEXT_PUBLIC_ANALYTICS_DEBUG) console.debug("[dataLayer]", payload)
+}
+
+// Ecommerce events (select_plan, begin_checkout, purchase). GA4's built-in ecommerce
+// reports only read the reserved `ecommerce` object + its `items` array, so money lives
+// there and identity under `user`. We push { ecommerce: null } first to clear the prior
+// object — otherwise its values leak into the next event. event_id stays top-level.
+function trackEcom(
+  event: string,
+  ecommerce: Record<string, any>,
+  user: EventParams,
+  event_id: string,
+): void {
+  if (typeof window === "undefined") return
+  const u = strip(user)
+  u.page_path = window.location.pathname
+  const payload = { event, event_id, ecommerce, user: u }
+  window.dataLayer = window.dataLayer || []
+  window.dataLayer.push({ ecommerce: null, user: null }) // clear both so neither leaks
+  window.dataLayer.push(payload)
+  if (process.env.NEXT_PUBLIC_ANALYTICS_DEBUG) console.debug("[dataLayer]", payload)
 }
 
 // ---- Event helpers. Add one per tracked event so call sites stay declarative. ----
@@ -73,17 +112,19 @@ export function trackTrialStart(opts: {
   user_id: number | string
   locationsCount: number
   business_category?: string
+  email?: string
 }) {
   track("trial_start", {
     event_id: generateEventId(),
     lead_magnet: "7_day_trial",
     user_id: String(opts.user_id),
+    email: opts.email,
     business_category: opts.business_category,
     locations_count: bucketLocations(opts.locationsCount),
     plan_name: "Trial",
     value: 0,
     currency: "INR",
-  })
+  }, "user")
 }
 
 // "annual" is the UI's word; the schema uses "yearly".
@@ -96,34 +137,37 @@ type PlanSelection = {
   value: number // plan price in rupees (base, ex-GST)
   locations_included: number
   user_id?: number | string
+  email?: string
 }
 
-function planParams(p: PlanSelection): EventParams {
-  return {
-    event_id: generateEventId(),
-    lead_magnet: "direct_plan",
-    ...(p.user_id ? { user_id: String(p.user_id) } : {}),
-    plan_name: p.plan_name,
-    billing_cycle: toBillingCycle(p.paymentTerm),
-    value: p.value,
-    currency: "INR",
-    locations_included: p.locations_included,
-  }
-}
+// One GA4 items entry for a plan. billing cycle -> item_variant, locations -> quantity.
+const planItem = (p: PlanSelection) => ({
+  item_name: p.plan_name,
+  item_variant: toBillingCycle(p.paymentTerm),
+  price: p.value,
+  quantity: 1,
+  locations_included: p.locations_included,
+})
 
 // User picked a plan tier in the upgrade modal.
 export function trackSelectPlan(p: PlanSelection) {
-  track("select_plan", planParams(p))
+  trackEcom(
+    "select_plan",
+    { currency: "INR", value: p.value, items: [planItem(p)] },
+    { lead_magnet: "direct_plan", email: p.email, ...(p.user_id ? { user_id: String(p.user_id) } : {}) },
+    generateEventId(),
+  )
 }
 
 // User started the checkout flow (opened the upgrade modal). No plan is configured
-// yet, so every field is optional — track() omits whatever is blank.
-export function trackBeginCheckout(p: { user_id?: number | string } = {}) {
-  track("begin_checkout", {
-    event_id: generateEventId(),
-    lead_magnet: "direct_plan",
-    ...(p.user_id ? { user_id: String(p.user_id) } : {}),
-  })
+// yet, so there's nothing for the ecommerce object — items is empty.
+export function trackBeginCheckout(p: { user_id?: number | string; email?: string } = {}) {
+  trackEcom(
+    "begin_checkout",
+    { currency: "INR", items: [] },
+    { lead_magnet: "direct_plan", email: p.email, ...(p.user_id ? { user_id: String(p.user_id) } : {}) },
+    generateEventId(),
+  )
 }
 
 // Payment verified & subscription activated.
@@ -132,21 +176,23 @@ export function trackPurchase(p: {
   plan_name: string
   paymentTerm: "monthly" | "annual"
   value: number // amount actually charged in rupees (incl. GST)
+  locations_included: number
   user_id?: number | string
+  email?: string
 }) {
-  track("purchase", {
-    // Deterministic id from the txn so the backend Meta CAPI event can use the
-    // SAME event_id and Meta dedupes browser + server. No id needs passing around.
-    event_id: "evt_" + p.transaction_id,
-    lead_magnet: "direct_plan",
-    ...(p.user_id ? { user_id: String(p.user_id) } : {}),
-    transaction_id: p.transaction_id,
-    plan_name: p.plan_name,
-    billing_cycle: toBillingCycle(p.paymentTerm),
-    value: p.value,
-    currency: "INR",
-    payment_status: "success",
-  })
+  trackEcom(
+    "purchase",
+    {
+      transaction_id: p.transaction_id,
+      currency: "INR",
+      value: p.value,
+      items: [planItem(p)],
+    },
+    { lead_magnet: "direct_plan", payment_status: "success", email: p.email, ...(p.user_id ? { user_id: String(p.user_id) } : {}) },
+    // Deterministic id from the txn so the backend Meta CAPI event can use the SAME
+    // event_id and Meta dedupes browser + server. No id needs passing around.
+    "evt_" + p.transaction_id,
+  )
 }
 
 export function trackSignUpStart() {
@@ -158,5 +204,5 @@ export function trackSignUpStart() {
     event_id: generateEventId(),
     lead_magnet: "7_day_trial",
     ...(cta_location ? { cta_location } : {}),
-  })
+  }, "user")
 }

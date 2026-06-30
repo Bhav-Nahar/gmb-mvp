@@ -645,23 +645,25 @@ export default function HomeClient() {
           </div>
         </Reveal>
 
-        <div className="flex items-center justify-center gap-2">
-          <button onClick={() => setPricingInterval('monthly')} className={`rounded-lg px-4 py-2 text-xs font-bold uppercase tracking-widest transition-colors ${pricingInterval === 'monthly' ? 'bg-primary text-primary-foreground' : 'bg-muted/30 text-muted-foreground hover:text-foreground'}`}>Monthly</button>
-          <button onClick={() => setPricingInterval('annual')} className={`rounded-lg px-4 py-2 text-xs font-bold uppercase tracking-widest transition-colors ${pricingInterval === 'annual' ? 'bg-primary text-primary-foreground' : 'bg-muted/30 text-muted-foreground hover:text-foreground'}`}>Yearly <span className="text-emerald-500">· Save 20%</span></button>
-        </div>
-        {/* Shared location slider drives both per-location plans */}
-        <div className="mx-auto max-w-md space-y-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-semibold text-foreground">How many locations?</label>
-            <span className="text-sm font-bold text-primary">{pricingLocations} {pricingLocations === 1 ? 'location' : 'locations'}</span>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
+          <div className="flex items-center justify-center rounded-full bg-muted/40 p-1.5 backdrop-blur-md border border-border/50 shadow-inner">
+            <button onClick={() => setPricingInterval('monthly')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'monthly' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Monthly</button>
+            <button onClick={() => setPricingInterval('annual')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'annual' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Yearly <span className={pricingInterval === 'annual' ? 'text-emerald-500' : 'text-emerald-500'}>· Save 20%</span></button>
           </div>
-          <input type="range" min={1} max={50} value={pricingLocations} onChange={(e) => setPricingLocations(Number(e.target.value))} className="w-full cursor-pointer accent-primary" aria-label="Number of locations" />
-          <div className="flex justify-between font-mono text-[10px] text-muted-foreground"><span>1</span><span>50</span></div>
+          
+          {/* Shared location slider drives both per-location plans */}
+          <div className="w-full max-w-xs space-y-3 rounded-2xl border border-border/50 bg-card/40 backdrop-blur-md p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-muted-foreground">Locations</label>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">{pricingLocations} {pricingLocations === 1 ? 'loc' : 'locs'}</span>
+            </div>
+            <input type="range" min={1} max={50} value={pricingLocations} onChange={(e) => setPricingLocations(Number(e.target.value))} className="w-full cursor-pointer accent-primary transition-all" aria-label="Number of locations" />
+          </div>
         </div>
 
-        <div className="mx-auto grid max-w-6xl grid-cols-1 items-stretch gap-6 lg:grid-cols-3">
+        <div className="mx-auto grid max-w-6xl grid-cols-1 items-stretch gap-6 lg:grid-cols-3 pt-6">
           {/* BASIC */}
-          <div className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-8 shadow-sm">
+          <div className="group flex flex-col gap-5 rounded-[2rem] border border-border/60 bg-card/40 backdrop-blur-xl p-8 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:border-primary/30 hover:shadow-xl hover:bg-card/80">
             <div className="space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Basic</span>
               <p className="text-xs font-medium text-muted-foreground">Everything you need to manage Google reviews & posts.</p>
@@ -689,10 +691,12 @@ export default function HomeClient() {
           </div>
 
           {/* PRO (highlighted) */}
-          <div className="relative flex flex-col gap-5 rounded-2xl border-2 border-primary bg-primary/5 p-8 shadow-xl">
+          <div className="group relative flex flex-col gap-5 rounded-[2rem] border-2 border-primary bg-card/90 backdrop-blur-2xl p-8 shadow-2xl transition-all duration-500 hover:-translate-y-2 hover:shadow-primary/20 hover:bg-card">
             {/* Background glow */}
-            <div className="pointer-events-none absolute -inset-1 -z-10 rounded-2xl bg-primary/20 blur-xl" />
-            <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-primary px-3 py-0.5 text-[9px] font-extrabold uppercase tracking-widest text-primary-foreground">Most popular</span>
+            <div className="pointer-events-none absolute -inset-0.5 -z-10 rounded-[2rem] bg-gradient-to-br from-primary/40 via-primary/10 to-transparent blur-xl opacity-60 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="absolute -top-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-primary to-primary/80 px-4 py-1.5 text-[10px] font-extrabold uppercase tracking-widest text-primary-foreground shadow-lg shadow-primary/30">
+              <Sparkles className="h-3.5 w-3.5" /> Most popular
+            </div>
             <div className="space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
               <p className="text-xs font-medium text-foreground/70">Rank higher on Maps & turn searches into leads.</p>
@@ -721,7 +725,7 @@ export default function HomeClient() {
           </div>
 
           {/* ENTERPRISE */}
-          <div className="flex flex-col justify-between gap-5 rounded-2xl border border-border bg-card p-8 shadow-sm">
+          <div className="group flex flex-col justify-between gap-5 rounded-[2rem] border border-border/60 bg-card/40 backdrop-blur-xl p-8 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:border-foreground/30 hover:shadow-xl hover:bg-card/80">
             <div className="space-y-4">
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Enterprise</span>
               <div className="flex items-baseline gap-1 text-foreground"><span className="text-3xl font-extrabold">Let&apos;s talk</span></div>
