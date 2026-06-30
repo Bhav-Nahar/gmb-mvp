@@ -292,7 +292,7 @@ function DashboardContent() {
             if (l.primary_category) counts.set(l.primary_category, (counts.get(l.primary_category) || 0) + 1)
           }
           const business_category = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0]
-          trackTrialStart({ user_id: user.id, locationsCount: locationsData.length, business_category })
+          trackTrialStart({ user_id: user.id, email: user.email, locationsCount: locationsData.length, business_category })
         }
 
         // If succeeded or failed, or max poll duration (30 seconds) reached, resolve onboarding overlay

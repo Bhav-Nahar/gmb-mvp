@@ -144,6 +144,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
       value: baseRupees ?? 0,
       locations_included: locationCount,
       user_id: user?.id,
+      email: user?.email,
     });
     try {
       const response = await checkoutSubscription({
@@ -173,7 +174,9 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                 plan_name: planName,
                 paymentTerm,
                 value: totalRupees ?? baseRupees ?? 0, // amount actually charged (incl. GST)
+                locations_included: locationCount,
                 user_id: user?.id,
+                email: user?.email,
               });
               toast.success('Subscription activated!');
             } else {
