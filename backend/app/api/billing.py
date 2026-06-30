@@ -15,11 +15,19 @@ from app.services.billing.pricing_service import PricingService
 from app.services.billing.subscription_service import SubscriptionService
 from app.services.billing.webhook_service import WebhookService
 from app.services.billing.entitlement_service import EntitlementService
+from app.core.rate_limit import rate_limiter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 webhook_router = APIRouter()
+
+# Per-IP throttles. Webhook is generous (legit Razorpay bursts come from few IPs);
+# it mainly caps a single-source garbage/replay flood. Mutations are tighter — they
+# create Razorpay orders/subscriptions, so a runaway client or abusive admin can't
+# spray plan/order sprawl. Both fail open if Redis is down.
+_webhook_rate_limit = rate_limiter("razorpay_webhook", limit=1200, window_seconds=60)
+_billing_mutation_rate_limit = rate_limiter("billing_mutation", limit=60, window_seconds=60)
 
 class CheckoutRequest(BaseModel):
     location_count: int = 1
@@ -64,7 +72,7 @@ def get_quote(location_count: int, interval: str = "monthly", plan_tier: str = "
         monthly_ai_credits=PricingService.get_credits_for_locations(location_count, plan_tier),
     )
 
-@router.post("/checkout-subscription")
+@router.post("/checkout-subscription", dependencies=[Depends(_billing_mutation_rate_limit)])
 def checkout_subscription(
     request: CheckoutRequest,
     db: Session = Depends(get_db),
@@ -91,7 +99,7 @@ def checkout_subscription(
     )
     return {"subscription": subscription}
 
-@router.post("/buy-credits")
+@router.post("/buy-credits", dependencies=[Depends(_billing_mutation_rate_limit)])
 def buy_credits(
     request: BuyCreditsRequest,
     db: Session = Depends(get_db),
@@ -317,7 +325,7 @@ class UnlockLocationsRequest(BaseModel):
     location_ids: list[int]
 
 
-@router.post("/locations/unlock")
+@router.post("/locations/unlock", dependencies=[Depends(_billing_mutation_rate_limit)])
 def unlock_locations(
     request: UnlockLocationsRequest,
     db: Session = Depends(get_db),
@@ -355,7 +363,7 @@ class RemandateConfirmRequest(BaseModel):
     razorpay_signature: str
 
 
-@router.post("/remandate")
+@router.post("/remandate", dependencies=[Depends(_billing_mutation_rate_limit)])
 def start_remandate(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -407,7 +415,7 @@ def confirm_remandate(
     return {"confirmed": True, "activated": activated}
 
 
-@webhook_router.post("/razorpay")
+@webhook_router.post("/razorpay", dependencies=[Depends(_webhook_rate_limit)])
 async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     """Receives Razorpay webhooks."""
     body = await request.body()

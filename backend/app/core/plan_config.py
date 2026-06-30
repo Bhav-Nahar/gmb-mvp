@@ -32,6 +32,12 @@ MAX_LOCATIONS = 500
 TRIAL_LOCATION_QUOTA = 3
 TRIAL_AI_CREDITS = 10
 
+# The trial clock (trial_ends_at) only starts on the first successful location sync,
+# so an org that signs up but never connects Google would stay an unexpiring trial
+# forever. Cap that: a trial still pending (trial_ends_at NULL) this many days after
+# signup is treated as expired.
+PENDING_TRIAL_MAX_DAYS = 14
+
 # AI credit top-up packs (one-time). Key is what the client sends; price/credits
 # are owned by the server so the client cannot manipulate them.
 AI_TOPUP_PACKS = {

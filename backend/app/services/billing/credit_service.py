@@ -32,6 +32,48 @@ class CreditService:
             raise HTTPException(status_code=402, detail="Insufficient AI credits")
 
     @staticmethod
+    def reserve(db: Session, org_id: int, credits_required: int = 1) -> None:
+        """Atomically check-and-deduct BEFORE doing expensive work.
+
+        `precheck` reads the balance unlocked and the deduction happens after the work,
+        so concurrent requests can each pass the check and run the work while only the
+        affordable subset is ever charged — fine for cheap actions, but a real-money leak
+        for the geo-grid scan (N² paid API calls). This does the check and the debit
+        together under the org row lock, so only callers that can afford it proceed. Pair
+        with refund() to return the credits if the reserved work then fails. Raises 402
+        when locked or short on credits."""
+        from app.services.billing.entitlement_service import EntitlementService
+
+        stmt = select(Organization).where(Organization.id == org_id).with_for_update()
+        org = db.scalars(stmt).first()
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        if EntitlementService.is_org_locked(org):
+            raise HTTPException(status_code=402, detail="Organization is locked. Please update your subscription.")
+        if (org.monthly_ai_credits_balance + org.topup_ai_credits_balance) < credits_required:
+            raise HTTPException(status_code=402, detail="Insufficient AI credits")
+        from_monthly = min(org.monthly_ai_credits_balance, credits_required)
+        org.monthly_ai_credits_balance -= from_monthly
+        remaining = credits_required - from_monthly
+        if remaining > 0:
+            org.topup_ai_credits_balance = max(0, org.topup_ai_credits_balance - remaining)
+        db.commit()
+
+    @staticmethod
+    def refund(db: Session, org_id: int, credits: int) -> None:
+        """Return credits reserved by reserve() when the work fails, so a failed action
+        is never charged. Refunds to the monthly bucket (a small bucket imbalance vs the
+        original split is acceptable for the 1–6 credit scans this guards)."""
+        if credits <= 0:
+            return
+        stmt = select(Organization).where(Organization.id == org_id).with_for_update()
+        org = db.scalars(stmt).first()
+        if not org:
+            return
+        org.monthly_ai_credits_balance = (org.monthly_ai_credits_balance or 0) + credits
+        db.commit()
+
+    @staticmethod
     @contextmanager
     def consume_ai_credit(
         db: Session, org_id: int, action_name: str, credits_required: int = 1

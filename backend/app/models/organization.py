@@ -47,6 +47,10 @@ class Organization(Base):
     subscription_needs_remandate = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     paid_location_quota = Column(Integer, nullable=True)
     remandate_due_at = Column(DateTime(timezone=True), nullable=True)
+    # The re-mandate subscription awaiting the user's approval. Tracked so a repeated
+    # /remandate call reuses the outstanding mandate (or cancels a stale one) instead
+    # of stacking a second mandate that would double-bill. Cleared at cutover.
+    pending_remandate_subscription_id = Column(String, nullable=True)
 
     # Marketing attribution, captured first-touch from the browser at signup and used
     # for server-side conversions (Meta CAPI / Google Ads). First-touch wins: a column
