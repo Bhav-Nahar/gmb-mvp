@@ -18,6 +18,9 @@ class User(Base):
     lead_email_notifications = Column(Boolean, default=True, nullable=False) # opt-out of per-lead email notifications
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Soft delete: set by a super-admin. Blocks auth immediately; hard-purged after
+    # ACCOUNT_PURGE_GRACE_DAYS. NULL = live.
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     organization = relationship("Organization", back_populates="users")
     oauth_accounts = relationship("OAuthAccount", back_populates="user", cascade="all, delete-orphan")

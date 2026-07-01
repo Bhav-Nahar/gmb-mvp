@@ -27,8 +27,15 @@ class EntitlementService:
             return True
 
         if org.subscription_status == "trial":
-            # trial_ends_at NULL = not yet activated (pending first sync) — not locked.
-            if org.trial_ends_at and org.trial_ends_at < now:
+            # trial_ends_at NULL = not yet activated (pending first sync). Normally not
+            # locked — but cap it so an org that never connects Google can't sit in an
+            # unexpiring trial forever.
+            if org.trial_ends_at is None:
+                from app.core.plan_config import PENDING_TRIAL_MAX_DAYS
+                if org.created_at and org.created_at < now - timedelta(days=PENDING_TRIAL_MAX_DAYS):
+                    return True
+                return False
+            if org.trial_ends_at < now:
                 return True  # Should have been transitioned; treat as locked if past.
             return False
 
@@ -55,7 +62,19 @@ class EntitlementService:
 
         try:
             now = datetime.now(timezone.utc)
-            
+
+            # Step 0: Stale PENDING trials (clock never started because the org never
+            # completed a first sync) past the signup cap -> locked, so an abandoned
+            # signup can't stay an unexpiring trial forever.
+            from app.core.plan_config import PENDING_TRIAL_MAX_DAYS
+            stale_pending = db.query(Organization).filter(
+                Organization.subscription_status == "trial",
+                Organization.trial_ends_at.is_(None),
+                Organization.created_at < now - timedelta(days=PENDING_TRIAL_MAX_DAYS),
+            ).all()
+            for org in stale_pending:
+                org.subscription_status = "locked"
+
             # Step 1: Trial -> Past Due (Grace Period). Pending trials
             # (trial_ends_at NULL) are skipped — their clock hasn't started.
             trials_to_past_due = db.query(Organization).filter(

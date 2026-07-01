@@ -73,6 +73,7 @@ def _org_row(org, user_count, location_count):
         "grace_period_ends_at": org.grace_period_ends_at,
         "subscription_ends_at": org.subscription_ends_at,
         "created_at": org.created_at,
+        "deleted_at": org.deleted_at,
     }
 
 
@@ -119,6 +120,7 @@ def list_organizations(
     _: User = Depends(superadmin_required),
     q: Optional[str] = None,
     subscription_status: Optional[str] = None,
+    deleted: str = Query("exclude", pattern="^(exclude|only|include)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -127,6 +129,11 @@ def list_organizations(
         query = query.filter(Organization.name.ilike(f"%{q}%"))
     if subscription_status:
         query = query.filter(Organization.subscription_status == subscription_status)
+    # Trash handling: hide soft-deleted by default; 'only' = the trash view, 'include' = both.
+    if deleted == "exclude":
+        query = query.filter(Organization.deleted_at.is_(None))
+    elif deleted == "only":
+        query = query.filter(Organization.deleted_at.isnot(None))
 
     total = query.count()
     orgs = query.order_by(Organization.created_at.desc()).limit(limit).offset(offset).all()
@@ -191,7 +198,7 @@ def get_organization(org_id: int, db: Session = Depends(get_db), _: User = Depen
             {
                 "id": u.id, "email": u.email, "name": u.name, "role": u.role,
                 "is_active": u.is_active, "viewer_scope": u.viewer_scope,
-                "created_at": u.created_at,
+                "created_at": u.created_at, "deleted_at": u.deleted_at,
             }
             for u in users
         ],
@@ -312,6 +319,116 @@ def update_user(
            changes=changes, reason=payload.reason, target_user_id=user.id)
     db.commit()
     return {"message": "User updated", "changes": changes}
+
+
+# --- Account deletion (soft delete + restore; hard purge runs on a daily task) -------
+
+def _purge_date(deleted_at):
+    return deleted_at + timedelta(days=plan_config.ACCOUNT_PURGE_GRACE_DAYS) if deleted_at else None
+
+
+@router.delete("/organizations/{org_id}")
+def delete_organization(
+    org_id: int,
+    body: AdminActionBody = AdminActionBody(),
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Soft-delete an org and everything under it. Members lose access immediately; the
+    data is kept for ACCOUNT_PURGE_GRACE_DAYS so it can be restored, then hard-purged
+    (cascade) by the daily purge task."""
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if org.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="Organization is already deleted.")
+    org.deleted_at = datetime.now(timezone.utc)
+    _audit(db, actor=admin, organization_id=org.id, action="superadmin.org_delete",
+           changes={"deleted_at": {"old": None, "new": org.deleted_at}}, reason=body.reason)
+    db.commit()
+    return {"message": "Organization deleted", "deleted_at": org.deleted_at,
+            "purge_after": _purge_date(org.deleted_at)}
+
+
+@router.post("/organizations/{org_id}/restore")
+def restore_organization(
+    org_id: int,
+    body: AdminActionBody = AdminActionBody(),
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Undo a soft-delete before the purge window elapses."""
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if org.deleted_at is None:
+        raise HTTPException(status_code=409, detail="Organization is not deleted.")
+    org.deleted_at = None
+    _audit(db, actor=admin, organization_id=org.id, action="superadmin.org_restore",
+           changes={"deleted_at": {"old": "set", "new": None}}, reason=body.reason)
+    db.commit()
+    return {"message": "Organization restored"}
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    body: AdminActionBody = AdminActionBody(),
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Soft-delete a single team member. They lose access immediately and are hard-purged
+    after the grace window; org data (posts, audit trails) survives with their references
+    nulled. Refuses to delete the org's last remaining Owner (would orphan the account)."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="User is already deleted.")
+    if settings.is_superadmin(user.email):
+        raise HTTPException(status_code=403, detail="Cannot delete a super-admin account.")
+    # Don't orphan an org by removing its last active Owner.
+    if user.role == Role.OWNER:
+        other_owners = db.query(User).filter(
+            User.organization_id == user.organization_id,
+            User.role == Role.OWNER,
+            User.id != user.id,
+            User.is_active.is_(True),
+            User.deleted_at.is_(None),
+        ).count()
+        if other_owners == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot delete the organization's only Owner. Delete the organization instead.",
+            )
+    user.deleted_at = datetime.now(timezone.utc)
+    user.token_version += 1  # invalidate any live sessions
+    _audit(db, actor=admin, organization_id=user.organization_id, action="superadmin.user_delete",
+           changes={"deleted_at": {"old": None, "new": user.deleted_at}}, reason=body.reason,
+           target_user_id=user.id)
+    db.commit()
+    return {"message": "User deleted", "deleted_at": user.deleted_at,
+            "purge_after": _purge_date(user.deleted_at)}
+
+
+@router.post("/users/{user_id}/restore")
+def restore_user(
+    user_id: int,
+    body: AdminActionBody = AdminActionBody(),
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.deleted_at is None:
+        raise HTTPException(status_code=409, detail="User is not deleted.")
+    user.deleted_at = None
+    _audit(db, actor=admin, organization_id=user.organization_id, action="superadmin.user_restore",
+           changes={"deleted_at": {"old": "set", "new": None}}, reason=body.reason,
+           target_user_id=user.id)
+    db.commit()
+    return {"message": "User restored"}
 
 
 @router.patch("/locations/{location_id}")

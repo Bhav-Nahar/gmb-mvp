@@ -22,6 +22,7 @@ export interface BillingStatus {
   needs_remandate?: boolean;
   remandate_due_at?: string;
   paid_location_quota?: number;
+  location_reassign_available_at?: string | null;
 }
 
 export interface Quote {
@@ -145,6 +146,22 @@ export function useUnlockLocations() {
         '/billing/locations/unlock',
         data
       ),
+  });
+}
+
+export interface SetActiveResult {
+  active_location_count: number;
+  pending_location_count: number;
+  location_quota: number;
+  reactivated: number[];
+}
+
+/** Choose WHICH locations occupy the paid slots (free, within quota). The submitted
+ * set becomes active; every other location is set pending_payment. */
+export function useSetActiveLocations() {
+  return useMutation({
+    mutationFn: (location_ids: number[]) =>
+      api.post<SetActiveResult>('/billing/locations/active', { location_ids }),
   });
 }
 

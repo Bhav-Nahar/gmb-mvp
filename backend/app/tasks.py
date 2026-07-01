@@ -118,20 +118,21 @@ def run_local_rank_scan_task(scan_id: int) -> dict:
             return {"status": "skipped", "reason": "scan in progress"}
 
         try:
-            meta = location.gbp_raw.get("metadata") if isinstance(location.gbp_raw, dict) else None
-            business_place_id = meta.get("placeId") if isinstance(meta, dict) else None
-            result = run_async(local_rank_service.scan_for_location(
-                latlng=location.latlng, gbp_raw=location.gbp_raw, address=location.address,
-                keyword=scan.keyword, grid_size=scan.grid_size,
-                radius_miles=scan.radius_miles, business_name=location.location_name,
-                business_place_id=business_place_id,
-            ))
             price = local_rank_service.scan_price(scan.grid_size)
-            # Deduct + persist results together; pre-check inside may 402 if balance
-            # changed since the route check (rare) — caught below, no charge, no data loss.
-            with CreditService.consume_ai_credit(
-                db, scan.organization_id, local_rank_service.LOCAL_GRID_SCAN_ACTION, credits_required=price
-            ):
+            # RESERVE credits BEFORE the expensive N² paid-API scan. The route only
+            # prechecks (unlocked read), so without this N concurrent scans sharing one
+            # credit could all pass the check and run the real-money work for free. The
+            # reserve is atomic under the org row lock; refunded below if the scan fails.
+            CreditService.reserve(db, scan.organization_id, price)
+            try:
+                meta = location.gbp_raw.get("metadata") if isinstance(location.gbp_raw, dict) else None
+                business_place_id = meta.get("placeId") if isinstance(meta, dict) else None
+                result = run_async(local_rank_service.scan_for_location(
+                    latlng=location.latlng, gbp_raw=location.gbp_raw, address=location.address,
+                    keyword=scan.keyword, grid_size=scan.grid_size,
+                    radius_miles=scan.radius_miles, business_name=location.location_name,
+                    business_place_id=business_place_id,
+                ))
                 scan.cells = result["cells"]
                 scan.avg_rank = result["avg_rank"]
                 scan.solv = result["solv"]
@@ -147,6 +148,13 @@ def run_local_rank_scan_task(scan_id: int) -> dict:
                 if bc and not has_latlng:
                     location.latlng = bc
                     db.add(location)
+                db.commit()
+            except Exception:
+                # Anything after the reserve failed (scan or persist) — give the credits
+                # back; a scan that doesn't produce saved results is free.
+                db.rollback()
+                CreditService.refund(db, scan.organization_id, price)
+                raise
             return {"status": "completed", "scan_id": scan_id}
         except HTTPException as he:
             db.rollback()
@@ -737,7 +745,27 @@ def reconcile_pending_subscriptions_task() -> str:
                 db.rollback()
                 logger.error(f"Reconcile failed for org {org.id}: {str(e)}")
 
-        return f"Reconciled {reconciled} subscription(s) of {len(pending)} pending."
+        # Also retry plan-amount upgrades that failed transiently at add-on time:
+        # active orgs whose entitled quota outgrew what the mandate bills, with no
+        # re-mandate pending. Left unretried, these bill the old (lower) amount forever.
+        drifted = db.query(Organization.id).filter(
+            Organization.subscription_status == "active",
+            Organization.razorpay_subscription_id.isnot(None),
+            Organization.subscription_needs_remandate.is_(False),
+            Organization.paid_location_quota.isnot(None),
+            Organization.paid_location_quota < Organization.location_quota,
+        ).all()
+        repaired = 0
+        for (org_id,) in drifted:
+            try:
+                if SubscriptionService.reconcile_plan_amount(db, org_id) in ("upgraded", "needs_remandate"):
+                    repaired += 1
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Plan-amount reconcile failed for org {org_id}: {str(e)}")
+
+        return (f"Reconciled {reconciled} subscription(s) of {len(pending)} pending; "
+                f"repaired {repaired} of {len(drifted)} drifted plan amount(s).")
     finally:
         db.close()
         try:
@@ -810,6 +838,19 @@ def enforce_upi_remandate_grace_task() -> str:
                 # Resolved either way: entitled quota now matches the mandate.
                 org.subscription_needs_remandate = False
                 org.remandate_due_at = None
+                # Cancel the abandoned re-mandate so it can't later charge and trigger a
+                # surprise cutover after we've already clawed the quota back.
+                abandoned = org.pending_remandate_subscription_id
+                org.pending_remandate_subscription_id = None
+                if abandoned:
+                    try:
+                        from app.services.billing.subscription_service import SubscriptionService
+                        SubscriptionService.get_razorpay_client().subscription.cancel(
+                            abandoned, {"cancel_at_cycle_end": 0}
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to cancel abandoned re-mandate sub %s for org %s: %s",
+                                       abandoned, org.id, e)
                 db.commit()
                 locked_orgs += 1
             except Exception as e:
@@ -817,6 +858,141 @@ def enforce_upi_remandate_grace_task() -> str:
                 logger.error(f"UPI grace enforcement failed for org {org.id}: {e}")
 
         return f"Re-locked {locked_locs} location(s) across {locked_orgs} org(s) past grace."
+    finally:
+        db.close()
+        try:
+            lock.release()
+        except Exception:
+            pass
+
+
+@shared_task(name="app.tasks.purge_soft_deleted_accounts_task")
+def purge_soft_deleted_accounts_task() -> str:
+    """Hard-purge accounts soft-deleted longer than the grace window.
+
+    A super-admin delete only stamps deleted_at (recoverable via restore). This runs
+    daily and, once deleted_at is older than ACCOUNT_PURGE_GRACE_DAYS, permanently
+    removes the row. Orgs are deleted via the ORM so cascade rules fan out to all
+    children (users, locations, reviews, billing, ...); standalone deleted users are
+    removed after (user FKs are SET NULL / CASCADE, so history survives with refs nulled).
+    """
+    import logging
+    from datetime import datetime, timezone, timedelta
+    from app.core import plan_config
+
+    logger = logging.getLogger(__name__)
+    r = _get_redis()
+    lock = r.lock("lock:purge_soft_deleted_accounts", timeout=1800)
+    if not lock.acquire(blocking=False):
+        return "skipped: another purge in progress"
+
+    db: Session = SessionLocal()
+    purged_orgs = purged_users = 0
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=plan_config.ACCOUNT_PURGE_GRACE_DAYS)
+
+        org_ids = [row[0] for row in db.query(Organization.id).filter(
+            Organization.deleted_at.isnot(None),
+            Organization.deleted_at < cutoff,
+        ).all()]
+        def _past_grace(deleted_at):
+            if deleted_at is None:
+                return False
+            if deleted_at.tzinfo is None:  # some drivers return naive datetimes
+                deleted_at = deleted_at.replace(tzinfo=timezone.utc)
+            return deleted_at < cutoff
+
+        for org_id in org_ids:
+            try:
+                org = db.query(Organization).filter(Organization.id == org_id).first()
+                if not org or not _past_grace(org.deleted_at):
+                    db.rollback()
+                    continue
+                db.delete(org)   # cascades to all children
+                db.commit()
+                purged_orgs += 1
+                logger.warning("PURGED organization %s (soft-deleted %s) and all its data.",
+                               org_id, org.deleted_at)
+            except Exception as e:
+                db.rollback()
+                logger.error("Failed to purge organization %s: %s", org_id, e, exc_info=True)
+
+        # Standalone soft-deleted users (their org still exists; users in a purged org
+        # were already removed by the cascade above).
+        user_ids = [row[0] for row in db.query(User.id).filter(
+            User.deleted_at.isnot(None),
+            User.deleted_at < cutoff,
+        ).all()]
+        for user_id in user_ids:
+            try:
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or not _past_grace(user.deleted_at):
+                    db.rollback()
+                    continue
+                db.delete(user)
+                db.commit()
+                purged_users += 1
+                logger.warning("PURGED user %s (soft-deleted %s).", user_id, user.deleted_at)
+            except Exception as e:
+                db.rollback()
+                logger.error("Failed to purge user %s: %s", user_id, e, exc_info=True)
+
+        return f"Purged {purged_orgs} organization(s) and {purged_users} user(s) past grace."
+    finally:
+        db.close()
+        try:
+            lock.release()
+        except Exception:
+            pass
+
+
+@shared_task(name="app.tasks.refill_annual_monthly_credits_task")
+def refill_annual_monthly_credits_task() -> str:
+    """Refill the monthly AI credit allowance for ANNUAL subscribers.
+
+    Credits otherwise reset only on `subscription.charged`, which fires monthly for
+    monthly plans but only once a year for annual plans — so annual orgs would get a
+    single month's grant for the whole year. This runs once per calendar month (fixed
+    day) so each active annual org gets exactly 12 grants/year. The reset is a SET to
+    the full grant (matching apply_subscription_charged), so unused credits don't roll
+    over and re-running is idempotent. Monthly plans are untouched — their charge webhook
+    already refills them.
+    """
+    import logging
+    from app.services.billing.pricing_service import PricingService
+
+    logger = logging.getLogger(__name__)
+    r = _get_redis()
+    lock = r.lock("lock:refill_annual_monthly_credits", timeout=1800)
+    if not lock.acquire(blocking=False):
+        return "skipped: another refill in progress"
+
+    db: Session = SessionLocal()
+    refilled = 0
+    try:
+        annual_orgs = db.query(Organization.id).filter(
+            Organization.subscription_status == "active",
+            Organization.billing_cycle == "annual",
+            Organization.location_quota.isnot(None),
+        ).all()
+        for (org_id,) in annual_orgs:
+            try:
+                org = db.query(Organization).filter(
+                    Organization.id == org_id
+                ).with_for_update().first()
+                # Re-check under the lock: a renewal/cancel may have changed state.
+                if not org or org.subscription_status != "active" or org.billing_cycle != "annual":
+                    db.rollback()
+                    continue
+                org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(
+                    org.location_quota or 0, org.plan_tier or "basic"
+                )
+                db.commit()
+                refilled += 1
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Annual credit refill failed for org {org_id}: {e}")
+        return f"Refilled monthly credits for {refilled} annual org(s)."
     finally:
         db.close()
         try:

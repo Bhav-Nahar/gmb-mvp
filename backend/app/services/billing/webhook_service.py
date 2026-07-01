@@ -163,6 +163,7 @@ class WebhookService:
             org.subscription_needs_remandate = False
             org.remandate_due_at = None
             org.subscription_payment_mode = "upi"
+            org.pending_remandate_subscription_id = None
 
         current_end = subscription.get("current_end")
         if current_end:
@@ -341,19 +342,25 @@ class WebhookService:
         """Reverse entitlements for a refunded payment.
 
         - Top-up credit refunds: credits are clawed back directly.
-        - Quota-bearing refunds (subscription/add-on): a FULL refund locks the org
-          until it re-subscribes, because we don't track exactly which locations an
-          add-on unlocked and reclaiming a specific one is a product decision. Failing
-          CLOSED here is what kills the "pay -> consume credits/syncs -> refund ->
-          keep all entitlements" abuse path (BE-BILLING-2). Partial refunds are flagged
-          for manual reconciliation without locking.
+        - Quota-bearing refunds (subscription/add-on): once the CUMULATIVE refunded
+          amount reaches the original charge the org is LOCKED until it re-subscribes,
+          because we don't track exactly which locations an add-on unlocked and reclaiming
+          a specific one is a product decision. Failing CLOSED here is what kills the
+          "pay -> consume credits/syncs -> refund -> keep all entitlements" abuse path
+          (BE-BILLING-2). This lock fires even when the refund arrives in several partial
+          chunks that only together cover the charge. Sub-total partials are flagged for
+          manual reconciliation without locking.
 
-        Idempotent: a `refund_reversal` ledger row keyed on the payment id is written
-        exactly once (also backstopped by the partial-unique DB index)."""
+        Idempotent PER REFUND: each refund id is recorded once in the single reversal
+        row's `source`, so repeated refunds on a payment each apply once while a webhook
+        redelivery of the same refund is a no-op. The unique index on (payment_id, type)
+        permits only ONE refund_reversal row per payment, so partial refunds ACCUMULATE
+        into that row rather than inserting new ones."""
         refund = payload.get("payload", {}).get("refund", {}).get("entity", {})
         payment_id = refund.get("payment_id")
         if not payment_id:
             return
+        refund_id = refund.get("id")
         txn = db.query(BillingTransaction).filter(
             BillingTransaction.razorpay_payment_id == payment_id,
             BillingTransaction.transaction_type != "refund_reversal",
@@ -362,13 +369,18 @@ class WebhookService:
             logger.warning("Refund for unknown payment %s; nothing to reverse.", payment_id)
             return
 
-        # Idempotency: skip if this refund was already reversed.
-        already_reversed = db.query(BillingTransaction).filter(
+        # The single accumulating reversal row for this payment (if any prior refund hit it).
+        reversal = db.query(BillingTransaction).filter(
             BillingTransaction.razorpay_payment_id == payment_id,
             BillingTransaction.transaction_type == "refund_reversal",
         ).first()
-        if already_reversed:
-            logger.info("Refund for payment %s already reversed. Skipping.", payment_id)
+
+        # Per-refund idempotency: a redelivery of a refund we already folded in is a no-op.
+        if reversal and (
+            (refund_id and refund_id in (reversal.source or ""))
+            or not refund_id  # no id to dedupe on — fall back to single-shot per payment
+        ):
+            logger.info("Refund %s on payment %s already reversed. Skipping.", refund_id, payment_id)
             return
 
         stmt = select(Organization).where(Organization.id == txn.organization_id).with_for_update()
@@ -378,12 +390,22 @@ class WebhookService:
 
         refund_paise = refund.get("amount") or 0
         original_paise = txn.amount_paise or 0
-        is_full_refund = original_paise > 0 and refund_paise >= original_paise
+        prior_refunded = (reversal.amount_paise or 0) if reversal else 0
+        # Cumulative across earlier partial refunds, so a charge refunded in chunks still
+        # trips the full-refund lock once the chunks add up.
+        cumulative_paise = prior_refunded + refund_paise
+        is_full_refund = original_paise > 0 and cumulative_paise >= original_paise
 
         if txn.transaction_type == "topup_charge" and txn.credits:
-            org.topup_ai_credits_balance = max(0, (org.topup_ai_credits_balance or 0) - txn.credits)
-            logger.info("Reversed %s top-up credits for org %s on refund of %s",
-                        txn.credits, org.id, payment_id)
+            # Claw back credits proportional to THIS refund chunk so multiple partials
+            # sum to the full grant without over-revoking.
+            if original_paise > 0:
+                chunk_credits = round(txn.credits * refund_paise / original_paise)
+            else:
+                chunk_credits = txn.credits
+            org.topup_ai_credits_balance = max(0, (org.topup_ai_credits_balance or 0) - chunk_credits)
+            logger.info("Reversed %s top-up credits for org %s on refund %s of payment %s",
+                        chunk_credits, org.id, refund_id, payment_id)
         elif txn.transaction_type in ("subscription_charge", "location_addon"):
             if is_full_refund:
                 # Revoke entitlement by locking the org until it pays again. The exact
@@ -392,6 +414,21 @@ class WebhookService:
                 org.subscription_status = "locked"
                 org.grace_period_ends_at = None
                 org.subscription_ends_at = None
+                # Cancel the live mandate too. Otherwise the NEXT renewal charge arrives,
+                # apply_subscription_charged unconditionally flips the org back to
+                # 'active' (it looks like a renewal), and the refund-abuse lock is undone.
+                if org.razorpay_subscription_id:
+                    try:
+                        from app.services.billing.subscription_service import SubscriptionService
+                        SubscriptionService.get_razorpay_client().subscription.cancel(
+                            org.razorpay_subscription_id, {"cancel_at_cycle_end": 0}
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Refund-lock for org %s: failed to cancel subscription %s "
+                            "(a later renewal could reactivate it): %s",
+                            org.id, org.razorpay_subscription_id, e,
+                        )
                 logger.warning(
                     "FULL refund of %s payment %s for org %s: org LOCKED pending "
                     "re-subscription. Verify quota/credits manually.",
@@ -399,9 +436,10 @@ class WebhookService:
                 )
             else:
                 logger.warning(
-                    "PARTIAL refund (%s of %s paise) of %s payment %s for org %s needs "
-                    "MANUAL reconciliation.",
-                    refund_paise, original_paise, txn.transaction_type, payment_id, org.id,
+                    "PARTIAL refund (%s of %s paise; %s cumulative) of %s payment %s for "
+                    "org %s needs MANUAL reconciliation.",
+                    refund_paise, original_paise, cumulative_paise, txn.transaction_type,
+                    payment_id, org.id,
                 )
         else:
             logger.warning(
@@ -409,18 +447,26 @@ class WebhookService:
                 "manual review required.", payment_id, txn.transaction_type, org.id,
             )
 
-        # Record the reversal so a redelivered refund webhook is a no-op.
-        db.add(BillingTransaction(
-            organization_id=org.id,
-            transaction_type="refund_reversal",
-            amount_paise=refund_paise,
-            currency=refund.get("currency") or txn.currency,
-            status="success",
-            razorpay_payment_id=payment_id,
-            razorpay_order_id=txn.razorpay_order_id,
-            razorpay_subscription_id=txn.razorpay_subscription_id,
-            source="razorpay_refund",
-        ))
+        # Record/accumulate the reversal. The (payment_id, type) unique index permits a
+        # single refund_reversal row per payment, so update it in place for further
+        # partials; amount_paise holds the cumulative refunded total, source the list of
+        # folded-in refund ids (used for per-refund idempotency above).
+        tag = f"razorpay_refund:{refund_id}" if refund_id else "razorpay_refund"
+        if reversal:
+            reversal.amount_paise = cumulative_paise
+            reversal.source = f"{reversal.source},{tag}" if reversal.source else tag
+        else:
+            db.add(BillingTransaction(
+                organization_id=org.id,
+                transaction_type="refund_reversal",
+                amount_paise=refund_paise,
+                currency=refund.get("currency") or txn.currency,
+                status="success",
+                razorpay_payment_id=payment_id,
+                razorpay_order_id=txn.razorpay_order_id,
+                razorpay_subscription_id=txn.razorpay_subscription_id,
+                source=tag,
+            ))
 
     @staticmethod
     def _handle_payment_captured(db: Session, payload: Dict[str, Any]) -> None:
@@ -540,12 +586,23 @@ class WebhookService:
             org.monthly_ai_credits_balance = (org.monthly_ai_credits_balance or 0) \
                 + granted * plan_config.get_plan(org.plan_tier)["credits_per_location"]
 
+        # A duplicate/racing add-on order can be paid AFTER its locations were already
+        # unlocked by another payment, so we unlock fewer than were billed (granted <
+        # added). The money is real — record it so it's auditable — but flag the shortfall
+        # loudly for refund review instead of pretending it was fully applied.
+        fully_applied = granted == added
+        if not fully_applied:
+            logger.warning(
+                "Add-on payment %s for org %s unlocked %s of %s billed location(s) "
+                "(amount %s paise) — likely duplicate/stale order; REFUND review needed.",
+                payment_id, org.id, granted, added, payment.get("amount", 0),
+            )
         db.add(BillingTransaction(
             organization_id=org.id,
             transaction_type="location_addon",
             amount_paise=payment.get("amount", 0),
             currency=payment.get("currency", "INR"),
-            status="success",
+            status="success" if fully_applied else "needs_refund_review",
             razorpay_payment_id=payment_id,
             razorpay_order_id=payment.get("order_id"),
             razorpay_subscription_id=org.razorpay_subscription_id,

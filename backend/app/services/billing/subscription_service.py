@@ -1,6 +1,6 @@
 import logging
 import razorpay
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -216,7 +216,8 @@ class SubscriptionService:
         create_subscription_checkout this does NOT overwrite org.razorpay_subscription_id
         — the old mandate keeps billing until the new one's first charge triggers the
         cutover (apply_subscription_charged), so there is never a coverage gap."""
-        org = db.query(Organization).filter(Organization.id == org_id).first()
+        stmt = select(Organization).where(Organization.id == org_id).with_for_update()
+        org = db.scalars(stmt).first()
         if not org:
             raise HTTPException(status_code=404, detail="Organization not found")
         if not org.subscription_needs_remandate:
@@ -231,6 +232,26 @@ class SubscriptionService:
         plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier)
         client = SubscriptionService.get_razorpay_client()
         credits = PricingService.get_credits_for_locations(location_count, plan_tier)
+
+        # Reuse an outstanding pending mandate instead of stacking a second one that
+        # would double-bill. A pending mandate is still reusable only while it is
+        # 'created'/'authenticated' (not yet charged) AND still matches the current
+        # quota; otherwise cancel it (best-effort) and mint a fresh one.
+        existing_id = org.pending_remandate_subscription_id
+        if existing_id:
+            try:
+                existing = client.subscription.fetch(existing_id)
+            except Exception:
+                existing = None
+            if existing and existing.get("status") in ("created", "authenticated") \
+                    and str(existing.get("notes", {}).get("location_count")) == str(location_count):
+                return existing
+            if existing and existing.get("status") in ("created", "authenticated"):
+                try:
+                    client.subscription.cancel(existing_id, {"cancel_at_cycle_end": 0})
+                except Exception as e:
+                    logger.warning("Failed to cancel stale re-mandate sub %s for org %s: %s",
+                                   existing_id, org_id, e)
 
         try:
             subscription = client.subscription.create(data={
@@ -251,6 +272,8 @@ class SubscriptionService:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to create re-mandate subscription: {str(e)}")
 
+        org.pending_remandate_subscription_id = subscription["id"]
+        db.commit()
         return subscription
 
     @staticmethod
@@ -373,6 +396,15 @@ class SubscriptionService:
                 status_code=409,
                 detail="no_active_subscription: subscribe to a plan before adding locations.",
             )
+        # A pending UPI re-mandate is created at a FIXED quota; adding more locations now
+        # would let the cutover charge reset location_quota back down to that snapshot and
+        # silently drop (and un-bill) what was added in between. Make the user finish the
+        # outstanding re-mandate first.
+        if org.subscription_needs_remandate:
+            raise HTTPException(
+                status_code=409,
+                detail="remandate_pending: approve the pending mandate before adding more locations.",
+            )
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
         client = SubscriptionService.get_razorpay_client()
@@ -441,6 +473,46 @@ class SubscriptionService:
                 "may bill the old amount): %s", org_id, e, exc_info=True
             )
             return "error"
+
+    @staticmethod
+    def reconcile_plan_amount(db: Session, org_id: int) -> str:
+        """Retry a recurring-plan amount change that didn't land at add-on time.
+
+        When a location add-on bumps the quota but `update_subscription_plan_for_quota`
+        returned "error" (a transient Razorpay failure), the org keeps the higher quota
+        while the mandate still bills the OLD amount, and nothing retries it — a silent
+        revenue leak. The drift signature is `paid_location_quota < location_quota` with
+        no re-mandate pending. This re-runs the plan change and applies the SAME
+        bookkeeping the add-on handler does, so a healthy retry closes the gap and a UPI
+        mandate falls into the re-mandate flow. Commits on a definitive outcome; leaves
+        the drift for the next sweep on a repeat transient error. The caller locks `org`."""
+        org = db.query(Organization).filter(Organization.id == org_id).with_for_update().first()
+        if not org or not org.razorpay_subscription_id:
+            return "noop"
+        if org.subscription_needs_remandate:
+            return "noop"  # already in the re-mandate flow; not a stuck upgrade
+        prior_paid = org.paid_location_quota
+        if prior_paid is None or prior_paid >= (org.location_quota or 0):
+            return "noop"  # no drift
+
+        result = SubscriptionService.update_subscription_plan_for_quota(db, org_id)
+        if result == "upgraded":
+            org.subscription_needs_remandate = False
+            org.remandate_due_at = None
+            org.paid_location_quota = org.location_quota
+            db.commit()
+        elif result == "needs_remandate":
+            org.subscription_needs_remandate = True
+            org.paid_location_quota = prior_paid
+            due_base = org.ai_credits_reset_date
+            if not due_base:
+                cycle_days = _DAYS_IN_CYCLE.get(org.billing_cycle or "monthly", 30)
+                due_base = datetime.now(timezone.utc) + timedelta(days=cycle_days)
+            org.remandate_due_at = due_base + timedelta(days=3)
+            db.commit()
+        else:
+            db.rollback()  # "error"/"noop": leave drift for the next sweep
+        return result
 
     @staticmethod
     def reconcile_location_addon_payment(db: Session, org_id: int, payment_id: str) -> bool:

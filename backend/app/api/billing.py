@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -15,11 +16,19 @@ from app.services.billing.pricing_service import PricingService
 from app.services.billing.subscription_service import SubscriptionService
 from app.services.billing.webhook_service import WebhookService
 from app.services.billing.entitlement_service import EntitlementService
+from app.core.rate_limit import rate_limiter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 webhook_router = APIRouter()
+
+# Per-IP throttles. Webhook is generous (legit Razorpay bursts come from few IPs);
+# it mainly caps a single-source garbage/replay flood. Mutations are tighter — they
+# create Razorpay orders/subscriptions, so a runaway client or abusive admin can't
+# spray plan/order sprawl. Both fail open if Redis is down.
+_webhook_rate_limit = rate_limiter("razorpay_webhook", limit=1200, window_seconds=60)
+_billing_mutation_rate_limit = rate_limiter("billing_mutation", limit=60, window_seconds=60)
 
 class CheckoutRequest(BaseModel):
     location_count: int = 1
@@ -64,7 +73,7 @@ def get_quote(location_count: int, interval: str = "monthly", plan_tier: str = "
         monthly_ai_credits=PricingService.get_credits_for_locations(location_count, plan_tier),
     )
 
-@router.post("/checkout-subscription")
+@router.post("/checkout-subscription", dependencies=[Depends(_billing_mutation_rate_limit)])
 def checkout_subscription(
     request: CheckoutRequest,
     db: Session = Depends(get_db),
@@ -91,7 +100,7 @@ def checkout_subscription(
     )
     return {"subscription": subscription}
 
-@router.post("/buy-credits")
+@router.post("/buy-credits", dependencies=[Depends(_billing_mutation_rate_limit)])
 def buy_credits(
     request: BuyCreditsRequest,
     db: Session = Depends(get_db),
@@ -231,6 +240,12 @@ def get_billing_status(
         "needs_remandate": bool(org.subscription_needs_remandate),
         "remandate_due_at": org.remandate_due_at,
         "paid_location_quota": org.paid_location_quota,
+        # When the owner may next reassign which locations fill their paid slots (free,
+        # but rate-limited). NULL = available now.
+        "location_reassign_available_at": (
+            org.last_location_reassign_at + timedelta(days=plan_config.LOCATION_REASSIGN_COOLDOWN_DAYS)
+            if org.last_location_reassign_at else None
+        ),
     }
 
 
@@ -317,7 +332,7 @@ class UnlockLocationsRequest(BaseModel):
     location_ids: list[int]
 
 
-@router.post("/locations/unlock")
+@router.post("/locations/unlock", dependencies=[Depends(_billing_mutation_rate_limit)])
 def unlock_locations(
     request: UnlockLocationsRequest,
     db: Session = Depends(get_db),
@@ -349,13 +364,112 @@ def unlock_locations(
     return result
 
 
+class SetActiveLocationsRequest(BaseModel):
+    location_ids: list[int]
+
+
+@router.post("/locations/active", dependencies=[Depends(_billing_mutation_rate_limit)])
+def set_active_locations(
+    request: SetActiveLocationsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """Choose WHICH locations occupy the org's paid slots. Free, because the number of
+    paid slots (location_quota) doesn't change — the owner is only deciding which
+    locations are active. This is what lets an org that paid for fewer locations than it
+    has pick the ones to keep, instead of the system silently keeping the oldest by id.
+
+    The submitted set becomes 'active'; every other location in the org is set to
+    'pending_payment'. Going ABOVE quota still requires payment (see /locations/unlock)."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    desired = list(dict.fromkeys(request.location_ids))  # de-dupe, keep order
+
+    # Anti-IDOR + per-user scope: every id must belong to the caller's org.
+    from app.core.authorization import validate_location_access
+    validate_location_access(db, current_user, desired)
+
+    quota = org.location_quota or 0
+    if len(desired) > quota:
+        raise HTTPException(
+            status_code=409,
+            detail=f"exceeds_quota: your plan covers {quota} location(s). "
+                   f"Pay to add more before activating them.",
+        )
+
+    desired_set = set(desired)
+    locs = db.query(Location).filter(Location.organization_id == org.id).all()
+    current_active = {loc.id for loc in locs if loc.billing_status == "active"}
+
+    # Re-saving the SAME selection is a no-op — it must not start a cooldown, so a user
+    # can hit Save twice harmlessly.
+    if desired_set != current_active:
+        # Rate-limit real changes so active locations can't be cycled daily to farm
+        # per-location value beyond the paid quota. The automatic claw-back/conversion
+        # paths don't come through here, so they're naturally exempt.
+        from datetime import datetime, timezone, timedelta
+        cooldown = timedelta(days=plan_config.LOCATION_REASSIGN_COOLDOWN_DAYS)
+        last = org.last_location_reassign_at
+        # Normalise a possibly-naive stored timestamp to UTC so the subtraction below can't
+        # raise on a naive/aware mismatch (some drivers return naive datetimes).
+        if last is not None and last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if last is not None and (now - last) < cooldown:
+            available_at = last + cooldown
+            raise HTTPException(
+                status_code=429,
+                detail=f"reassign_cooldown: you can change your active locations again "
+                       f"on {available_at.date().isoformat()}.",
+            )
+        org.last_location_reassign_at = now
+
+    newly_active: list[int] = []
+    for loc in locs:
+        if loc.id in desired_set:
+            if loc.billing_status != "active":
+                loc.billing_status = "active"
+                newly_active.append(loc.id)
+        elif loc.billing_status != "pending_payment":
+            loc.billing_status = "pending_payment"
+    db.commit()
+
+    # Sync the freshly-activated locations (parity with the paid unlock path) so their
+    # data is fresh when they come back online. Best-effort — never blocks the change.
+    if newly_active:
+        try:
+            from app.worker import celery as celery_app
+            celery_app.send_task(
+                "app.tasks.sync_reviews_chunk_task",
+                args=[newly_active, org.id, "Manual", None],
+            )
+            for loc_id in newly_active:
+                celery_app.send_task("app.tasks.sync_location_attributes_task", args=[loc_id])
+        except Exception as e:
+            logger.error("Failed to enqueue sync for reactivated locations %s: %s", newly_active, e)
+
+    active_count = sum(1 for loc in locs if loc.billing_status == "active")
+    return {
+        "active_location_count": active_count,
+        "pending_location_count": len(locs) - active_count,
+        "location_quota": quota,
+        "reactivated": newly_active,
+    }
+
+
 class RemandateConfirmRequest(BaseModel):
     razorpay_payment_id: str
     razorpay_subscription_id: str
     razorpay_signature: str
 
 
-@router.post("/remandate")
+@router.post("/remandate", dependencies=[Depends(_billing_mutation_rate_limit)])
 def start_remandate(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -407,7 +521,7 @@ def confirm_remandate(
     return {"confirmed": True, "activated": activated}
 
 
-@webhook_router.post("/razorpay")
+@webhook_router.post("/razorpay", dependencies=[Depends(_webhook_rate_limit)])
 async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     """Receives Razorpay webhooks."""
     body = await request.body()

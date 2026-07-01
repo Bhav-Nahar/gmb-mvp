@@ -23,6 +23,7 @@ interface OrgRow {
   topup_ai_credits_balance: number | null
   trial_ends_at: string | null
   created_at: string
+  deleted_at: string | null
 }
 
 interface Metrics {
@@ -61,6 +62,7 @@ export default function AdminOrgsPage() {
   const [total, setTotal] = useState(0)
   const [q, setQ] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [showDeleted, setShowDeleted] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -71,6 +73,7 @@ export default function AdminOrgsPage() {
       const params: Record<string, string> = {}
       if (q.trim()) params.q = q.trim()
       if (statusFilter) params.subscription_status = statusFilter
+      if (showDeleted) params.deleted = 'only'
       const [m, list] = await Promise.all([
         api.get<Metrics>('/admin/metrics'),
         api.get<{ total: number; items: OrgRow[] }>('/admin/organizations', params),
@@ -85,8 +88,8 @@ export default function AdminOrgsPage() {
     }
   }
 
-  // Reload on status change; search submits via the form.
-  useEffect(() => { load() }, [statusFilter])
+  // Reload on status / trash toggle change; search submits via the form.
+  useEffect(() => { load() }, [statusFilter, showDeleted])
 
   const cards = metrics
     ? [
@@ -144,6 +147,12 @@ export default function AdminOrgsPage() {
           <option value="past_due">Past due</option>
           <option value="locked">Locked</option>
         </select>
+        <button
+          onClick={() => setShowDeleted((v) => !v)}
+          className={`rounded-lg border px-3 py-2 text-sm font-semibold ${showDeleted ? 'border-red-500/40 text-red-600 bg-red-500/10' : 'border-border bg-card hover:bg-muted/40'}`}
+        >
+          {showDeleted ? 'Showing deleted' : 'Trash'}
+        </button>
         <button onClick={load} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-muted/40">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
         </button>
@@ -169,7 +178,10 @@ export default function AdminOrgsPage() {
               {orgs.map((o) => (
                 <tr key={o.id} className="border-b border-border/60 hover:bg-muted/20">
                   <td className="px-4 py-3">
-                    <Link href={`/admin/${o.id}`} className="font-semibold hover:text-primary">{o.name}</Link>
+                    <Link href={`/admin/${o.id}`} className="font-semibold hover:text-primary">
+                      {o.name}
+                      {o.deleted_at && <span className="ml-2 text-[10px] font-bold uppercase text-red-600">deleted</span>}
+                    </Link>
                     <div className="text-[11px] text-muted-foreground">#{o.id}</div>
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={o.subscription_status} /></td>

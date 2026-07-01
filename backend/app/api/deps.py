@@ -55,9 +55,20 @@ def get_current_user(
         
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
-        
+
     if user.token_version != token_version:
         raise credentials_exception
+
+    # Soft-deleted accounts lose access immediately (a super-admin can still restore them
+    # within the grace window). Check the user, then their org (one indexed PK lookup) so
+    # deleting an org locks out every member without stamping each user row.
+    if user.deleted_at is not None:
+        raise HTTPException(status_code=403, detail="This account has been deleted.")
+    org_deleted = db.query(Organization.deleted_at).filter(
+        Organization.id == user.organization_id
+    ).scalar()
+    if org_deleted is not None:
+        raise HTTPException(status_code=403, detail="This account has been deleted.")
 
     # Super-admin workspace impersonation: a super-admin may operate inside another
     # org by sending X-Acting-Org. We override organization_id at the source so every

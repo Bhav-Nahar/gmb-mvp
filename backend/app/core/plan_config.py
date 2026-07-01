@@ -32,6 +32,24 @@ MAX_LOCATIONS = 500
 TRIAL_LOCATION_QUOTA = 3
 TRIAL_AI_CREDITS = 10
 
+# The trial clock (trial_ends_at) only starts on the first successful location sync,
+# so an org that signs up but never connects Google would stay an unexpiring trial
+# forever. Cap that: a trial still pending (trial_ends_at NULL) this many days after
+# signup is treated as expired.
+PENDING_TRIAL_MAX_DAYS = 14
+
+# Owners can reassign WHICH locations fill their paid slots for free, but only this
+# often. Without a limit, an org could cycle its active locations daily and farm
+# per-location value (syncs, posts, profile management) for far more locations than it
+# pays for. 30 days = "about once a month", which fits genuine reorganisation while
+# killing the daily-swap loophole. Re-saving the SAME selection is a no-op (no cooldown).
+LOCATION_REASSIGN_COOLDOWN_DAYS = 30
+
+# When a super-admin deletes an account (org or user), it's a SOFT delete: access is cut
+# off immediately but the data is kept this many days so it can be restored. After that a
+# daily task hard-purges it (cascade). "Bring it back within 14 days, else gone."
+ACCOUNT_PURGE_GRACE_DAYS = 14
+
 # AI credit top-up packs (one-time). Key is what the client sends; price/credits
 # are owned by the server so the client cannot manipulate them.
 AI_TOPUP_PACKS = {

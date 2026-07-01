@@ -100,6 +100,17 @@ celery.conf.beat_schedule = {
         "task": "app.tasks.enforce_upi_remandate_grace_task",
         "schedule": crontab(hour=4, minute=0), # Daily at 4AM UTC — re-lock past-grace UPI orgs
     },
+    "purge-soft-deleted-accounts": {
+        "task": "app.tasks.purge_soft_deleted_accounts_task",
+        "schedule": crontab(hour=3, minute=30), # Daily 3:30AM UTC — hard-purge accounts
+                            # soft-deleted longer than ACCOUNT_PURGE_GRACE_DAYS (14d).
+    },
+    "refill-annual-monthly-credits": {
+        "task": "app.tasks.refill_annual_monthly_credits_task",
+        "schedule": crontab(day_of_month="1", hour=0, minute=30), # 1st of month — annual
+                            # subs charge yearly, so this gives them their 12 monthly
+                            # credit grants. Monthly subs refill via subscription.charged.
+    },
     "generate-monthly-leaderboard-snapshots": {
         "task": "app.tasks_leaderboard.generate_monthly_leaderboard_snapshots_task",
         "schedule": crontab(day_of_month='3', hour=3, minute=0), # Monthly on the 3rd at 3AM UTC —
