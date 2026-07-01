@@ -173,7 +173,14 @@ function DashboardContent() {
   const [loadingLocations, setLoadingLocations] = useState(true)
   const [loadingLogs, setLoadingLogs] = useState(true)
   const [syncing, setSyncing] = useState(false)
-  
+  // Live progress of the location sync (polled from /locations/sync-status), so the UI
+  // reflects the real background job instead of a fixed timer.
+  const [syncProgress, setSyncProgress] = useState<null | {
+    sync_in_progress: boolean; last_sync_status: string | null; last_sync_error: string | null;
+    locations_total: number; locations_synced: number; locations_failed: number;
+  }>(null)
+  const syncPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Onboarding Sync states
   const [isOnboarding, setIsOnboarding] = useState(false)
   const [onboardingSuccess, setOnboardingSuccess] = useState(false)
@@ -645,24 +652,55 @@ function DashboardContent() {
     }
   }
 
+  // Poll the real sync state until the location phase finishes (or fails), instead of
+  // guessing with a fixed timer. Reviews/insights keep syncing in the background after.
+  const pollSyncStatus = () => {
+    if (syncPollRef.current) clearTimeout(syncPollRef.current)
+    let sawInProgress = false
+    let attempts = 0
+    const tick = async () => {
+      attempts++
+      let s: any = null
+      try { s = await api.get('/locations/sync-status') } catch { /* transient — retry */ }
+      if (s) {
+        setSyncProgress(s)
+        if (s.sync_in_progress) sawInProgress = true
+        // Finished once we've seen it running and it's no longer in progress. Grace of
+        // ~20s covers the gap between queueing and the worker picking the task up.
+        const finished = !s.sync_in_progress && (sawInProgress || attempts > 8)
+        if (finished) {
+          setSyncing(false)
+          if (s.last_sync_status === 'Failed') {
+            setErrorAlert(s.last_sync_error || 'Sync failed. Please try again.')
+          } else {
+            setSuccessAlert('Locations imported. Reviews & insights are updating in the background.')
+          }
+          loadLocations(); loadSyncLogs(); loadTokenStatus()
+          syncPollRef.current = setTimeout(() => setSyncProgress(null), 5000)
+          return
+        }
+      }
+      syncPollRef.current = setTimeout(tick, 2500)
+    }
+    tick()
+  }
+
   const handleTriggerSync = async () => {
     setSyncing(true)
     setErrorAlert('')
     setSuccessAlert('')
+    setSyncProgress(null)
     try {
-      const response: any = await api.post('/locations/sync')
-      setSuccessAlert(response.message || 'Synchronization task queued in background!')
-      setTimeout(() => {
-        loadLocations()
-        loadSyncLogs()
-        loadTokenStatus()
-        setSyncing(false)
-      }, 3000)
+      await api.post('/locations/sync')
+      pollSyncStatus()
     } catch (err: any) {
       setErrorAlert(err.message || 'Failed to trigger background synchronization.')
       setSyncing(false)
     }
   }
+
+  // Stop polling if the user navigates away mid-sync.
+  useEffect(() => () => { if (syncPollRef.current) clearTimeout(syncPollRef.current) }, [])
 
   // Get last successful sync timestamp — memoized to avoid recomputing on every render
   const getLastSyncedTime = useMemo(() => {
@@ -758,6 +796,32 @@ function DashboardContent() {
             <div className="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-sm font-semibold text-emerald-400 backdrop-blur-md shadow-sm">
               <CheckCircle2 className="h-5 w-5 shrink-0" />
               <span>{successAlert}</span>
+            </div>
+          )}
+
+          {/* Live sync progress — driven by the real background job, not a timer. */}
+          {syncProgress && (syncProgress.sync_in_progress || syncing) && (
+            <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 space-y-2 backdrop-blur-md shadow-sm">
+              <div className="flex items-center gap-3 text-sm font-semibold text-foreground">
+                <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                <span>
+                  Importing your locations…
+                  {syncProgress.locations_total > 0
+                    ? ` ${syncProgress.locations_synced} of ${syncProgress.locations_total}`
+                    : syncProgress.locations_synced > 0 ? ` ${syncProgress.locations_synced} imported` : ''}
+                </span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
+                <div
+                  className={`h-full rounded-full bg-primary transition-all duration-500 ${syncProgress.locations_total > 0 ? '' : 'w-1/3 animate-pulse'}`}
+                  style={syncProgress.locations_total > 0
+                    ? { width: `${Math.min(100, Math.round((syncProgress.locations_synced / syncProgress.locations_total) * 100))}%` }
+                    : undefined}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                This can take a few minutes. Reviews &amp; insights keep updating in the background — you can keep using the dashboard.
+              </p>
             </div>
           )}
 

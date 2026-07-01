@@ -28,6 +28,9 @@ export default function Sidebar({
     window.location.href = '/'
   }
 
+  // ponytail: nav shows every item to everyone (as before). Access is enforced on the
+  // backend (403) + a friendly upgrade interstitial on gated pages — we do NOT hide nav,
+  // since that surprised Basic/trial users by dropping Pro-only items like Local Rank.
   const menuItems = [
     { label: 'Dashboard', href: '/dashboard', icon: MapPin },
     { label: 'Leaderboard', href: '/dashboard/compare', icon: Trophy },

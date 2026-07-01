@@ -103,6 +103,22 @@ class RoleChecker:
             )
         return current_user
 
+def require_feature(feature: str):
+    """Dependency factory: 403 unless the caller's plan tier includes `feature`.
+    Central gate for tier-limited capabilities (scheduler, team, templates, auto_reply,
+    leaderboard, comparison, local_rank, microsite) — see plan_config.PLANS."""
+    from app.core import plan_config
+
+    def _dep(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> None:
+        org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+        if not org or not plan_config.plan_has_feature(org.plan_tier, feature):
+            raise HTTPException(
+                status_code=403,
+                detail=f"upgrade_required: your plan does not include {feature.replace('_', ' ')}.",
+            )
+    return _dep
+
+
 # Predefined role dependencies
 admin_required = RoleChecker(list(ADMIN_ROLES))
 staff_required = RoleChecker(list(STAFF_ROLES))

@@ -834,7 +834,8 @@ def enforce_upi_remandate_grace_task() -> str:
                     loc.billing_status = "pending_payment"
                     locked_locs += 1
                 org.location_quota = paid
-                org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(paid)
+                org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(
+                    paid, org.plan_tier or "basic", org.custom_credits_per_location)
                 # Resolved either way: entitled quota now matches the mandate.
                 org.subscription_needs_remandate = False
                 org.remandate_due_at = None
@@ -985,7 +986,7 @@ def refill_annual_monthly_credits_task() -> str:
                     db.rollback()
                     continue
                 org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(
-                    org.location_quota or 0, org.plan_tier or "basic"
+                    org.location_quota or 0, org.plan_tier or "basic", org.custom_credits_per_location
                 )
                 db.commit()
                 refilled += 1
@@ -1071,6 +1072,12 @@ def auto_reply_reviews_task(self, location_id: int, organization_id: int) -> dic
 
     db: Session = SessionLocal()
     try:
+        # Defense-in-depth: auto-reply is a paid capability (not on Lite). The enable
+        # endpoint is already gated, but skip here too so a lingering flag can't fire it.
+        from app.core import plan_config
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        if not org or not plan_config.plan_has_feature(org.plan_tier, plan_config.FEATURE_AUTO_REPLY):
+            return {"status": "skipped", "reason": "auto_reply not in plan"}
         return run_async(ReviewAutoReplyService(db).run(organization_id, location_id))
     finally:
         try:

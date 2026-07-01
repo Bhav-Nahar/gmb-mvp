@@ -17,6 +17,12 @@ class OrgUpdate(BaseModel):
     topup_ai_credits_balance: Optional[int] = Field(default=None, ge=0)
     trial_ends_at: Optional[datetime] = None
     grace_period_ends_at: Optional[datetime] = None
+    # Enterprise custom pricing (Flavor B: per-location). Both applied only when provided.
+    custom_price_paise: Optional[int] = Field(default=None, ge=0)          # per-location MONTHLY rate
+    custom_credits_per_location: Optional[int] = Field(default=None, ge=0)
+    # Set true to REMOVE custom pricing (back to standard tiers) — the fields above can't
+    # express "clear" via null, since null means "leave unchanged".
+    clear_custom_pricing: bool = False
     reason: Optional[str] = None
 
 

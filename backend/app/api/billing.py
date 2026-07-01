@@ -57,7 +57,11 @@ class ConfirmRequest(BaseModel):
 @router.get("/quote", response_model=QuoteResponse)
 def get_quote(location_count: int, interval: str = "monthly", plan_tier: str = "basic"):
     """Server-authoritative price for a location count + tier (for display).
-    Returns base, GST, and the GST-inclusive total that is actually charged."""
+    Returns base, GST, and the GST-inclusive total that is actually charged.
+
+    PUBLIC (no auth) — the marketing homepage pricing calls this while logged out, so it
+    must stay unauthenticated and standard-tier. Enterprise custom pricing is reflected at
+    checkout and in /billing/status, not in this public quote."""
     if plan_tier not in plan_config.PLANS:
         raise HTTPException(status_code=400, detail="Unknown plan tier")
     base = PricingService.compute_price_paise(location_count, interval, plan_tier)
@@ -215,13 +219,15 @@ def get_billing_status(
         "plan": org.plan,
         "plan_tier": org.plan_tier,
         "features": plan_config.get_plan(org.plan_tier).get("features", []),
+        # Numeric caps for this tier (absent/None = unlimited) so the UI can gate accordingly.
+        "limits": plan_config.get_plan(org.plan_tier).get("limits", {}),
         "subscription_status": org.subscription_status,
         "monthly_ai_credits_balance": org.monthly_ai_credits_balance,
         # Monthly allowance = the full grant the org gets each cycle, used as the
         # denominator for the usage bar. For a paid org this scales with quota; on
         # the trial it is the flat trial grant.
         "monthly_ai_credits_allowance": (
-            org.location_quota * plan_config.get_plan(org.plan_tier)["credits_per_location"]
+            PricingService.get_credits_for_locations(org.location_quota, org.plan_tier, org.custom_credits_per_location)
             if org.plan == "active" and org.location_quota
             else plan_config.TRIAL_AI_CREDITS
         ),

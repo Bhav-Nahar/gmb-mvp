@@ -191,6 +191,18 @@ def _csv_safe(value):
         return "'" + value
     return value
 
+def _insights_start_floor(db, current_user, end_date):
+    """Earliest insights date a tier may view (Lite is capped to insights_days).
+    Returns None when the tier has no cap."""
+    from app.core import plan_config
+    from app.models.organization import Organization
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    max_days = plan_config.plan_limit(org.plan_tier if org else None, plan_config.LIMIT_INSIGHTS_DAYS)
+    if max_days is None:
+        return None
+    return end_date - datetime.timedelta(days=max_days - 1)
+
+
 @router.get("/overview", response_model=InsightsOverviewResponse)
 def get_insights_overview(
     start_date: Optional[datetime.date] = None,
@@ -209,6 +221,11 @@ def get_insights_overview(
         end_date = datetime.date.today() - datetime.timedelta(days=1)
     if not start_date:
         start_date = end_date - datetime.timedelta(days=29)
+
+    # Tier cap (Lite = last 7 days): never let the window reach further back than allowed.
+    _floor = _insights_start_floor(db, current_user, end_date)
+    if _floor and start_date < _floor:
+        start_date = _floor
 
     if start_date > end_date:
         raise HTTPException(
@@ -723,6 +740,11 @@ def get_location_insights(
         end_date = datetime.date.today() - datetime.timedelta(days=1)
     if not start_date:
         start_date = end_date - datetime.timedelta(days=29)
+
+    # Tier cap (Lite = last 7 days): never let the window reach further back than allowed.
+    _floor = _insights_start_floor(db, current_user, end_date)
+    if _floor and start_date < _floor:
+        start_date = _floor
 
     if start_date > end_date:
         raise HTTPException(
@@ -1271,6 +1293,16 @@ def get_search_keywords(
     """Top keywords aggregated across a month window (impressions summed per
     keyword). `start_period`/`end_period` are month dates; `period_start` is a
     legacy single-month alias."""
+    # Tier cap (Lite = top N queries): pin to the first page and clamp the page size, so a
+    # capped tier only ever sees the top N keywords.
+    from app.core import plan_config
+    from app.models.organization import Organization
+    _org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    _cap = plan_config.plan_limit(_org.plan_tier if _org else None, plan_config.LIMIT_SEARCH_QUERIES)
+    if _cap is not None:
+        page = 1
+        page_size = min(page_size, _cap)
+
     allowed_ids = deps.get_user_location_ids(current_user, db)
     if allowed_ids is not None and not allowed_ids:
         return KeywordMetricsResponse(items=[], total=0, page=page, page_size=page_size)
@@ -1393,6 +1425,14 @@ def export_search_keywords(
     """
     Export search keywords (per-month rows) to CSV.
     """
+    # Capped tiers (Lite) can view only the top N queries, so a full CSV export would
+    # bypass that cap — block it and point them to upgrade.
+    from app.core import plan_config
+    from app.models.organization import Organization
+    _org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if plan_config.plan_limit(_org.plan_tier if _org else None, plan_config.LIMIT_SEARCH_QUERIES) is not None:
+        raise HTTPException(status_code=403, detail="upgrade_required: exporting keywords isn't on your plan.")
+
     allowed_ids = deps.get_user_location_ids(current_user, db)
     if allowed_ids is not None and not allowed_ids:
         # No accessible locations -> empty export rather than leaking other orgs.

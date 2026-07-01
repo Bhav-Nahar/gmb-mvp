@@ -209,6 +209,29 @@ def invite_user(
     """
     Invite a new team member to join the active organization.
     """
+    # Plan gate: team management is a paid capability, and each tier caps total seats.
+    from app.core import plan_config
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    tier = org.plan_tier if org else None
+    if not plan_config.plan_has_feature(tier, plan_config.FEATURE_TEAM):
+        raise HTTPException(status_code=403, detail="upgrade_required: your plan does not include team members.")
+    max_seats = plan_config.plan_limit(tier, plan_config.LIMIT_MAX_SEATS)
+    if max_seats is not None:
+        # Count existing members + outstanding invites against the seat cap.
+        current_members = db.query(User).filter(
+            User.organization_id == current_user.organization_id,
+            User.deleted_at.is_(None),
+        ).count()
+        pending_invites = db.query(Invite).filter(
+            Invite.organization_id == current_user.organization_id,
+            Invite.status == "pending",
+        ).count()
+        if current_members + pending_invites >= max_seats:
+            raise HTTPException(
+                status_code=403,
+                detail=f"seat_limit: the {tier} plan includes {max_seats} seat(s). Upgrade to add team members.",
+            )
+
     if current_user.role == Role.REGIONAL_MANAGER:
         if invite_in.role != Role.STORE_MANAGER:
             raise HTTPException(status_code=403, detail="Regional Managers can only invite Store Managers.")

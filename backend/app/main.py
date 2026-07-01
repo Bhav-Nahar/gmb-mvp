@@ -11,7 +11,8 @@ from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
 from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays
 from app.api.endpoints import comparison
-from app.api.deps import check_csrf, check_billing_lock
+from app.api.deps import check_csrf, check_billing_lock, require_feature
+from app.core import plan_config
 from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
@@ -132,10 +133,13 @@ app.include_router(location_media.router, prefix="/api/v1", tags=["Location Medi
 app.include_router(insights.router, prefix="/api/v1/insights", tags=["Insights"])
 app.include_router(billing.router, prefix="/api/v1/billing", tags=["Billing"])
 app.include_router(billing.webhook_router, prefix="/api/v1/webhooks", tags=["Webhooks"])
-app.include_router(reply_templates.router, prefix="/api/v1/reply-templates", tags=["Reply Templates"])
+app.include_router(reply_templates.router, prefix="/api/v1/reply-templates", tags=["Reply Templates"],
+                   dependencies=[Depends(require_feature(plan_config.FEATURE_TEMPLATES))])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
-app.include_router(leaderboard.router, prefix="/api/v1/leaderboard", tags=["Leaderboard"])
-app.include_router(comparison.router, prefix="/api/v1/comparison", tags=["Comparison"])
+app.include_router(leaderboard.router, prefix="/api/v1/leaderboard", tags=["Leaderboard"],
+                   dependencies=[Depends(require_feature(plan_config.FEATURE_LEADERBOARD))])
+app.include_router(comparison.router, prefix="/api/v1/comparison", tags=["Comparison"],
+                   dependencies=[Depends(require_feature(plan_config.FEATURE_COMPARISON))])
 
 @app.on_event("startup")
 async def on_startup():

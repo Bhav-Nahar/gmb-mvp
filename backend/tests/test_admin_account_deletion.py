@@ -22,10 +22,14 @@ from app.core.security import create_access_token
 from app.models.organization import Organization
 from app.models.user import User
 
-if "app.worker" not in sys.modules:
-    _fw = types.ModuleType("app.worker")
-    _fw.celery = MagicMock()
-    sys.modules["app.worker"] = _fw
+import app as _app_pkg
+try:
+    import app.worker  # real celery app; also sets the app.worker attribute for patch()
+except Exception:
+    if "app.worker" not in sys.modules:
+        _fw = types.ModuleType("app.worker"); _fw.celery = MagicMock()
+        sys.modules["app.worker"] = _fw
+    _app_pkg.worker = sys.modules["app.worker"]
 
 
 @compiles(JSONB, "sqlite")

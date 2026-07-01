@@ -216,7 +216,8 @@ class WebhookService:
 
         if effective_count and effective_count > 0:
             org.location_quota = effective_count
-            org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(effective_count, org.plan_tier or "basic")
+            org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(
+                effective_count, org.plan_tier or "basic", org.custom_credits_per_location)
 
             # Keep paid_location_quota in step with what the mandate actually bills.
             # For a healthy charge that equals the entitled quota, the mandate is paying
@@ -584,7 +585,7 @@ class WebhookService:
         if granted > 0:
             org.location_quota = (org.location_quota or 0) + granted
             org.monthly_ai_credits_balance = (org.monthly_ai_credits_balance or 0) \
-                + granted * plan_config.get_plan(org.plan_tier)["credits_per_location"]
+                + PricingService.get_credits_for_locations(granted, org.plan_tier, org.custom_credits_per_location)
 
         # A duplicate/racing add-on order can be paid AFTER its locations were already
         # unlocked by another payment, so we unlock fewer than were billed (granted <

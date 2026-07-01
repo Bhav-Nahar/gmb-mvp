@@ -59,6 +59,13 @@ class Organization(Base):
     # its cascade children) is hard-purged after ACCOUNT_PURGE_GRACE_DAYS. NULL = live.
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Enterprise custom pricing (set by a super-admin). Both NULL = standard tier pricing.
+    #   custom_price_paise: negotiated per-location MONTHLY rate (paise/location). Replaces
+    #     the graduated tiers; annual = rate * 12 (no annual discount for negotiated deals).
+    #   custom_credits_per_location: AI credits granted per location (replaces the tier's).
+    custom_price_paise = Column(Integer, nullable=True)
+    custom_credits_per_location = Column(Integer, nullable=True)
+
     # Marketing attribution, captured first-touch from the browser at signup and used
     # for server-side conversions (Meta CAPI / Google Ads). First-touch wins: a column
     # is only written if currently NULL (see /users/me/attribution).

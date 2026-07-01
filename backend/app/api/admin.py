@@ -43,6 +43,8 @@ _ORG_EDITABLE = [
     "topup_ai_credits_balance",
     "trial_ends_at",
     "grace_period_ends_at",
+    "custom_price_paise",
+    "custom_credits_per_location",
 ]
 
 
@@ -190,6 +192,8 @@ def get_organization(org_id: int, db: Session = Depends(get_db), _: User = Depen
         "subscription_needs_remandate": org.subscription_needs_remandate,
         "paid_location_quota": org.paid_location_quota,
         "remandate_due_at": org.remandate_due_at,
+        "custom_price_paise": org.custom_price_paise,
+        "custom_credits_per_location": org.custom_credits_per_location,
     })
 
     return {
@@ -261,14 +265,21 @@ def update_organization(
         raise HTTPException(status_code=400, detail=f"Invalid subscription_status. Allowed: {sorted(VALID_SUBSCRIPTION_STATUSES)}")
 
     changes = {}
-    for field in _ORG_EDITABLE:
-        new = getattr(payload, field)
-        if new is None:
-            continue
-        old = getattr(org, field)
-        if old != new:
-            changes[field] = {"old": old, "new": new}
-            setattr(org, field, new)
+    # Clearing custom pricing wins over any per-field values in the same request.
+    if payload.clear_custom_pricing:
+        for field in ("custom_price_paise", "custom_credits_per_location"):
+            if getattr(org, field) is not None:
+                changes[field] = {"old": getattr(org, field), "new": None}
+                setattr(org, field, None)
+    else:
+        for field in _ORG_EDITABLE:
+            new = getattr(payload, field)
+            if new is None:
+                continue
+            old = getattr(org, field)
+            if old != new:
+                changes[field] = {"old": old, "new": new}
+                setattr(org, field, new)
 
     if not changes:
         raise HTTPException(status_code=400, detail="No changes provided")
@@ -276,7 +287,34 @@ def update_organization(
     _audit(db, actor=admin, organization_id=org.id, action="superadmin.org_update",
            changes=changes, reason=payload.reason)
     db.commit()
-    return {"message": "Organization updated", "changes": changes}
+
+    # If the per-location PRICE changed and the org is already on an active subscription,
+    # schedule the new amount on their Razorpay plan at CYCLE END — so it takes effect at
+    # the next renewal, never mid-cycle. (New clients with no subscription yet just get
+    # billed the custom rate when they check out; credits-only changes need no plan edit —
+    # they apply on the next charge.)
+    plan_change = None
+    if "custom_price_paise" in changes and org.razorpay_subscription_id \
+            and org.subscription_status == "active" and (org.location_quota or 0) >= 1:
+        from app.services.billing.subscription_service import SubscriptionService
+        try:
+            plan_change = SubscriptionService.update_subscription_plan_for_quota(db, org.id)
+            db.commit()
+        except Exception as e:
+            logger.error("Custom-price plan reschedule failed for org %s: %s", org.id, e)
+            plan_change = "error"
+
+    msg = "Organization updated"
+    if plan_change == "upgraded":
+        msg = "Organization updated — new price takes effect at the next renewal."
+    elif plan_change == "needs_remandate":
+        msg = ("Organization updated, but this client pays via UPI Autopay — Razorpay can't "
+               "change the amount automatically. They must approve a new mandate for the new "
+               "price; the old amount keeps billing until they do.")
+    elif plan_change == "error":
+        msg = ("Organization updated, but scheduling the new price on their subscription failed "
+               "(transient Razorpay error). Re-save to retry.")
+    return {"message": msg, "changes": changes, "plan_change": plan_change}
 
 
 @router.patch("/users/{user_id}")

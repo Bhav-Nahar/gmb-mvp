@@ -62,24 +62,59 @@ AI_TOPUP_PACKS = {
 GST_RATE = 0.18
 
 # ---------------------------------------------------------------------------
-# Plan tiers. The `plan_tier` column on the organization selects one. `features`
-# gates premium features (Local Rank is the first); `credits_per_location` and
-# `price_tiers` let each tier grant/charge differently. Everything tweakable here.
+# Plan tiers. The `plan_tier` column on the organization selects one.
+#   features: capability flags this tier unlocks (gated across the app).
+#   limits:   numeric caps for this tier (None/absent = unlimited).
+#   price_tiers / credits_per_location: how the tier charges / grants.
 # NOTE: kept separate from the `plan` column, which remains the trial/active
 # billing-STATE flag — `plan_tier` is the product TIER, so neither overloads the other.
 # ---------------------------------------------------------------------------
+# Capability flags (a tier's `features` list unlocks these).
+FEATURE_SCHEDULER = "scheduler"        # scheduling posts for the future (else post-now only)
+FEATURE_TEAM = "team"                  # inviting team members / RBAC beyond the owner
+FEATURE_TEMPLATES = "reply_templates"  # saved reply templates
+FEATURE_AUTO_REPLY = "auto_reply"      # automated review replies + their email notifications
+FEATURE_LEADERBOARD = "leaderboard"    # monthly leaderboard / rankings
+FEATURE_COMPARISON = "comparison"      # competitor / location comparison
+FEATURE_LOCAL_RANK = "local_rank"      # geo-grid rank scans
+FEATURE_MICROSITE = "microsite"        # published microsite
+
+# Limit keys (a tier's `limits` dict caps these; absent = unlimited).
+LIMIT_MAX_LOCATIONS = "max_locations"
+LIMIT_MAX_SEATS = "max_seats"
+LIMIT_SEARCH_QUERIES = "search_query_limit"  # Search Intelligence rows shown
+LIMIT_INSIGHTS_DAYS = "insights_days"        # how far back insights may look
+
+# Full-tier feature sets (Basic/Pro keep everything they have today so they never regress).
+_STANDARD_FEATURES = [FEATURE_SCHEDULER, FEATURE_TEAM, FEATURE_TEMPLATES, FEATURE_AUTO_REPLY,
+                      FEATURE_LEADERBOARD, FEATURE_COMPARISON]
+
 PLANS = {
+    "lite": {
+        "name": "Lite",
+        "price_tiers": [(None, 99_900)],   # flat ₹999 / location
+        "credits_per_location": 10,
+        "features": [],                    # none of the premium capabilities
+        "limits": {
+            LIMIT_MAX_LOCATIONS: 1,        # single-location small business (anti-cannibalization)
+            LIMIT_MAX_SEATS: 1,            # owner only
+            LIMIT_SEARCH_QUERIES: 10,      # top 10 search-intelligence queries
+            LIMIT_INSIGHTS_DAYS: 7,        # last 7 days of insights
+        },
+    },
     "basic": {
         "name": "Basic",
         "price_tiers": LOCATION_PRICE_TIERS,            # current graduated pricing
         "credits_per_location": CREDITS_PER_LOCATION,   # 30
-        "features": [],
+        "features": list(_STANDARD_FEATURES),
+        "limits": {},
     },
     "pro": {
         "name": "Pro",
         "price_tiers": [(10, 300_000), (25, 250_000), (None, 200_000)],  # ~₹500/loc more
         "credits_per_location": 45,
-        "features": ["local_rank", "microsite"],
+        "features": _STANDARD_FEATURES + [FEATURE_LOCAL_RANK, FEATURE_MICROSITE],
+        "limits": {},
     },
 }
 DEFAULT_PLAN_TIER = "basic"
@@ -91,6 +126,11 @@ def get_plan(plan_tier: str | None) -> dict:
 
 def plan_has_feature(plan_tier: str | None, feature: str) -> bool:
     return feature in get_plan(plan_tier).get("features", [])
+
+
+def plan_limit(plan_tier: str | None, key: str, default=None):
+    """Numeric cap for a tier (None/absent = unlimited)."""
+    return get_plan(plan_tier).get("limits", {}).get(key, default)
 
 
 def price_with_gst(price_paise: int) -> dict:

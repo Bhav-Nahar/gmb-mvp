@@ -82,7 +82,8 @@ class SubscriptionService:
             raise HTTPException(status_code=500, detail=f"Failed to create Razorpay customer: {str(e)}")
 
     @staticmethod
-    def _get_or_create_plan(db: Session, location_count: int, interval: str, plan_tier: str = "basic") -> str:
+    def _get_or_create_plan(db: Session, location_count: int, interval: str, plan_tier: str = "basic",
+                            custom_per_location_paise: int | None = None) -> str:
         """Get-or-create a Razorpay plan for this (location_count, interval, amount).
 
         Plan ids are cached durably in the razorpay_plans table so repeated/cold
@@ -93,7 +94,7 @@ class SubscriptionService:
         on a stale cached plan."""
         from app.models.razorpay_plan import RazorpayPlan
 
-        base = PricingService.compute_price_paise(location_count, interval, plan_tier)
+        base = PricingService.compute_price_paise(location_count, interval, plan_tier, custom_per_location_paise)
         amount = plan_config.price_with_gst(base)["total_paise"]  # GST-inclusive: what Razorpay bills
         current_mode = SubscriptionService._current_mode()
 
@@ -172,11 +173,25 @@ class SubscriptionService:
             raise HTTPException(status_code=400, detail="interval must be 'monthly' or 'annual'")
         if plan_tier not in plan_config.PLANS:
             raise HTTPException(status_code=400, detail="Unknown plan tier")
+        # Per-tier location ceiling (e.g. Lite = 1). Keeps a cheap small-business tier from
+        # being bought N times to undercut the multi-location tiers.
+        tier_max = plan_config.plan_limit(plan_tier, plan_config.LIMIT_MAX_LOCATIONS)
+        if tier_max is not None and location_count > tier_max:
+            raise HTTPException(
+                status_code=400,
+                detail=f"tier_location_limit: the {plan_tier} plan supports up to {tier_max} "
+                       f"location(s). Choose a higher plan for more.",
+            )
+
+        # Enterprise custom pricing (per-location rate / credits) overrides the tiers.
+        _org = db.query(Organization).filter(Organization.id == org_id).first()
+        custom_rate = _org.custom_price_paise if _org else None
+        custom_credits = _org.custom_credits_per_location if _org else None
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
-        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier)
+        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier, custom_rate)
         client = SubscriptionService.get_razorpay_client()
-        credits = PricingService.get_credits_for_locations(location_count, plan_tier)
+        credits = PricingService.get_credits_for_locations(location_count, plan_tier, custom_credits)
 
         try:
             subscription = client.subscription.create(data={
@@ -229,9 +244,10 @@ class SubscriptionService:
         PricingService.validate_location_count(location_count)
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
-        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier)
+        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier,
+                                                          org.custom_price_paise)
         client = SubscriptionService.get_razorpay_client()
-        credits = PricingService.get_credits_for_locations(location_count, plan_tier)
+        credits = PricingService.get_credits_for_locations(location_count, plan_tier, org.custom_credits_per_location)
 
         # Reuse an outstanding pending mandate instead of stacking a second one that
         # would double-bill. A pending mandate is still reusable only while it is
@@ -363,7 +379,8 @@ class SubscriptionService:
         current_quota = org.location_quota if org.location_quota is not None else plan_config.TRIAL_LOCATION_QUOTA
         days_left, days_in_cycle = SubscriptionService._cycle_days_remaining(org, interval)
 
-        base_amount = PricingService.prorated_addon_paise(current_quota, added, interval, days_left, days_in_cycle, tier)
+        base_amount = PricingService.prorated_addon_paise(current_quota, added, interval, days_left,
+                                                          days_in_cycle, tier, org.custom_price_paise)
         if added > 0:
             base_amount = max(base_amount, _MIN_ORDER_PAISE)
         gst = plan_config.price_with_gst(base_amount)
@@ -377,7 +394,7 @@ class SubscriptionService:
             "amount_paise": gst["total_paise"],   # GST-inclusive — what the order charges
             "base_paise": gst["base_paise"],
             "gst_paise": gst["gst_paise"],
-            "credits_granted": added * plan_config.get_plan(tier)["credits_per_location"],
+            "credits_granted": PricingService.get_credits_for_locations(added, tier, org.custom_credits_per_location),
         }
 
     @staticmethod
@@ -404,6 +421,14 @@ class SubscriptionService:
             raise HTTPException(
                 status_code=409,
                 detail="remandate_pending: approve the pending mandate before adding more locations.",
+            )
+        # Per-tier location ceiling: adding these would exceed what the plan allows.
+        tier_max = plan_config.plan_limit(org.plan_tier, plan_config.LIMIT_MAX_LOCATIONS)
+        if tier_max is not None and (org.location_quota or 0) + quote["added"] > tier_max:
+            raise HTTPException(
+                status_code=409,
+                detail=f"tier_location_limit: the {org.plan_tier} plan supports up to {tier_max} "
+                       f"location(s). Upgrade to add more.",
             )
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
@@ -446,7 +471,7 @@ class SubscriptionService:
             return "noop"
         interval = org.billing_cycle or "monthly"
         try:
-            new_plan_id = SubscriptionService._get_or_create_plan(db, org.location_quota, interval, org.plan_tier or "basic")
+            new_plan_id = SubscriptionService._get_or_create_plan(db, org.location_quota, interval, org.plan_tier or "basic", org.custom_price_paise)
             client = SubscriptionService.get_razorpay_client()
             # The razorpay SDK exposes the PATCH /subscriptions/{id} call as `edit`
             # (there is no `update` method) — using the wrong name silently raised
