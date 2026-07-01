@@ -91,6 +91,46 @@ def get_sync_logs(
     logs = query.order_by(SyncLog.created_at.desc()).offset((page - 1) * size).limit(size).all()
     return {"items": logs, "total": total, "page": page, "size": size}
 
+# NOTE: declared before the "/{location_id}" routes so the literal path isn't captured
+# as a location_id.
+@router.get("/sync-status")
+def get_org_sync_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Org-level sync progress that drives the live 'Syncing…' UI.
+
+    `sync_in_progress` reflects the LOCATION phase (what the Sync button kicks off);
+    reviews, attributes and media sync as separate background tasks AFTER it, so once
+    `sync_in_progress` is False the user can use the dashboard while those finish.
+    Read-only; any org member may poll it."""
+    from app.models.organization_sync_state import OrganizationSyncState
+    org_id = current_user.organization_id
+    state = db.query(OrganizationSyncState).filter(
+        OrganizationSyncState.organization_id == org_id
+    ).first()
+    total = db.query(func.count(Location.id)).filter(
+        Location.organization_id == org_id
+    ).scalar() or 0
+    synced = db.query(func.count(Location.id)).filter(
+        Location.organization_id == org_id, Location.sync_status == "Synced"
+    ).scalar() or 0
+    failed = db.query(func.count(Location.id)).filter(
+        Location.organization_id == org_id, Location.sync_status == "Failed"
+    ).scalar() or 0
+    return {
+        "sync_in_progress": bool(state.sync_in_progress) if state else False,
+        "last_sync_status": state.last_sync_status if state else None,
+        "last_sync_error": state.last_sync_error if state else None,
+        "sync_started_at": state.sync_started_at if state else None,
+        "last_location_sync_at": state.last_location_sync_at if state else None,
+        # Locations discovered/imported so far (total grows as the first sync creates them).
+        "locations_total": total,
+        "locations_synced": synced,
+        "locations_failed": failed,
+        "ever_synced": bool(state and state.last_location_sync_at),
+    }
+
 @router.get("/sla-summary", response_model=List[LocationSLASummary])
 async def get_locations_sla_summary(
     db: Session = Depends(get_db),
