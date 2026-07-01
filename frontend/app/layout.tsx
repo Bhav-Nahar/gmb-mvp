@@ -14,7 +14,7 @@ const inter = Inter({subsets:['latin'],variable:'--font-sans'});
 import { BillingProvider } from "@/components/billing/BillingProvider";
 
 export const metadata: Metadata = {
-  title: 'Pinzo — Manage every Google Business Profile from one dashboard',
+  title: 'Pinzo | Manage every Google Business Profile from one dashboard',
   description: 'Centralize reviews, AI-assisted replies, multi-location Google Posts, analytics, audits, and team roles for all your Google Business Profile locations. Secure Google OAuth. 7-day free trial, no card required.',
   applicationName: 'Pinzo',
   keywords: ['Google Business Profile', 'GBP management', 'local SEO', 'review management', 'multi-location', 'Google Posts'],
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     icon: '/icon.jpg',
   },
   openGraph: {
-    title: 'Pinzo — Manage every Google Business Profile from one dashboard',
+    title: 'Pinzo | Manage every Google Business Profile from one dashboard',
     description: 'Reviews, AI replies, Google Posts, analytics, audits and team roles for every location. Secure Google OAuth. 7-day free trial.',
     siteName: 'Pinzo',
     type: 'website',

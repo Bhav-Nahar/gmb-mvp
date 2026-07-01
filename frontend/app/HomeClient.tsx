@@ -25,7 +25,6 @@ import {
   Building,
   Clock,
   ChevronDown,
-  MessageCircle,
   Plug,
   LayoutDashboard,
   ShieldCheck,
@@ -69,6 +68,16 @@ function Reveal({ children, delay = 0, className = '' }: { children: React.React
     >
       {children}
     </div>
+  )
+}
+
+// Official WhatsApp glyph (lucide has no brand icon). Used on the Enterprise CTA
+// and the floating chat button so both show the real logo, not a generic bubble.
+function WhatsAppIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={`${className} fill-current`} aria-hidden>
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.999-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" />
+    </svg>
   )
 }
 
@@ -293,6 +302,63 @@ function RankTrend() {
   )
 }
 
+// AuditPreview: static mockup of the audit result the paid hero promises — a Health
+// Score + branch-wise scores + concrete findings. No animation loop; it's a product
+// snapshot a business owner reads instantly, not the technical rank heatmap.
+function AuditPreview() {
+  const branches = [
+    { name: 'Andheri West', score: 82, label: 'Good', tone: 'text-emerald-600 bg-emerald-500/10' },
+    { name: 'Bandra Kurla', score: 61, label: 'Needs work', tone: 'text-amber-600 bg-amber-500/10' },
+    { name: 'Powai', score: 48, label: 'At risk', tone: 'text-rose-600 bg-rose-500/10' },
+  ]
+  const findings = [
+    { icon: Search, text: '8 missing services across locations' },
+    { icon: MessageSquare, text: '23 reviews waiting for a reply' },
+    { icon: Star, text: '2 branches rated below 4.0' },
+  ]
+  return (
+    <div className="rounded-2xl border border-border bg-card p-6 shadow-lg">
+      <div className="mb-4 flex items-center justify-between">
+        <span className="flex items-center gap-2 text-xs font-bold text-foreground"><Building className="h-4 w-4 text-primary" />Your GBP audit</span>
+        <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">3 locations</span>
+      </div>
+      {/* Health score ring */}
+      <div className="mb-5 flex items-center gap-4">
+        <div className="relative h-20 w-20 shrink-0 rounded-full" style={{ background: 'conic-gradient(hsl(var(--primary)) 234deg, hsl(var(--muted)) 0)' }}>
+          <div className="absolute inset-[7px] flex flex-col items-center justify-center rounded-full bg-card">
+            <span className="text-xl font-extrabold leading-none text-foreground">65</span>
+            <span className="text-[8px] font-semibold text-muted-foreground">/ 100</span>
+          </div>
+        </div>
+        <div>
+          <p className="text-sm font-bold text-foreground">Avg Health Score</p>
+          <p className="text-xs text-muted-foreground">Room to grow. Here is what to fix first.</p>
+        </div>
+      </div>
+      {/* Branch-wise scores */}
+      <div className="space-y-2">
+        {branches.map((b) => (
+          <div key={b.name} className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+            <span className="flex items-center gap-2 text-xs font-semibold text-foreground"><MapPin className="h-3.5 w-3.5 text-muted-foreground" />{b.name}</span>
+            <span className="flex items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${b.tone}`}>{b.label}</span>
+              <span className="w-6 text-right text-xs font-extrabold tabular-nums text-foreground">{b.score}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+      {/* Findings */}
+      <div className="mt-4 space-y-2 border-t border-border pt-4">
+        {findings.map((f) => (
+          <div key={f.text} className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <f.icon className="h-4 w-4 shrink-0 text-primary" />{f.text}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // Mini leaderboard used in the bento grid.
 const LEADERS = [
   { rank: 1, name: 'Downtown Hub', score: 94, up: true },
@@ -309,7 +375,11 @@ const BUILT_FOR = [
   { name: 'Retail Chains', icon: Users },
 ]
 
-export default function HomeClient() {
+// variant 'paid' = the ad-campaign landing page (/google-business-profile-management):
+// same login/trial funnel, audit-framed hero copy + CTA. dataLayer already tags each
+// event with page_path, so paid conversions separate from the homepage on their own.
+export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'paid' } = {}) {
+  const paid = variant === 'paid'
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
 
@@ -346,11 +416,11 @@ export default function HomeClient() {
   }
 
   const GoogleIcon = ({ className = 'h-5 w-5' }: { className?: string }) => (
-    <svg className={`${className} shrink-0`} viewBox="0 0 24 24">
-      <path fill="#EA4335" d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114A5.99 5.99 0 0 1 8 12.5a5.99 5.99 0 0 1 5.99-6.015c1.474 0 2.812.538 3.854 1.424l3.22-3.22A10.93 10.93 0 0 0 13.99 2 10.99 10.99 0 0 0 3 13c0 6.075 4.925 11 10.99 11 5.753 0 10.457-4.143 10.94-9.673H12.24Z" />
-      <path fill="#FBBC05" d="M13.99 2a10.93 10.93 0 0 0-7.045 2.58l3.22 3.22A5.99 5.99 0 0 1 13.99 5.985V2Z" />
-      <path fill="#34A853" d="M3 13c0 2.215.656 4.275 1.785 6.015l3.22-3.22A5.99 5.99 0 0 1 8 12.5c0-1.282.4-2.472 1.085-3.465L5.865 5.815A10.93 10.93 0 0 0 3 13Z" />
-      <path fill="#4285F4" d="M13.99 24c3.045 0 5.81-1.233 7.82-3.225l-3.22-3.22A5.99 5.99 0 0 1 13.99 18.5a5.99 5.99 0 0 1-5.99-6.015c0-.46.057-.905.158-1.332L4.938 7.913A10.97 10.97 0 0 0 13.99 24Z" />
+    <svg className={`${className} shrink-0`} viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
     </svg>
   )
 
@@ -411,24 +481,31 @@ export default function HomeClient() {
           <Reveal>
             <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3.5 py-1 text-xs font-semibold text-primary">
               <Sparkles className="h-3.5 w-3.5" />
-              <span>Operational engine for multi-location GMB SEO</span>
+              <span>{paid ? 'Free GBP audit in 60 seconds' : 'Operational engine for multi-location GMB SEO'}</span>
             </div>
           </Reveal>
           <Reveal delay={80}>
             <h1 className="text-4xl font-extrabold tracking-tight text-foreground sm:text-5xl lg:text-6xl">
-              Every Google Business Profile.{' '}
-              <span className="text-primary">One command center.</span>
+              {paid ? (
+                <>Audit every Google Business Profile{' '}
+                  <span className="text-primary">in 60 seconds.</span></>
+              ) : (
+                <>Every Google Business Profile.{' '}
+                  <span className="text-primary">One command center.</span></>
+              )}
             </h1>
           </Reveal>
           <Reveal delay={160}>
             <p className="mx-auto max-w-xl text-base text-muted-foreground sm:text-lg lg:mx-0">
-              Track local rank heatmaps, answer reviews with AI, rank every location on a leaderboard, and schedule Google Posts across hundreds of stores, from one secure dashboard.
+              {paid
+                ? 'Connect Google and instantly see your Health Score, missing fields, and review gaps across every location, then fix them from one AI dashboard.'
+                : 'Track local rank heatmaps, answer reviews with AI, rank every location on a leaderboard, and schedule Google Posts across hundreds of stores, from one secure dashboard.'}
             </p>
           </Reveal>
           <Reveal delay={240}>
             <div className="flex flex-col items-center gap-4 pt-2 sm:flex-row lg:justify-start">
               <button onClick={() => handleContinueWithGoogle('hero')} disabled={loading} className="flex w-full min-w-[220px] items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50 sm:w-auto">
-                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> Continue with Google</>}
+                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> {paid ? 'Get My Free GMB Audit' : 'Continue with Google'}</>}
               </button>
               <button onClick={() => scrollToSection('pricing')} className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
                 View Pricing <ArrowRight className="h-4 w-4" />
@@ -456,12 +533,76 @@ export default function HomeClient() {
           </Reveal>
         </div>
 
-        {/* Hero visual: the animated heatmap (used only here) */}
+        {/* Hero visual: paid page shows a plain audit-result mockup; homepage keeps the rank animation. */}
         <Reveal delay={200} className="relative">
           <div className="absolute -inset-4 -z-10 rounded-3xl bg-primary/5 blur-2xl" />
-          <RankMapReveal />
+          {paid ? <AuditPreview /> : <RankMapReveal />}
         </Reveal>
       </section>
+
+      {/* 2a. THE PROBLEM — paid page only. Agitate the branch-wise pain before the payoff. */}
+      {paid && (
+        <section className="py-20">
+          <div className="mx-auto max-w-5xl space-y-10 px-4 sm:px-6 lg:px-8">
+            <Reveal className="mx-auto max-w-2xl space-y-4 text-center">
+              <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Most brands don&apos;t have one Google problem. They have a branch-wise problem.</h2>
+              <p className="text-muted-foreground">Every location has its own profile, its own reviews and its own ranking. One weak branch quietly leaks calls and customers to the competitor next door, and you can&apos;t see it from a single Google dashboard.</p>
+            </Reveal>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                { icon: MapPin, p: 'Incomplete profiles', i: 'Lower trust and fewer calls' },
+                { icon: MessageSquare, p: 'Unanswered reviews', i: 'Weak perception and lost customers' },
+                { icon: TrendingUp, p: 'Branches ranking below rivals', i: 'Lost local searches and store visits' },
+                { icon: Search, p: 'Missing or wrong services', i: "Google can't match you to searches" },
+                { icon: Calendar, p: 'Stale photos and posts', i: 'Profiles look inactive and untrustworthy' },
+                { icon: BarChart2, p: 'No branch-wise reporting', i: "You can't tell which locations are weak" },
+              ].map((row, idx) => (
+                <Reveal key={idx} delay={idx * 60}>
+                  <div className="flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-5 shadow-sm">
+                    <row.icon className="h-5 w-5 text-rose-500" />
+                    <p className="text-sm font-bold text-foreground">{row.p}</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">{row.i}</p>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* 2b. WHAT YOUR AUDIT REVEALS — paid page only. Makes the "audit" CTA concrete. */}
+      {paid && (
+        <section className="border-y border-border/40 bg-muted/10 py-20">
+          <div className="mx-auto max-w-5xl space-y-10 px-4 sm:px-6 lg:px-8">
+            <Reveal className="mx-auto max-w-2xl space-y-4 text-center">
+              <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">What your free audit reveals</h2>
+              <p className="text-muted-foreground">The moment you connect Google, Pinzo scores every location and shows exactly what to fix first, with no waiting and no sales call.</p>
+            </Reveal>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {[
+                'Branch-wise Google Business Profile Health Score',
+                'Missing services, categories, photos and profile fields',
+                'Pending review replies and weak response patterns',
+                'Locations with low ratings, thin reviews or stale activity',
+                'Local visibility gaps and possible ranking issues',
+                'Top priority fixes, ranked per location',
+              ].map((item, i) => (
+                <Reveal key={i} delay={i * 60}>
+                  <div className="flex items-start gap-3 rounded-xl border border-border bg-card p-4 shadow-sm">
+                    <Check className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+                    <span className="text-sm font-medium text-foreground">{item}</span>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+            <Reveal className="flex justify-center">
+              <button onClick={() => handleContinueWithGoogle('hero')} disabled={loading} className="flex min-w-[220px] items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50">
+                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> Get My Free GMB Audit</>}
+              </button>
+            </Reveal>
+          </div>
+        </section>
+      )}
 
       {/* 3. LIVE STATS BAND */}
       <section className="border-y border-border/40 bg-muted/5 py-12">
@@ -534,8 +675,8 @@ export default function HomeClient() {
 
           {/* Remaining features (Local Rank is now a normal card, not a repeated heatmap) */}
           {[
-            { title: 'Local Rank Tracking', desc: 'Per-keyword heatmaps across your trade area show exactly where you win the local pack and where you are invisible.', icon: Map },
-            { title: 'Lead-Capture Microsites', desc: 'A fast, SEO-friendly public page per location — reviews, photos, hours, and a contact form that turns Google traffic into leads.', icon: Globe },
+            { title: 'Local Rank Tracking', desc: paid ? 'See your position on Google Maps in every area you serve, so you know exactly where customers find you and where they find a competitor instead.' : 'Per-keyword heatmaps across your trade area show exactly where you win the local pack and where you are invisible.', icon: Map },
+            { title: 'Lead-Capture Microsites', desc: 'A fast, SEO-friendly public page per location, with reviews, photos, hours, and a contact form that turns Google traffic into leads.', icon: Globe },
             { title: 'Unified Review Inbox', desc: 'Every Google review from all locations in one searchable inbox. Reply, track status, never miss a customer.', icon: MessageSquare },
             { title: 'Google Posts Scheduler', desc: 'Schedule offers, updates, and events across many locations at once with CTA buttons.', icon: Calendar },
             { title: 'Multi-Location Analytics', desc: 'Track Maps clicks, calls, website actions, and search views across one location or hundreds.', icon: BarChart2 },
@@ -557,11 +698,14 @@ export default function HomeClient() {
       <section id="rank" className="scroll-mt-16 border-y border-border/30 bg-muted/30 py-20">
         <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-12 px-4 sm:px-6 lg:grid-cols-2 lg:px-8">
           <Reveal className="space-y-6">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">Geo-grid rank tracking</div>
-            <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Know exactly where you show up on the map</h2>
-            <p className="leading-relaxed text-muted-foreground">Rankings change block by block. Pinzo scans a grid of points across your trade area for each keyword, so you see precisely where you own the local pack and where competitors beat you, then act on it.</p>
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">{paid ? 'Where customers find you' : 'Geo-grid rank tracking'}</div>
+            <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{paid ? 'See which areas find you first, and which find your competitor' : 'Know exactly where you show up on the map'}</h2>
+            <p className="leading-relaxed text-muted-foreground">{paid ? 'When someone nearby searches "near me", your spot on Google Maps changes street by street. Pinzo checks every neighbourhood you serve and shows you the exact areas where customers see you first, and where a competitor is showing up instead of you.' : 'Rankings change block by block. Pinzo scans a grid of points across your trade area for each keyword, so you see precisely where you own the local pack and where competitors beat you, then act on it.'}</p>
             <ul className="space-y-3 text-xs font-semibold text-muted-foreground">
-              {['Per-keyword heatmaps across your full service area', 'Track rank movement over time, week by week', 'AI next-best-action to climb the local pack'].map((t) => (
+              {(paid
+                ? ['Your Google Maps position in every area you serve', 'See if you are moving up or down, week by week', 'Simple next steps to win the areas you are losing']
+                : ['Per-keyword heatmaps across your full service area', 'Track rank movement over time, week by week', 'AI next-best-action to climb the local pack']
+              ).map((t) => (
                 <li key={t} className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-500" />{t}</li>
               ))}
             </ul>
@@ -712,7 +856,7 @@ export default function HomeClient() {
                 'Everything in Basic, plus:',
                 `${proQuote ? proQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 45} AI credits / month`,
                 '45 AI credits per location',
-                'Local rank heatmaps (7x7 geo-grid)',
+                paid ? 'Google Maps rank across every area you serve' : 'Local rank heatmaps (7x7 geo-grid)',
                 'Lead-capture microsite per location',
                 'Location leaderboard & cohort ranking',
                 'Search term intelligence',
@@ -738,7 +882,7 @@ export default function HomeClient() {
               </ul>
             </div>
             <a href="https://wa.me/917021052482?text=Hi%2C%20I%27m%20interested%20in%20the%20Enterprise%20plan%20for%2050%2B%20locations." target="_blank" rel="noopener noreferrer" className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-3 text-xs font-bold uppercase tracking-widest text-muted-foreground transition-all hover:border-foreground hover:text-foreground">
-              <MessageCircle className="h-4 w-4" /> Chat on WhatsApp
+              <WhatsAppIcon className="h-4 w-4" /> Chat on WhatsApp
             </a>
           </div>
         </div>
@@ -761,6 +905,7 @@ export default function HomeClient() {
           </Reveal>
           <div className="space-y-3">
             {[
+              ...(paid ? [{ q: 'What does the free audit show, and is it really free?', a: 'Yes, it is free. The moment you connect Google, Pinzo scores each location and surfaces missing fields, pending review replies, weak branches and priority fixes, and no card is required to see it.' }] : []),
               { q: 'Do I need to give you my Google password?', a: 'Absolutely not. We authenticate using Google OAuth secure scopes. You sign in with Google once and grant read/write access. We never store or see your password.' },
               { q: 'How fast do edits update on Google Maps?', a: 'Updates such as phone numbers, hours, and posts are pushed via the Google Business Profile API and typically appear on Google Maps within 2 to 5 minutes.' },
               { q: 'Is there a limit to how many locations I can connect?', a: 'There are no hard limits. Our Enterprise package lets you connect hundreds or thousands of physical locations under a single workspace.' },
@@ -786,11 +931,11 @@ export default function HomeClient() {
         <Reveal>
           <div className="relative overflow-hidden rounded-3xl border border-primary/20 bg-primary/5 p-8 text-center sm:p-12 lg:p-16">
             <div className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-3xl" />
-            <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Start syncing your storefronts today</h2>
-            <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">Join local SEO directors, franchise owners, and agency operators who have abandoned manual spreadsheets. Connect your locations and start automating.</p>
+            <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{paid ? 'Find weak branches. Fix profile gaps. Grow local visibility.' : 'Start syncing your storefronts today'}</h2>
+            <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">{paid ? 'Connect Google and get your free Health Score audit across every location in under a minute. No card required to start.' : 'Join local SEO directors, franchise owners, and agency operators who have abandoned manual spreadsheets. Connect your locations and start automating.'}</p>
             <div className="flex justify-center pt-6">
               <button onClick={() => handleContinueWithGoogle('footer')} disabled={loading} className="flex items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50">
-                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> Continue with Google</>}
+                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> {paid ? 'Get My Free GMB Audit' : 'Continue with Google'}</>}
               </button>
             </div>
           </div>
@@ -842,9 +987,7 @@ export default function HomeClient() {
         className="group fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-lg shadow-black/20 transition-transform hover:scale-105 active:scale-95 sm:bottom-6 sm:right-6"
       >
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#25D366] opacity-30" />
-        <svg viewBox="0 0 24 24" className="relative h-7 w-7 fill-current" aria-hidden>
-          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.999-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" />
-        </svg>
+        <WhatsAppIcon className="relative h-7 w-7" />
       </a>
     </div>
   )

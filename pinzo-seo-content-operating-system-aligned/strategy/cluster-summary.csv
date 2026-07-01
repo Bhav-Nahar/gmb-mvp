@@ -1,0 +1,18 @@
+Cluster,Keyword Count,Monthly Volume,Avg KD,Low-KD KW Count,Low-KD Volume,Business Role,Recommended Strategy
+Core / Navigational Head Terms,2055,284730,66.8,7,3890,Authority & homepage layer,Do not chase blindly. Use homepage/product landing to capture branded/category relevance; win long-tail supporting pages first.
+Login / Account / App,171,32290,69,2,8420,TOFU utility traffic,"Create a transparent login/app guide but do not over-invest. Convert via sidebar: audit profile, manage multiple locations."
+Setup / Add / Create / Register,486,14990,62.1,11,3300,High-volume onboarding funnel,Build the strongest setup guide and embed free checklist/audit CTA. Retarget readers for managed service.
+Verification / Code / Postcard,273,7720,38.5,8,3800,High-intent pain cluster,"Create a verification hub with method-wise pages, troubleshooting, bulk verification, and CTA to Pinzo audit/onboarding."
+Other / Long-tail,578,7240,75.6,1,140,FAQ/supporting content,Use selectively as FAQs under pillar pages; avoid thin pages.
+Categories / Services / Description,484,5830,56.8,4,1480,Optimization support cluster,"Build guides and free tools: category suggester, description generator, service extractor."
+Support / Customer Care / Contact,167,5510,68.9,0,0,Risky navigational traffic,Only create official-support guide with disclaimers. Do not position Pinzo as Google support.
+Free / Cost / Pricing,53,4800,48.5,1,110,Objection-handling traffic,Explain free GBP vs paid management. Link to Pinzo pricing and ROI calculator.
+Suspension / Reinstatement / Delete,295,4590,32.7,7,1820,Urgent problem traffic,Create ethical troubleshooting pages; avoid claiming guaranteed reinstatement; convert to consultation/managed service.
+Photos / Logo / Cover / Videos,296,3300,25.1,8,1730,Fast traffic & internal links,Capture low-KD size/dimension queries; convert using profile audit and visual completeness score.
+Google Posts / Offers / Updates,304,2600,43.4,3,460,Feature + content engine,Build examples by industry and CTA to Google Posts scheduler. Excellent recurring content cluster.
+Management Service / Agency,124,2320,43.8,3,450,Direct BOFU revenue,"Service and agency pages should be built like sales pages: pain points, workflows, pricing, proof, demo CTA."
+Optimization / SEO / Ranking,176,2180,59.8,1,140,Core commercial moat,"Make this the main authority pillar: checklist, scoring model, local rank tracking, profile completeness, reviews, posts, categories."
+API / Analytics / Insights,203,1650,21,2,1040,Developer/agency authority,Create API/reporting/performance pages to attract agencies and technical buyers.
+Reviews / Ratings / Reply,199,1370,65,0,0,Product-led feature cluster,"Create review management hub, review reply generator, review response examples, policy-safe review acquisition pages."
+Ownership / Access / Transfer,94,770,,0,0,Operational problem traffic,"Guides around access, ownership, transfer, duplicate listings; good for agencies and multi-location brands."
+Competitors / Alternatives,6,10,,0,0,Comparison BOFU,"Build comparison pages later after product proof, not first."
