@@ -357,6 +357,80 @@ def unlock_locations(
     return result
 
 
+class SetActiveLocationsRequest(BaseModel):
+    location_ids: list[int]
+
+
+@router.post("/locations/active", dependencies=[Depends(_billing_mutation_rate_limit)])
+def set_active_locations(
+    request: SetActiveLocationsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """Choose WHICH locations occupy the org's paid slots. Free, because the number of
+    paid slots (location_quota) doesn't change — the owner is only deciding which
+    locations are active. This is what lets an org that paid for fewer locations than it
+    has pick the ones to keep, instead of the system silently keeping the oldest by id.
+
+    The submitted set becomes 'active'; every other location in the org is set to
+    'pending_payment'. Going ABOVE quota still requires payment (see /locations/unlock)."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    desired = list(dict.fromkeys(request.location_ids))  # de-dupe, keep order
+
+    # Anti-IDOR + per-user scope: every id must belong to the caller's org.
+    from app.core.authorization import validate_location_access
+    validate_location_access(db, current_user, desired)
+
+    quota = org.location_quota or 0
+    if len(desired) > quota:
+        raise HTTPException(
+            status_code=409,
+            detail=f"exceeds_quota: your plan covers {quota} location(s). "
+                   f"Pay to add more before activating them.",
+        )
+
+    desired_set = set(desired)
+    locs = db.query(Location).filter(Location.organization_id == org.id).all()
+    newly_active: list[int] = []
+    for loc in locs:
+        if loc.id in desired_set:
+            if loc.billing_status != "active":
+                loc.billing_status = "active"
+                newly_active.append(loc.id)
+        elif loc.billing_status != "pending_payment":
+            loc.billing_status = "pending_payment"
+    db.commit()
+
+    # Sync the freshly-activated locations (parity with the paid unlock path) so their
+    # data is fresh when they come back online. Best-effort — never blocks the change.
+    if newly_active:
+        try:
+            from app.worker import celery as celery_app
+            celery_app.send_task(
+                "app.tasks.sync_reviews_chunk_task",
+                args=[newly_active, org.id, "Manual", None],
+            )
+            for loc_id in newly_active:
+                celery_app.send_task("app.tasks.sync_location_attributes_task", args=[loc_id])
+        except Exception as e:
+            logger.error("Failed to enqueue sync for reactivated locations %s: %s", newly_active, e)
+
+    active_count = sum(1 for loc in locs if loc.billing_status == "active")
+    return {
+        "active_location_count": active_count,
+        "pending_location_count": len(locs) - active_count,
+        "location_quota": quota,
+        "reactivated": newly_active,
+    }
+
+
 class RemandateConfirmRequest(BaseModel):
     razorpay_payment_id: str
     razorpay_subscription_id: str

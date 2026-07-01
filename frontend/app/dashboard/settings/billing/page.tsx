@@ -10,6 +10,7 @@ import {
   type BillingTransactionRow,
 } from '@/hooks/useBilling';
 import { BillingSkeleton } from '@/components/billing/BillingSkeletons';
+import { LocationSlotManager } from '@/components/billing/LocationSlotManager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { UpgradeModal } from '@/components/modals/UpgradeModal';
@@ -351,6 +352,9 @@ export default function BillingPage() {
           </div>
         </div>
       </div>
+
+      {/* Choose which locations fill the paid slots (only shown when locations > quota) */}
+      <LocationSlotManager />
 
       {/* Billing history */}
       <div className="border rounded-xl p-6 bg-card text-card-foreground shadow-sm space-y-4">

@@ -148,6 +148,22 @@ export function useUnlockLocations() {
   });
 }
 
+export interface SetActiveResult {
+  active_location_count: number;
+  pending_location_count: number;
+  location_quota: number;
+  reactivated: number[];
+}
+
+/** Choose WHICH locations occupy the paid slots (free, within quota). The submitted
+ * set becomes active; every other location is set pending_payment. */
+export function useSetActiveLocations() {
+  return useMutation({
+    mutationFn: (location_ids: number[]) =>
+      api.post<SetActiveResult>('/billing/locations/active', { location_ids }),
+  });
+}
+
 export function useStartRemandate() {
   return useMutation({
     mutationFn: () =>

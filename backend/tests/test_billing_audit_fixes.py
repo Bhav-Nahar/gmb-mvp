@@ -27,6 +27,7 @@ if "app.worker" not in sys.modules:
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.dialects.postgresql import JSONB
 from fastapi import HTTPException
@@ -47,7 +48,10 @@ def _compile_jsonb_sqlite(element, compiler, **kw):
     return "TEXT"
 
 
-_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+# StaticPool: share ONE in-memory connection across threads so the TestClient's request
+# thread sees the tables the fixture created (otherwise each thread gets its own empty DB).
+_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
 _Session = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
 
@@ -306,3 +310,91 @@ def test_reserve_blocks_locked_org(db):
     with pytest.raises(HTTPException) as exc:
         CreditService.reserve(db, org.id, 1)
     assert exc.value.status_code == 402
+
+
+# --- Owner chooses which locations fill the paid slots (free within quota) ---
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture(name="client")
+def fixture_client(db):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.db.session import get_db
+
+    def _override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _override_get_db
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _admin_client(db, client, org):
+    from app.models.user import User
+    from app.core.security import create_access_token
+    user = User(email=f"admin{org.id}@t.com", name="Admin", google_id=f"g{org.id}",
+                role="Admin", is_active=True, organization_id=org.id)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    client.cookies.set("gmb_auth_token", create_access_token(user.email, token_version=user.token_version))
+    return client
+
+
+def _loc(db, org, name, status="active"):
+    loc = Location(organization_id=org.id, google_location_id=f"g_{name}",
+                   location_name=name, sync_status="Synced", billing_status=status)
+    db.add(loc)
+    db.commit()
+    db.refresh(loc)
+    return loc
+
+
+def test_set_active_locations_lets_owner_choose_within_quota(db, client):
+    org = _mk_org(db, subscription_status="active", location_quota=2)
+    a = _loc(db, org, "A", "active")
+    b = _loc(db, org, "B", "active")
+    c = _loc(db, org, "C", "active")   # 3 active but quota is 2
+    _admin_client(db, client, org)
+
+    # Owner keeps A and C (not the oldest-two the system would have picked).
+    resp = client.post("/api/v1/billing/locations/active", json={"location_ids": [a.id, c.id]})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["active_location_count"] == 2
+    assert body["pending_location_count"] == 1
+    for loc in (a, b, c):
+        db.refresh(loc)
+    assert a.billing_status == "active"
+    assert c.billing_status == "active"
+    assert b.billing_status == "pending_payment"   # the one they didn't choose
+
+
+def test_set_active_locations_reactivates_a_pending_one_free(db, client):
+    org = _mk_org(db, subscription_status="active", location_quota=1)
+    a = _loc(db, org, "A", "active")
+    b = _loc(db, org, "B", "pending_payment")
+    _admin_client(db, client, org)
+
+    # Swap: activate B (currently pending), which drops A to pending — net count unchanged.
+    with patch("app.worker.celery.send_task") as send:
+        resp = client.post("/api/v1/billing/locations/active", json={"location_ids": [b.id]})
+    assert resp.status_code == 200, resp.text
+    db.refresh(a)
+    db.refresh(b)
+    assert b.billing_status == "active"
+    assert a.billing_status == "pending_payment"
+    assert send.called   # freshly-activated location is queued for sync
+
+
+def test_set_active_locations_over_quota_rejected(db, client):
+    org = _mk_org(db, subscription_status="active", location_quota=1)
+    a = _loc(db, org, "A", "active")
+    b = _loc(db, org, "B", "active")
+    _admin_client(db, client, org)
+
+    resp = client.post("/api/v1/billing/locations/active", json={"location_ids": [a.id, b.id]})
+    assert resp.status_code == 409
+    assert "exceeds_quota" in resp.json()["detail"]
