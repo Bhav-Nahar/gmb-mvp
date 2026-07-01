@@ -55,23 +55,16 @@ class ConfirmRequest(BaseModel):
     razorpay_order_id: str | None = None
 
 @router.get("/quote", response_model=QuoteResponse)
-def get_quote(
-    location_count: int,
-    interval: str = "monthly",
-    plan_tier: str = "basic",
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
+def get_quote(location_count: int, interval: str = "monthly", plan_tier: str = "basic"):
     """Server-authoritative price for a location count + tier (for display).
-    Returns base, GST, and the GST-inclusive total that is actually charged. If the
-    caller's org has enterprise custom pricing, the quote reflects THAT (per-location
-    rate + credits), so the client sees exactly what they'll be billed."""
+    Returns base, GST, and the GST-inclusive total that is actually charged.
+
+    PUBLIC (no auth) — the marketing homepage pricing calls this while logged out, so it
+    must stay unauthenticated and standard-tier. Enterprise custom pricing is reflected at
+    checkout and in /billing/status, not in this public quote."""
     if plan_tier not in plan_config.PLANS:
         raise HTTPException(status_code=400, detail="Unknown plan tier")
-    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
-    custom_rate = org.custom_price_paise if org else None
-    custom_credits = org.custom_credits_per_location if org else None
-    base = PricingService.compute_price_paise(location_count, interval, plan_tier, custom_rate)
+    base = PricingService.compute_price_paise(location_count, interval, plan_tier)
     gst = plan_config.price_with_gst(base)
     return QuoteResponse(
         location_count=location_count,
@@ -81,7 +74,7 @@ def get_quote(
         gst_paise=gst["gst_paise"],
         total_paise=gst["total_paise"],
         gst_rate=plan_config.GST_RATE,
-        monthly_ai_credits=PricingService.get_credits_for_locations(location_count, plan_tier, custom_credits),
+        monthly_ai_credits=PricingService.get_credits_for_locations(location_count, plan_tier),
     )
 
 @router.post("/checkout-subscription", dependencies=[Depends(_billing_mutation_rate_limit)])

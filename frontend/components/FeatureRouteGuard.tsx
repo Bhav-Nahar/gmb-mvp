@@ -54,7 +54,10 @@ export function FeatureRouteGuard({ children }: { children: React.ReactNode }) {
   const match = GATED.find((g) => matches(pathname, g.prefix));
   if (!match) return <>{children}</>;
   // Don't block while billing loads (avoid a flash); the backend still enforces via 403.
-  if (isLoading || !billing?.features) return <>{children}</>;
-  if (billing.features.includes(match.feature)) return <>{children}</>;
+  if (isLoading || !billing) return <>{children}</>;
+  // Scope the interstitial to the Lite plan ONLY, so existing Basic/Pro orgs are never
+  // affected (they keep their exact prior behavior — Local Rank etc. as before).
+  if (billing.plan_tier !== 'lite') return <>{children}</>;
+  if (billing.features?.includes(match.feature)) return <>{children}</>;
   return <UpgradeInterstitial name={match.name} />;
 }

@@ -5,7 +5,6 @@ import { useState } from 'react'
 import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2 } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
-import { useBillingStatus } from '@/hooks/useBilling'
 
 export default function Sidebar({
   mobileOpen = false,
@@ -23,44 +22,40 @@ export default function Sidebar({
   const userRole = user?.role || ''
   const userAvatar = user?.avatar || null
 
-  // Hide nav items the current plan doesn't include. Until billing loads, show
-  // everything (no flicker); once loaded, gate by the tier's feature set.
-  const { data: billing } = useBillingStatus()
-  const features: string[] | null = billing?.features ?? null
-  const has = (feature?: string) => !feature || !features || features.includes(feature)
-
   const handleLogout = async () => {
     await logout()
     // Full navigation to the homepage so all in-memory auth state is cleared.
     window.location.href = '/'
   }
 
+  // ponytail: nav shows every item to everyone (as before). Access is enforced on the
+  // backend (403) + a friendly upgrade interstitial on gated pages — we do NOT hide nav,
+  // since that surprised Basic/trial users by dropping Pro-only items like Local Rank.
   const menuItems = [
     { label: 'Dashboard', href: '/dashboard', icon: MapPin },
-    { label: 'Leaderboard', href: '/dashboard/compare', icon: Trophy, feature: 'leaderboard' },
-    { label: 'Local Rank', href: '/dashboard/local-rank', icon: Grid3x3, feature: 'local_rank' },
+    { label: 'Leaderboard', href: '/dashboard/compare', icon: Trophy },
+    { label: 'Local Rank', href: '/dashboard/local-rank', icon: Grid3x3 },
     { label: 'Reviews', href: '/dashboard/reviews', icon: MessageSquare },
     { label: 'Posts & Media', href: '/dashboard/posts', icon: Calendar },
-  ].filter((i) => has((i as { feature?: string }).feature))
+  ]
 
   // Insights is a collapsible group: Overview / Search Intelligence / Comparison.
-  // (Overview & Search Intelligence stay — Lite gets a capped version, not removed.)
   const insightsChildren = [
     { label: 'Overview', href: '/dashboard/insights', icon: TrendingUp },
     { label: 'Search Intelligence', href: '/dashboard/insights/search-intelligence', icon: Search },
-    { label: 'Comparison', href: '/dashboard/comparison', icon: BarChart2, feature: 'comparison' },
-  ].filter((i) => has((i as { feature?: string }).feature))
+    { label: 'Comparison', href: '/dashboard/comparison', icon: BarChart2 },
+  ]
 
   // Settings is a collapsible group: Profile / Team / Billing / Activity Logs.
   const settingsChildren = [
     { label: 'Profile', href: '/dashboard/settings', icon: UserIcon },
-    ...(userRole && ['Owner', 'Admin', 'Regional Manager'].includes(userRole) && has('team')
+    ...(userRole && ['Owner', 'Admin', 'Regional Manager'].includes(userRole)
       ? [{ label: 'Team', href: '/dashboard/team', icon: Users }]
       : []),
     ...(userRole && ['Owner', 'Admin'].includes(userRole)
       ? [{ label: 'Billing', href: '/dashboard/settings/billing', icon: CreditCard }]
       : []),
-    ...(userRole && ['Owner', 'Admin'].includes(userRole) && has('reply_templates')
+    ...(userRole && ['Owner', 'Admin'].includes(userRole)
       ? [{ label: 'Reply Templates', href: '/dashboard/settings/reply-templates', icon: MessageSquare }]
       : []),
     { label: 'Activity Logs', href: '/dashboard/settings/logs', icon: FileClock },
