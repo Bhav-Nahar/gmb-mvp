@@ -643,9 +643,6 @@ export default function HomeClient() {
             <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />GST invoice included</span>
             <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />Setup in minutes</span>
           </div>
-          <a href="/pricing" className="inline-flex items-center gap-1.5 pt-1 text-sm font-semibold text-primary hover:underline">
-            Compare all plans, including Lite <ArrowRight className="h-4 w-4" />
-          </a>
         </Reveal>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
@@ -747,6 +744,12 @@ export default function HomeClient() {
         </div>
 
         <p className="text-center text-[11px] text-muted-foreground">7-day free trial · 3 locations · 10 AI credits included. No credit card required.</p>
+
+        <div className="flex justify-center">
+          <a href="/pricing" className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
+            Compare all plans, including Lite <ArrowRight className="h-4 w-4" />
+          </a>
+        </div>
       </section>
 
       {/* 10. FAQ */}

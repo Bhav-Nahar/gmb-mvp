@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Check, Minus, MessageCircle, Sparkles, ArrowRight } from 'lucide-react';
+import { Check, X, MessageCircle, Sparkles, ArrowRight } from 'lucide-react';
 import { MarketingHeader } from '@/components/MarketingHeader';
 import { MarketingFooter } from '@/components/MarketingFooter';
 
@@ -48,7 +48,7 @@ const FEATURES: { label: string; lite: boolean | string; basic: boolean | string
 
 function Cell({ v }: { v: boolean | string }) {
   if (v === true) return <Check className="mx-auto h-4 w-4 text-primary" aria-label="included" />;
-  if (v === false) return <Minus className="mx-auto h-4 w-4 text-muted-foreground/40" aria-label="not included" />;
+  if (v === false) return <X className="mx-auto h-4 w-4 text-muted-foreground/50" aria-label="not included" />;
   return <span className="text-sm font-medium">{v}</span>;
 }
 
