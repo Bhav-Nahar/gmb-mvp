@@ -16,7 +16,7 @@ const PLANS = [
   },
   {
     key: 'basic', name: 'Basic', tagline: 'For growing multi-location brands',
-    monthly: 2500, annualPerMo: 2000, credits: 30, highlight: true,
+    monthly: 2500, annualPerMo: 2000, credits: 30, highlight: false,
     perks: ['Unlimited locations', 'Post scheduling + reply templates', 'Auto-reply + email alerts',
             'Team members & roles', 'Full insights & search intelligence'],
   },
