@@ -49,6 +49,27 @@ def get_redis() -> _redis_lib.Redis:
 
 router = APIRouter()
 
+def _assert_can_schedule(db, current_user, scheduled_at) -> None:
+    """Scheduling posts for the future is a paid capability (not on Lite). Posting now
+    (no future timestamp) is always allowed; only a future scheduled_at is gated."""
+    if not scheduled_at:
+        return
+    import datetime as _dt
+    from app.core import plan_config
+    from app.models.organization import Organization
+    sa = scheduled_at
+    if sa.tzinfo is None:
+        sa = sa.replace(tzinfo=_dt.timezone.utc)
+    if sa <= _dt.datetime.now(_dt.timezone.utc):
+        return  # immediate / past — that's "post now"
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not plan_config.plan_has_feature(org.plan_tier if org else None, plan_config.FEATURE_SCHEDULER):
+        raise HTTPException(
+            status_code=403,
+            detail="upgrade_required: scheduling posts isn't on your plan — post now, or upgrade.",
+        )
+
+
 @router.post("/draft", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 def create_draft_post(
     payload: PostCreateRequest,
@@ -56,6 +77,7 @@ def create_draft_post(
     current_user: User = Depends(staff_required)
 ):
     """Creates a new draft post."""
+    _assert_can_schedule(db, current_user, getattr(payload, "scheduled_at", None))
     post = post_service.create_draft_post(
         db=db,
         post_data=payload,
@@ -131,6 +153,7 @@ def create_campaign(
     current_user: User = Depends(staff_required)
 ):
     """Creates a new campaign for bulk posting."""
+    _assert_can_schedule(db, current_user, getattr(payload, "scheduled_at", None))
     return post_service.create_campaign(
         db=db,
         campaign_data=payload,
@@ -314,6 +337,7 @@ def update_campaign_schedule(
         post.cta_url = str(payload.cta_url) if payload.cta_url else None
         changed.append("cta_url")
     if "scheduled_at" in update_dict:
+        _assert_can_schedule(db, current_user, update_dict["scheduled_at"])
         post.scheduled_at = update_dict["scheduled_at"]; changed.append("scheduled_at")
 
     db.add(PostAuditLog(

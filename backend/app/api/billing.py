@@ -226,6 +226,8 @@ def get_billing_status(
         "plan": org.plan,
         "plan_tier": org.plan_tier,
         "features": plan_config.get_plan(org.plan_tier).get("features", []),
+        # Numeric caps for this tier (absent/None = unlimited) so the UI can gate accordingly.
+        "limits": plan_config.get_plan(org.plan_tier).get("limits", {}),
         "subscription_status": org.subscription_status,
         "monthly_ai_credits_balance": org.monthly_ai_credits_balance,
         # Monthly allowance = the full grant the org gets each cycle, used as the

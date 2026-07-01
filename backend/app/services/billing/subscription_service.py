@@ -173,6 +173,15 @@ class SubscriptionService:
             raise HTTPException(status_code=400, detail="interval must be 'monthly' or 'annual'")
         if plan_tier not in plan_config.PLANS:
             raise HTTPException(status_code=400, detail="Unknown plan tier")
+        # Per-tier location ceiling (e.g. Lite = 1). Keeps a cheap small-business tier from
+        # being bought N times to undercut the multi-location tiers.
+        tier_max = plan_config.plan_limit(plan_tier, plan_config.LIMIT_MAX_LOCATIONS)
+        if tier_max is not None and location_count > tier_max:
+            raise HTTPException(
+                status_code=400,
+                detail=f"tier_location_limit: the {plan_tier} plan supports up to {tier_max} "
+                       f"location(s). Choose a higher plan for more.",
+            )
 
         # Enterprise custom pricing (per-location rate / credits) overrides the tiers.
         _org = db.query(Organization).filter(Organization.id == org_id).first()
@@ -412,6 +421,14 @@ class SubscriptionService:
             raise HTTPException(
                 status_code=409,
                 detail="remandate_pending: approve the pending mandate before adding more locations.",
+            )
+        # Per-tier location ceiling: adding these would exceed what the plan allows.
+        tier_max = plan_config.plan_limit(org.plan_tier, plan_config.LIMIT_MAX_LOCATIONS)
+        if tier_max is not None and (org.location_quota or 0) + quote["added"] > tier_max:
+            raise HTTPException(
+                status_code=409,
+                detail=f"tier_location_limit: the {org.plan_tier} plan supports up to {tier_max} "
+                       f"location(s). Upgrade to add more.",
             )
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)

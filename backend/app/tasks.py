@@ -1072,6 +1072,12 @@ def auto_reply_reviews_task(self, location_id: int, organization_id: int) -> dic
 
     db: Session = SessionLocal()
     try:
+        # Defense-in-depth: auto-reply is a paid capability (not on Lite). The enable
+        # endpoint is already gated, but skip here too so a lingering flag can't fire it.
+        from app.core import plan_config
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        if not org or not plan_config.plan_has_feature(org.plan_tier, plan_config.FEATURE_AUTO_REPLY):
+            return {"status": "skipped", "reason": "auto_reply not in plan"}
         return run_async(ReviewAutoReplyService(db).run(organization_id, location_id))
     finally:
         try:

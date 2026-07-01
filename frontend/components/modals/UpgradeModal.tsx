@@ -30,7 +30,8 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const queryClient = useQueryClient();
   const [paymentTerm, setPaymentTerm] = useState<'monthly' | 'annual'>('monthly');
   const [locationCount, setLocationCount] = useState<number>(1);
-  const [planTier, setPlanTier] = useState<'basic' | 'pro'>('pro');
+  const [planTier, setPlanTier] = useState<'basic' | 'pro' | 'lite'>('pro');
+  const maxLocations = planTier === 'lite' ? 1 : Infinity;
   // Held true across the whole Razorpay flow so a second click can't create a second
   // subscription/order (the backend overwrites razorpay_subscription_id each call).
   const [submitting, setSubmitting] = useState(false);
@@ -284,15 +285,16 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
         </DialogHeader>
 
         {/* Plan tier picker */}
-        <div className="grid grid-cols-2 gap-2 mt-2">
+        <div className="grid grid-cols-3 gap-2 mt-2">
           {([
+            { key: 'lite', name: 'Lite', note: '1 location · reply + post' },
             { key: 'basic', name: 'Basic', note: 'Core GBP tools' },
             { key: 'pro', name: 'Pro', note: 'Adds Local Rank + more credits' },
           ] as const).map((t) => (
             <button
               key={t.key}
               type="button"
-              onClick={() => setPlanTier(t.key)}
+              onClick={() => { setPlanTier(t.key); if (t.key === 'lite') setLocationCount(1); }}
               className={`text-left rounded-lg border p-3 transition-colors ${
                 planTier === t.key ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/40'
               }`}
@@ -344,7 +346,8 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                 variant="outline"
                 size="sm"
                 className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 text-lg sm:text-[0.8rem]"
-                onClick={() => setLocationCount(locationCount + 1)}
+                onClick={() => setLocationCount(Math.min(maxLocations, locationCount + 1))}
+                disabled={locationCount >= maxLocations}
               >
                 +
               </Button>
