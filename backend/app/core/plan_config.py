@@ -45,6 +45,11 @@ PENDING_TRIAL_MAX_DAYS = 14
 # killing the daily-swap loophole. Re-saving the SAME selection is a no-op (no cooldown).
 LOCATION_REASSIGN_COOLDOWN_DAYS = 30
 
+# When a super-admin deletes an account (org or user), it's a SOFT delete: access is cut
+# off immediately but the data is kept this many days so it can be restored. After that a
+# daily task hard-purges it (cascade). "Bring it back within 14 days, else gone."
+ACCOUNT_PURGE_GRACE_DAYS = 14
+
 # AI credit top-up packs (one-time). Key is what the client sends; price/credits
 # are owned by the server so the client cannot manipulate them.
 AI_TOPUP_PACKS = {

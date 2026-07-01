@@ -28,8 +28,9 @@ interface OrgDetail {
   paid_location_quota: number | null
   remandate_due_at: string | null
   created_at: string
+  deleted_at: string | null
 }
-interface OrgUser { id: number; email: string; name: string; role: string; is_active: boolean; viewer_scope: string | null; created_at: string }
+interface OrgUser { id: number; email: string; name: string; role: string; is_active: boolean; viewer_scope: string | null; created_at: string; deleted_at: string | null }
 interface OrgLocation { id: number; location_name: string; billing_status: string | null; sync_status: string | null; average_rating: number | null; total_reviews: number | null; last_synced_at: string | null }
 interface OrgTx { id: number; type: string | null; amount_paise: number | null; credits: number | null; status: string | null; source: string | null; invoice_url: string | null; created_at: string }
 interface OrgAudit { id: number; action: string; details: string | null; actor_user_id: number | null; target_user_id: number | null; created_at: string }
@@ -156,6 +157,44 @@ export default function AdminOrgDetailPage() {
     }
   }
 
+  const deleteOrg = async () => {
+    if (!confirm(`Delete "${o.name}" and ALL its data? It can be restored for 14 days, then it's permanently purged.`)) return
+    setError('')
+    try {
+      await api.delete(`/admin/organizations/${orgId}`)
+      flash('Organization deleted — restorable for 14 days.')
+      load()
+    } catch (e: any) { setError(e.message || 'Delete failed') }
+  }
+
+  const restoreOrg = async () => {
+    setError('')
+    try {
+      await api.post(`/admin/organizations/${orgId}/restore`, { reason: 'super-admin restore' })
+      flash('Organization restored.')
+      load()
+    } catch (e: any) { setError(e.message || 'Restore failed') }
+  }
+
+  const deleteUser = async (u: OrgUser) => {
+    if (!confirm(`Delete ${u.email}? They lose access now and are purged after 14 days (restorable until then).`)) return
+    setError('')
+    try {
+      await api.delete(`/admin/users/${u.id}`)
+      flash('User deleted.')
+      load()
+    } catch (e: any) { setError(e.message || 'Delete failed') }
+  }
+
+  const restoreUser = async (u: OrgUser) => {
+    setError('')
+    try {
+      await api.post(`/admin/users/${u.id}/restore`, { reason: 'super-admin restore' })
+      flash('User restored.')
+      load()
+    } catch (e: any) { setError(e.message || 'Restore failed') }
+  }
+
   const toggleLocationBilling = async (loc: OrgLocation) => {
     const next = loc.billing_status === 'active' ? 'pending_payment' : 'active'
     if (!confirm(`Set "${loc.location_name}" billing to ${next}?`)) return
@@ -185,13 +224,31 @@ export default function AdminOrgDetailPage() {
           <h1 className="text-lg font-bold">{o.name} <span className="text-muted-foreground font-normal">#{o.id}</span></h1>
           <p className="text-xs text-muted-foreground mt-0.5">Created {fmt(o.created_at)} · {o.user_count} users · {o.location_count} locations</p>
         </div>
-        <button onClick={load} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-muted/40 shrink-0">
-          <RefreshCw className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={load} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-muted/40">
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+          {!o.deleted_at && (
+            <button onClick={deleteOrg} className="rounded-lg border border-red-500/40 text-red-600 px-3 py-2 text-sm font-semibold hover:bg-red-500/10">
+              Delete account
+            </button>
+          )}
+        </div>
       </div>
 
       {msg && <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-2.5 text-sm text-emerald-600">{msg}</div>}
       {error && <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-2.5 text-sm text-red-600">{error}</div>}
+
+      {o.deleted_at && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <span className="text-sm text-red-600 font-semibold">
+            Deleted {fmt(o.deleted_at)} · permanently purged {fmt(new Date(new Date(o.deleted_at).getTime() + 14 * 864e5).toISOString())}. Restore before then to recover all data.
+          </span>
+          <button onClick={restoreOrg} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:opacity-90 shrink-0">
+            Restore account
+          </button>
+        </div>
+      )}
 
       {/* Billing & plan */}
       <section className="rounded-xl border border-border bg-card p-5">
@@ -264,7 +321,10 @@ export default function AdminOrgDetailPage() {
               {data.users.map((u) => (
                 <tr key={u.id} className="border-b border-border/60">
                   <td className="px-3 py-2">
-                    <div className="font-semibold">{u.name}</div>
+                    <div className="font-semibold">
+                      {u.name}
+                      {u.deleted_at && <span className="ml-2 text-[10px] font-bold uppercase text-red-600">deleted</span>}
+                    </div>
                     <div className="text-[11px] text-muted-foreground">{u.email}</div>
                   </td>
                   <td className="px-3 py-2">
@@ -292,6 +352,15 @@ export default function AdminOrgDetailPage() {
                     >
                       Force logout
                     </button>
+                    {u.deleted_at ? (
+                      <button onClick={() => restoreUser(u)} className="text-xs font-semibold text-primary hover:underline">
+                        Restore
+                      </button>
+                    ) : (
+                      <button onClick={() => deleteUser(u)} className="text-xs font-semibold text-red-600 hover:underline">
+                        Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

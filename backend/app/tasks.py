@@ -866,6 +866,86 @@ def enforce_upi_remandate_grace_task() -> str:
             pass
 
 
+@shared_task(name="app.tasks.purge_soft_deleted_accounts_task")
+def purge_soft_deleted_accounts_task() -> str:
+    """Hard-purge accounts soft-deleted longer than the grace window.
+
+    A super-admin delete only stamps deleted_at (recoverable via restore). This runs
+    daily and, once deleted_at is older than ACCOUNT_PURGE_GRACE_DAYS, permanently
+    removes the row. Orgs are deleted via the ORM so cascade rules fan out to all
+    children (users, locations, reviews, billing, ...); standalone deleted users are
+    removed after (user FKs are SET NULL / CASCADE, so history survives with refs nulled).
+    """
+    import logging
+    from datetime import datetime, timezone, timedelta
+    from app.core import plan_config
+
+    logger = logging.getLogger(__name__)
+    r = _get_redis()
+    lock = r.lock("lock:purge_soft_deleted_accounts", timeout=1800)
+    if not lock.acquire(blocking=False):
+        return "skipped: another purge in progress"
+
+    db: Session = SessionLocal()
+    purged_orgs = purged_users = 0
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=plan_config.ACCOUNT_PURGE_GRACE_DAYS)
+
+        org_ids = [row[0] for row in db.query(Organization.id).filter(
+            Organization.deleted_at.isnot(None),
+            Organization.deleted_at < cutoff,
+        ).all()]
+        def _past_grace(deleted_at):
+            if deleted_at is None:
+                return False
+            if deleted_at.tzinfo is None:  # some drivers return naive datetimes
+                deleted_at = deleted_at.replace(tzinfo=timezone.utc)
+            return deleted_at < cutoff
+
+        for org_id in org_ids:
+            try:
+                org = db.query(Organization).filter(Organization.id == org_id).first()
+                if not org or not _past_grace(org.deleted_at):
+                    db.rollback()
+                    continue
+                db.delete(org)   # cascades to all children
+                db.commit()
+                purged_orgs += 1
+                logger.warning("PURGED organization %s (soft-deleted %s) and all its data.",
+                               org_id, org.deleted_at)
+            except Exception as e:
+                db.rollback()
+                logger.error("Failed to purge organization %s: %s", org_id, e, exc_info=True)
+
+        # Standalone soft-deleted users (their org still exists; users in a purged org
+        # were already removed by the cascade above).
+        user_ids = [row[0] for row in db.query(User.id).filter(
+            User.deleted_at.isnot(None),
+            User.deleted_at < cutoff,
+        ).all()]
+        for user_id in user_ids:
+            try:
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or not _past_grace(user.deleted_at):
+                    db.rollback()
+                    continue
+                db.delete(user)
+                db.commit()
+                purged_users += 1
+                logger.warning("PURGED user %s (soft-deleted %s).", user_id, user.deleted_at)
+            except Exception as e:
+                db.rollback()
+                logger.error("Failed to purge user %s: %s", user_id, e, exc_info=True)
+
+        return f"Purged {purged_orgs} organization(s) and {purged_users} user(s) past grace."
+    finally:
+        db.close()
+        try:
+            lock.release()
+        except Exception:
+            pass
+
+
 @shared_task(name="app.tasks.refill_annual_monthly_credits_task")
 def refill_annual_monthly_credits_task() -> str:
     """Refill the monthly AI credit allowance for ANNUAL subscribers.

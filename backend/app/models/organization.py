@@ -55,6 +55,9 @@ class Organization(Base):
     # rate-limit free reassignment (LOCATION_REASSIGN_COOLDOWN_DAYS) so active locations
     # can't be cycled daily to farm per-location value. NULL = never reassigned.
     last_location_reassign_at = Column(DateTime(timezone=True), nullable=True)
+    # Soft delete: set by a super-admin. Access is cut off immediately; the row (and all
+    # its cascade children) is hard-purged after ACCOUNT_PURGE_GRACE_DAYS. NULL = live.
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     # Marketing attribution, captured first-touch from the browser at signup and used
     # for server-side conversions (Meta CAPI / Google Ads). First-touch wins: a column
