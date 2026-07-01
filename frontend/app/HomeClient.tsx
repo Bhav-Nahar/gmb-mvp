@@ -694,9 +694,6 @@ export default function HomeClient() {
           <div className="group relative flex flex-col gap-5 rounded-[2rem] border-2 border-primary bg-card/90 backdrop-blur-2xl p-8 shadow-2xl transition-all duration-500 hover:-translate-y-2 hover:shadow-primary/20 hover:bg-card">
             {/* Background glow */}
             <div className="pointer-events-none absolute -inset-0.5 -z-10 rounded-[2rem] bg-gradient-to-br from-primary/40 via-primary/10 to-transparent blur-xl opacity-60 group-hover:opacity-100 transition-opacity duration-500" />
-            <div className="absolute -top-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-primary to-primary/80 px-4 py-1.5 text-[10px] font-extrabold uppercase tracking-widest text-primary-foreground shadow-lg shadow-primary/30">
-              <Sparkles className="h-3.5 w-3.5" /> Most popular
-            </div>
             <div className="space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
               <p className="text-xs font-medium text-foreground/70">Rank higher on Maps & turn searches into leads.</p>
