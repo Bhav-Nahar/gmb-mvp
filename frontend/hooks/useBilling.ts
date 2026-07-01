@@ -22,6 +22,7 @@ export interface BillingStatus {
   needs_remandate?: boolean;
   remandate_due_at?: string;
   paid_location_quota?: number;
+  location_reassign_available_at?: string | null;
 }
 
 export interface Quote {

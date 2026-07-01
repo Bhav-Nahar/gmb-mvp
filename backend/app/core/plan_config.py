@@ -38,6 +38,13 @@ TRIAL_AI_CREDITS = 10
 # signup is treated as expired.
 PENDING_TRIAL_MAX_DAYS = 14
 
+# Owners can reassign WHICH locations fill their paid slots for free, but only this
+# often. Without a limit, an org could cycle its active locations daily and farm
+# per-location value (syncs, posts, profile management) for far more locations than it
+# pays for. 30 days = "about once a month", which fits genuine reorganisation while
+# killing the daily-swap loophole. Re-saving the SAME selection is a no-op (no cooldown).
+LOCATION_REASSIGN_COOLDOWN_DAYS = 30
+
 # AI credit top-up packs (one-time). Key is what the client sends; price/credits
 # are owned by the server so the client cannot manipulate them.
 AI_TOPUP_PACKS = {

@@ -51,6 +51,10 @@ class Organization(Base):
     # /remandate call reuses the outstanding mandate (or cancels a stale one) instead
     # of stacking a second mandate that would double-bill. Cleared at cutover.
     pending_remandate_subscription_id = Column(String, nullable=True)
+    # Last time the owner reassigned which locations fill their paid slots. Used to
+    # rate-limit free reassignment (LOCATION_REASSIGN_COOLDOWN_DAYS) so active locations
+    # can't be cycled daily to farm per-location value. NULL = never reassigned.
+    last_location_reassign_at = Column(DateTime(timezone=True), nullable=True)
 
     # Marketing attribution, captured first-touch from the browser at signup and used
     # for server-side conversions (Meta CAPI / Google Ads). First-touch wins: a column

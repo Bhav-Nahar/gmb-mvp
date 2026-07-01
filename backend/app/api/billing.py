@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -239,6 +240,12 @@ def get_billing_status(
         "needs_remandate": bool(org.subscription_needs_remandate),
         "remandate_due_at": org.remandate_due_at,
         "paid_location_quota": org.paid_location_quota,
+        # When the owner may next reassign which locations fill their paid slots (free,
+        # but rate-limited). NULL = available now.
+        "location_reassign_available_at": (
+            org.last_location_reassign_at + timedelta(days=plan_config.LOCATION_REASSIGN_COOLDOWN_DAYS)
+            if org.last_location_reassign_at else None
+        ),
     }
 
 
@@ -398,6 +405,31 @@ def set_active_locations(
 
     desired_set = set(desired)
     locs = db.query(Location).filter(Location.organization_id == org.id).all()
+    current_active = {loc.id for loc in locs if loc.billing_status == "active"}
+
+    # Re-saving the SAME selection is a no-op — it must not start a cooldown, so a user
+    # can hit Save twice harmlessly.
+    if desired_set != current_active:
+        # Rate-limit real changes so active locations can't be cycled daily to farm
+        # per-location value beyond the paid quota. The automatic claw-back/conversion
+        # paths don't come through here, so they're naturally exempt.
+        from datetime import datetime, timezone, timedelta
+        cooldown = timedelta(days=plan_config.LOCATION_REASSIGN_COOLDOWN_DAYS)
+        last = org.last_location_reassign_at
+        # Normalise a possibly-naive stored timestamp to UTC so the subtraction below can't
+        # raise on a naive/aware mismatch (some drivers return naive datetimes).
+        if last is not None and last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if last is not None and (now - last) < cooldown:
+            available_at = last + cooldown
+            raise HTTPException(
+                status_code=429,
+                detail=f"reassign_cooldown: you can change your active locations again "
+                       f"on {available_at.date().isoformat()}.",
+            )
+        org.last_location_reassign_at = now
+
     newly_active: list[int] = []
     for loc in locs:
         if loc.id in desired_set:

@@ -62,6 +62,12 @@ export function LocationSlotManager() {
   const changed =
     sel.size !== activeIds.length || activeIds.some((id) => !sel.has(id));
 
+  // Free reassignment is rate-limited; the server tells us when the next change is allowed.
+  const availableAt = billing.location_reassign_available_at
+    ? new Date(billing.location_reassign_available_at)
+    : null;
+  const cooldownActive = !!availableAt && availableAt.getTime() > Date.now();
+
   const save = async () => {
     try {
       const res = await setActive(Array.from(sel));
@@ -120,8 +126,13 @@ export function LocationSlotManager() {
         })}
       </ul>
 
-      <div className="flex justify-end">
-        <Button onClick={save} disabled={!changed || saving || sel.size === 0}>
+      <div className="flex items-center justify-end gap-3">
+        {cooldownActive && (
+          <span className="text-xs text-muted-foreground">
+            Next change available {availableAt!.toLocaleDateString()}
+          </span>
+        )}
+        <Button onClick={save} disabled={!changed || saving || sel.size === 0 || cooldownActive}>
           {saving ? 'Saving…' : 'Save active locations'}
         </Button>
       </div>

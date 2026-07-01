@@ -389,6 +389,42 @@ def test_set_active_locations_reactivates_a_pending_one_free(db, client):
     assert send.called   # freshly-activated location is queued for sync
 
 
+def test_set_active_locations_cooldown_blocks_rapid_swaps(db, client):
+    org = _mk_org(db, subscription_status="active", location_quota=2)
+    a = _loc(db, org, "A", "active")
+    b = _loc(db, org, "B", "active")
+    c = _loc(db, org, "C", "active")   # 3 active, quota 2
+    _admin_client(db, client, org)
+
+    with patch("app.worker.celery.send_task"):
+        first = client.post("/api/v1/billing/locations/active", json={"location_ids": [a.id, b.id]})
+        assert first.status_code == 200, first.text
+        # A different selection immediately after is throttled.
+        second = client.post("/api/v1/billing/locations/active", json={"location_ids": [a.id, c.id]})
+    assert second.status_code == 429
+    assert "reassign_cooldown" in second.json()["detail"]
+
+
+def test_set_active_resaving_same_selection_is_free_noop(db, client):
+    org = _mk_org(db, subscription_status="active", location_quota=2)
+    a = _loc(db, org, "A", "active")
+    b = _loc(db, org, "B", "active")
+    c = _loc(db, org, "C", "pending_payment")
+    _admin_client(db, client, org)
+
+    with patch("app.worker.celery.send_task"):
+        # Saving the current set (A,B) changes nothing -> must NOT start a cooldown.
+        noop = client.post("/api/v1/billing/locations/active", json={"location_ids": [a.id, b.id]})
+        assert noop.status_code == 200, noop.text
+        db.refresh(org)
+        assert org.last_location_reassign_at is None   # no cooldown consumed
+        # A real change right after is therefore still allowed.
+        real = client.post("/api/v1/billing/locations/active", json={"location_ids": [a.id, c.id]})
+    assert real.status_code == 200, real.text
+    db.refresh(org)
+    assert org.last_location_reassign_at is not None
+
+
 def test_set_active_locations_over_quota_rejected(db, client):
     org = _mk_org(db, subscription_status="active", location_quota=1)
     a = _loc(db, org, "A", "active")
