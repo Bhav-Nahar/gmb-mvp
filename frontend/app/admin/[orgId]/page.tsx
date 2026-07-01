@@ -29,6 +29,8 @@ interface OrgDetail {
   remandate_due_at: string | null
   created_at: string
   deleted_at: string | null
+  custom_price_paise: number | null
+  custom_credits_per_location: number | null
 }
 interface OrgUser { id: number; email: string; name: string; role: string; is_active: boolean; viewer_scope: string | null; created_at: string; deleted_at: string | null }
 interface OrgLocation { id: number; location_name: string; billing_status: string | null; sync_status: string | null; average_rating: number | null; total_reviews: number | null; last_synced_at: string | null }
@@ -97,6 +99,8 @@ export default function AdminOrgDetailPage() {
         topup_ai_credits_balance: o.topup_ai_credits_balance ?? '',
         trial_ends_at: toLocalInput(o.trial_ends_at),
         grace_period_ends_at: toLocalInput(o.grace_period_ends_at),
+        custom_price_rupees: o.custom_price_paise != null ? o.custom_price_paise / 100 : '',
+        custom_credits_per_location: o.custom_credits_per_location ?? '',
       })
     } catch (e: any) {
       setError(e.message || 'Failed to load')
@@ -121,6 +125,8 @@ export default function AdminOrgDetailPage() {
         topup_ai_credits_balance: form.topup_ai_credits_balance === '' ? null : Number(form.topup_ai_credits_balance),
         trial_ends_at: form.trial_ends_at || null,
         grace_period_ends_at: form.grace_period_ends_at || null,
+        custom_price_paise: form.custom_price_rupees === '' ? null : Math.round(Number(form.custom_price_rupees) * 100),
+        custom_credits_per_location: form.custom_credits_per_location === '' ? null : Number(form.custom_credits_per_location),
       }
       await api.patch(`/admin/organizations/${orgId}`, body)
       setReason('')
@@ -131,6 +137,17 @@ export default function AdminOrgDetailPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const clearCustomPricing = async () => {
+    if (!confirm('Remove custom pricing and revert this org to standard tier pricing?')) return
+    setSaving(true); setError('')
+    try {
+      await api.patch(`/admin/organizations/${orgId}`, { clear_custom_pricing: true, reason: reason || 'remove custom pricing' })
+      setReason(''); flash('Custom pricing removed.'); load()
+    } catch (e: any) {
+      setError(e.message || 'Failed to remove custom pricing')
+    } finally { setSaving(false) }
   }
 
   const patchUser = async (userId: number, payload: any, confirmMsg?: string) => {
@@ -302,6 +319,50 @@ export default function AdminOrgDetailPage() {
           <Meta label="Razorpay sub" value={o.razorpay_subscription_id || '—'} />
           <Meta label="Billing cycle" value={o.billing_cycle || '—'} />
         </div>
+      </section>
+
+      {/* Enterprise custom pricing (Flavor B: per-location) */}
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-sm font-bold uppercase tracking-wider">Enterprise custom pricing</h2>
+          {(o.custom_price_paise != null || o.custom_credits_per_location != null) && (
+            <span className="text-[10px] font-bold uppercase text-emerald-600">Active</span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          Overrides standard tiers for this org only. Price is charged per location; annual = rate × 12 (no extra discount).
+          Leave blank for standard pricing. Uses the &quot;Reason&quot; field above for the audit log; click &quot;Save changes&quot; to apply.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Field label="Price per location (₹ / month)">
+            <input type="number" min={0} value={form.custom_price_rupees}
+                   onChange={(e) => setForm({ ...form, custom_price_rupees: e.target.value })}
+                   placeholder="standard" className={inputCls} />
+          </Field>
+          <Field label="AI credits per location">
+            <input type="number" min={0} value={form.custom_credits_per_location}
+                   onChange={(e) => setForm({ ...form, custom_credits_per_location: e.target.value })}
+                   placeholder="standard" className={inputCls} />
+          </Field>
+          <div className="flex items-end">
+            {(o.custom_price_paise != null || o.custom_credits_per_location != null) && (
+              <button onClick={clearCustomPricing} disabled={saving}
+                      className="rounded-lg border border-red-500/40 text-red-600 px-4 py-2 text-sm font-semibold hover:bg-red-500/10 disabled:opacity-50">
+                Remove custom pricing
+              </button>
+            )}
+          </div>
+        </div>
+        {form.custom_price_rupees !== '' && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Preview at quota {o.location_quota ?? '—'}: {o.location_quota
+              ? `₹${(Number(form.custom_price_rupees) * o.location_quota).toLocaleString('en-IN')}/mo`
+              : 'set a location quota to preview'}
+            {form.custom_credits_per_location !== '' && o.location_quota
+              ? ` · ${Number(form.custom_credits_per_location) * o.location_quota} credits/mo`
+              : ''}
+          </p>
+        )}
       </section>
 
       {/* Users */}

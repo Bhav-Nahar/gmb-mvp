@@ -43,6 +43,8 @@ _ORG_EDITABLE = [
     "topup_ai_credits_balance",
     "trial_ends_at",
     "grace_period_ends_at",
+    "custom_price_paise",
+    "custom_credits_per_location",
 ]
 
 
@@ -190,6 +192,8 @@ def get_organization(org_id: int, db: Session = Depends(get_db), _: User = Depen
         "subscription_needs_remandate": org.subscription_needs_remandate,
         "paid_location_quota": org.paid_location_quota,
         "remandate_due_at": org.remandate_due_at,
+        "custom_price_paise": org.custom_price_paise,
+        "custom_credits_per_location": org.custom_credits_per_location,
     })
 
     return {
@@ -261,14 +265,21 @@ def update_organization(
         raise HTTPException(status_code=400, detail=f"Invalid subscription_status. Allowed: {sorted(VALID_SUBSCRIPTION_STATUSES)}")
 
     changes = {}
-    for field in _ORG_EDITABLE:
-        new = getattr(payload, field)
-        if new is None:
-            continue
-        old = getattr(org, field)
-        if old != new:
-            changes[field] = {"old": old, "new": new}
-            setattr(org, field, new)
+    # Clearing custom pricing wins over any per-field values in the same request.
+    if payload.clear_custom_pricing:
+        for field in ("custom_price_paise", "custom_credits_per_location"):
+            if getattr(org, field) is not None:
+                changes[field] = {"old": getattr(org, field), "new": None}
+                setattr(org, field, None)
+    else:
+        for field in _ORG_EDITABLE:
+            new = getattr(payload, field)
+            if new is None:
+                continue
+            old = getattr(org, field)
+            if old != new:
+                changes[field] = {"old": old, "new": new}
+                setattr(org, field, new)
 
     if not changes:
         raise HTTPException(status_code=400, detail="No changes provided")

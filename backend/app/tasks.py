@@ -834,7 +834,8 @@ def enforce_upi_remandate_grace_task() -> str:
                     loc.billing_status = "pending_payment"
                     locked_locs += 1
                 org.location_quota = paid
-                org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(paid)
+                org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(
+                    paid, org.plan_tier or "basic", org.custom_credits_per_location)
                 # Resolved either way: entitled quota now matches the mandate.
                 org.subscription_needs_remandate = False
                 org.remandate_due_at = None
@@ -985,7 +986,7 @@ def refill_annual_monthly_credits_task() -> str:
                     db.rollback()
                     continue
                 org.monthly_ai_credits_balance = PricingService.get_credits_for_locations(
-                    org.location_quota or 0, org.plan_tier or "basic"
+                    org.location_quota or 0, org.plan_tier or "basic", org.custom_credits_per_location
                 )
                 db.commit()
                 refilled += 1
