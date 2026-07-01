@@ -128,9 +128,9 @@ export default function AdminOrgDetailPage() {
         custom_price_paise: form.custom_price_rupees === '' ? null : Math.round(Number(form.custom_price_rupees) * 100),
         custom_credits_per_location: form.custom_credits_per_location === '' ? null : Number(form.custom_credits_per_location),
       }
-      await api.patch(`/admin/organizations/${orgId}`, body)
+      const res = await api.patch<{ message?: string }>(`/admin/organizations/${orgId}`, body)
       setReason('')
-      flash('Saved.')
+      flash(res?.message || 'Saved.')
       load()
     } catch (e: any) {
       setError(e.message || 'Save failed')

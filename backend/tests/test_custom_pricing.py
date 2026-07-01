@@ -149,3 +149,35 @@ def test_checkout_uses_custom_rate_for_plan_and_credits(db):
     # The plan was built with the custom per-location rate, and notes carry custom credits.
     assert plan_mock.call_args.args[4] == 130_000       # custom_per_location_paise threaded through
     assert captured["notes"]["credits"] == str(60 * 60)  # 60 locations * 60 custom credits
+
+
+def test_price_change_on_active_sub_schedules_next_renewal(db, client):
+    target = Organization(name="Ent", subscription_status="active", location_quota=60, plan_tier="pro",
+                          razorpay_subscription_id="sub_ent", billing_cycle="monthly")
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+    with patch.object(settings, "SUPERADMIN_EMAILS", SUPER_EMAIL), \
+         patch.object(SubscriptionService, "update_subscription_plan_for_quota", return_value="upgraded") as sched:
+        _as_super(db, client)
+        r = client.patch(f"/api/v1/admin/organizations/{target.id}",
+                         json={"custom_price_paise": 130000, "reason": "deal"})
+    assert r.status_code == 200, r.text
+    sched.assert_called_once()                       # scheduled the plan change (at cycle end)
+    assert r.json()["plan_change"] == "upgraded"
+    assert "next renewal" in r.json()["message"]
+
+
+def test_price_change_without_subscription_does_not_schedule(db, client):
+    target = Organization(name="NewEnt", subscription_status="trial", location_quota=10, plan_tier="pro")
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+    with patch.object(settings, "SUPERADMIN_EMAILS", SUPER_EMAIL), \
+         patch.object(SubscriptionService, "update_subscription_plan_for_quota") as sched:
+        _as_super(db, client)
+        r = client.patch(f"/api/v1/admin/organizations/{target.id}",
+                         json={"custom_price_paise": 130000, "reason": "deal"})
+    assert r.status_code == 200, r.text
+    sched.assert_not_called()                        # no live subscription to reschedule
+    assert r.json()["plan_change"] is None
