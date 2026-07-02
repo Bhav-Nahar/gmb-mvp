@@ -853,7 +853,7 @@ function DashboardContent() {
           {/* Compact Google connection strip */}
           {userRole !== 'Viewer' && (
             (tokenStatus?.status === 'active' || tokenStatus?.status === 'requires_refresh') ? (
-              <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/50 bg-background/50 backdrop-blur-md px-5 py-3 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-3 rounded-2xl border border-border/50 bg-background/50 backdrop-blur-md px-5 py-4 sm:py-3 shadow-sm">
                 <div className="flex items-center gap-3 min-w-0 text-xs font-semibold">
                   <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0 shadow-[0_0_10px_rgba(16,185,129,0.5)]"></span>
                   <span className="truncate text-foreground font-bold">{tokenStatus.google_email || 'Google connected'}</span>
@@ -865,7 +865,7 @@ function DashboardContent() {
                     <span className="ml-1 text-indigo-400 hidden md:inline font-bold">&middot; token refresh pending</span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 shrink-0 relative">
+                <div className="flex items-center gap-2 shrink-0 relative w-full sm:w-auto justify-end sm:justify-start mt-2 sm:mt-0">
                   <button
                     onClick={handleTriggerSync}
                     disabled={syncing}
@@ -1005,7 +1005,7 @@ function DashboardContent() {
             const n = reputationSummary.rated_location_count
             const respRate = reputationSummary.response_rate
             return (
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:grid-cols-4">
                 <div className="glass-panel p-6 flex items-center gap-5 border-border/40">
                   <div className="p-3 rounded-2xl bg-gradient-to-br from-amber-400/20 to-orange-500/20 text-amber-500 shrink-0 shadow-inner">
                     <Star className="h-6 w-6 fill-amber-500" />
