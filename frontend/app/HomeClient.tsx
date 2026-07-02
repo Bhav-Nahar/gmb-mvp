@@ -35,6 +35,12 @@ import {
   Search,
   Map,
   Globe,
+  Utensils,
+  Stethoscope,
+  ShoppingBag,
+  Scissors,
+  Home,
+  Car,
 } from 'lucide-react'
 import { useQuote } from '@/hooks/useBilling'
 import { INDIA_PATH, INDIA_PINS } from './indiaMap'
@@ -425,7 +431,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
   )
 
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-background font-sans text-foreground selection:bg-primary/30 selection:text-foreground">
+    <div className={`relative min-h-screen overflow-x-clip bg-background font-sans text-foreground selection:bg-primary/30 selection:text-foreground ${paid ? 'pb-24 md:pb-0' : ''}`}>
       {/* Ambient highlight */}
       <div className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[900px] w-[1100px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle_at_50%_0%,hsl(var(--primary)/0.08)_0%,hsl(var(--primary)/0.03)_35%,transparent_70%)]" />
 
@@ -600,6 +606,39 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                 {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> Get My Free GMB Audit</>}
               </button>
             </Reveal>
+          </div>
+        </section>
+      )}
+
+      {/* 2c. BY INDUSTRY — paid page only. Swipeable on mobile (CSS scroll-snap, no lib),
+          grid on desktop. Shows how the audit helps concrete verticals. */}
+      {paid && (
+        <section className="py-20">
+          <div className="mx-auto max-w-6xl space-y-10 px-4 sm:px-6 lg:px-8">
+            <Reveal className="mx-auto max-w-2xl space-y-4 text-center">
+              <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Built for how your industry gets found</h2>
+              <p className="text-muted-foreground">Every vertical has its own local-search battle. Here is what Pinzo fixes first for yours.</p>
+            </Reveal>
+            {/* Mobile: horizontal swipe. Desktop: 3-col grid. */}
+            <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-3">
+              {[
+                { icon: Utensils, name: 'Restaurants & Cafés', desc: 'Win "near me" searches at lunch rush, keep menus and hours right across branches, and reply to reviews before they scare off diners.' },
+                { icon: Stethoscope, name: 'Clinics & Healthcare', desc: 'Show accurate hours and services per location, surface trust-building reviews, and rank when patients search for care nearby.' },
+                { icon: ShoppingBag, name: 'Retail & Franchises', desc: 'Keep every outlet on the map with correct info, spot branches ranking below rivals, and drive Maps footfall store by store.' },
+                { icon: Scissors, name: 'Salons & Spas', desc: 'Turn 5-star reviews into bookings, keep photos fresh, and outrank the salon down the street for local searches.' },
+                { icon: Home, name: 'Real Estate & Services', desc: 'Rank across every area you serve, capture leads from Google with a microsite per location, and track which branches convert.' },
+                { icon: Car, name: 'Automotive & Service Centers', desc: 'Fix service listings, answer reviews fast, and make sure drivers searching "near me" find your bay, not the competitor.' },
+              ].map((ind, idx) => (
+                <Reveal key={ind.name} delay={(idx % 3) * 60} className="w-[80%] shrink-0 snap-center sm:w-auto">
+                  <div className="flex h-full flex-col gap-3 rounded-2xl border border-border bg-card p-6 shadow-sm transition-shadow hover:shadow-md">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"><ind.icon className="h-5 w-5 text-primary" /></div>
+                    <h3 className="text-base font-bold text-foreground">{ind.name}</h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">{ind.desc}</p>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+            <p className="text-center text-xs font-semibold text-muted-foreground sm:hidden">Swipe to see more industries →</p>
           </div>
         </section>
       )}
@@ -978,13 +1017,30 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
         </div>
       </footer>
 
-      {/* Floating WhatsApp button — bottom-right on mobile and desktop */}
+      {/* Sticky mobile audit CTA — paid page only, hidden once the desktop nav appears. */}
+      {paid && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 px-4 py-3 backdrop-blur-md md:hidden"
+          style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+        >
+          <button
+            onClick={() => handleContinueWithGoogle('sticky_mobile')}
+            disabled={loading}
+            className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-gray-200 bg-white px-5 py-3.5 text-sm font-bold text-gray-950 shadow-lg disabled:opacity-50"
+          >
+            {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon className="h-5 w-5" /> Get My Free GMB Audit</>}
+          </button>
+        </div>
+      )}
+
+      {/* Floating WhatsApp button — bottom-right on mobile and desktop.
+          On the paid page it sits above the sticky mobile CTA bar until md. */}
       <a
         href="https://wa.me/917021052482?text=Hi%2C%20I%27d%20like%20to%20know%20more%20about%20Pinzo."
         target="_blank"
         rel="noopener noreferrer"
         aria-label="Chat with us on WhatsApp"
-        className="group fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-lg shadow-black/20 transition-transform hover:scale-105 active:scale-95 sm:bottom-6 sm:right-6"
+        className={`group fixed right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-lg shadow-black/20 transition-transform hover:scale-105 active:scale-95 sm:right-6 ${paid ? 'bottom-24 md:bottom-6' : 'bottom-5 sm:bottom-6'}`}
       >
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#25D366] opacity-30" />
         <WhatsAppIcon className="relative h-7 w-7" />
