@@ -13,7 +13,7 @@ import { useRazorpay } from '@/hooks/useRazorpay';
 import { toast } from 'sonner';
 import { useState } from 'react';
 import { isPaymentVerificationError, PAYMENT_VERIFICATION_FAILED_MSG } from '@/lib/payment';
-import { trackSelectPlan, trackPurchase } from '@/lib/analytics';
+import { trackAddPaymentInfo, trackPurchase } from '@/lib/analytics';
 import { useAuth } from '@/hooks/useAuth';
 
 interface UpgradeModalProps {
@@ -139,7 +139,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
     }
     setSubmitting(true);
     const planName = planTier === 'pro' ? 'Pro' : 'Basic';
-    trackSelectPlan({
+    trackAddPaymentInfo({
       plan_name: planName,
       paymentTerm,
       value: baseRupees ?? 0,

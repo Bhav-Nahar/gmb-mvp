@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { api } from '@/lib/api'
+import { trackCustomerData } from '@/lib/analytics'
 
 export interface User {
   id: number
@@ -33,6 +34,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const userProfile = await api.get<User>('/users/me')
       setUser(userProfile)
+      trackCustomerData({
+        name: userProfile.name,
+        mobile: userProfile.phone ?? "",
+        email: userProfile.email,
+      })
     } catch (e) {
       setUser(null)
     } finally {
