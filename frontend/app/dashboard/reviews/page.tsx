@@ -425,7 +425,7 @@ export default function ReviewsPage(props: any) {
 
           {/* Reputation KPI row */}
           {reviewSummary && (
-            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
               <div className="glass-panel p-4 sm:p-5 flex items-center gap-3 rounded-2xl">
                 <div className="p-2 rounded-xl bg-amber-400/10 text-amber-400 shrink-0">
                   <Star className="h-4 w-4 sm:h-5 sm:w-5 fill-amber-400" />
@@ -515,10 +515,10 @@ export default function ReviewsPage(props: any) {
           )}
 
           {/* Split-Pane Inbox Layout */}
-          <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-20rem)] min-h-[700px]">
+          <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-14rem)] lg:h-[calc(100vh-20rem)] min-h-[700px]">
              
              {/* Left Sidebar - Review Queue */}
-             <div className="w-full lg:w-[35%] flex flex-col glass-panel rounded-2xl border border-border shadow-sm overflow-hidden">
+             <div className={`w-full lg:w-[35%] flex-col glass-panel rounded-2xl border border-border shadow-sm overflow-hidden ${selectedReview ? 'hidden lg:flex' : 'flex'}`}>
                 {/* Sleek Filter Toolbar (Sticky at top of Queue) */}
                 <div className="bg-card/80 backdrop-blur-md border-b border-border p-3 shrink-0 flex flex-col gap-3">
                    <div className="flex items-center bg-background border border-border rounded-xl p-1 shrink-0">
@@ -728,7 +728,7 @@ export default function ReviewsPage(props: any) {
              </div>
 
              {/* Right Main Panel - Workspace */}
-             <div className="w-full lg:w-[65%] flex flex-col glass-panel rounded-2xl border border-border shadow-sm bg-card overflow-hidden">
+             <div className={`w-full lg:w-[65%] flex-col glass-panel rounded-2xl border border-border shadow-sm bg-card overflow-hidden ${!selectedReview ? 'hidden lg:flex' : 'flex'}`}>
                 {!selectedReview ? (
                    <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 text-center opacity-60">
                        <MessageSquare className="w-16 h-16 mb-4 opacity-50" />
@@ -738,7 +738,14 @@ export default function ReviewsPage(props: any) {
                 ) : (
                    <div className="flex-1 overflow-y-auto flex flex-col">
                       {/* Review Details Header */}
-                      <div className="p-6 lg:p-8 border-b border-border bg-muted/5">
+                      <div className="p-4 lg:p-8 border-b border-border bg-muted/5">
+                        <button 
+                          onClick={() => setSelectedReviewId(null)}
+                          className="lg:hidden mb-4 flex items-center gap-1.5 text-xs font-bold text-muted-foreground hover:text-foreground"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                          Back to Inbox
+                        </button>
                         <div className="flex justify-between items-start gap-4 mb-6">
                            <div className="flex items-center gap-4">
                              {selectedReview.reviewer_profile_photo ? (

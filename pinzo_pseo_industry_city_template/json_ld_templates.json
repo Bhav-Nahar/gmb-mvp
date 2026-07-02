@@ -1,0 +1,248 @@
+{
+  "required_schema_stack": [
+    "WebPage",
+    "BreadcrumbList",
+    "Service",
+    "Organization",
+    "SoftwareApplication"
+  ],
+  "optional_schema_stack": [
+    "FAQPage",
+    "ItemList",
+    "Offer",
+    "VideoObject",
+    "ImageObject"
+  ],
+  "default_combined_graph_template": {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "{{organization_id}}",
+        "name": "Pinzo",
+        "url": "{{site_url}}/",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "{{site_url}}/logo.png"
+        },
+        "sameAs": [
+          "{{pinzo_linkedin_url}}",
+          "{{pinzo_instagram_url}}",
+          "{{pinzo_facebook_url}}"
+        ],
+        "description": "Pinzo helps businesses audit, optimize, and manage Google Business Profiles across reviews, posts, services, profile quality, and local reporting."
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "{{software_id}}",
+        "name": "Pinzo",
+        "url": "{{site_url}}/google-business-profile-management-tool/",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web",
+        "provider": {
+          "@id": "{{organization_id}}"
+        },
+        "description": "AI-powered Google Business Profile management software for audits, AI review replies, Google Posts, services, quality scoring, and reporting.",
+        "offers": {
+          "@type": "Offer",
+          "url": "{{site_url}}/pricing/",
+          "priceCurrency": "INR",
+          "availability": "https://schema.org/InStock"
+        }
+      },
+      {
+        "@type": "Service",
+        "@id": "{{service_id}}",
+        "name": "Google Business Profile management for {{industry_label}} in {{city_label}}",
+        "serviceType": "Google Business Profile management",
+        "category": "Local SEO and Google Business Profile management",
+        "provider": {
+          "@id": "{{organization_id}}"
+        },
+        "areaServed": {
+          "@type": "City",
+          "name": "{{city_label}}"
+        },
+        "audience": {
+          "@type": "BusinessAudience",
+          "audienceType": "{{industry_label}}"
+        },
+        "description": "{{page_summary}}",
+        "url": "{{page_url}}",
+        "hasOfferCatalog": {
+          "@type": "OfferCatalog",
+          "name": "Pinzo GBP management modules for {{industry_label}}",
+          "itemListElement": [
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "Google Business Profile audit"
+              }
+            },
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "Google review management and AI replies"
+              }
+            },
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "Google Posts planning and scheduling"
+              }
+            },
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "Google Business Profile services and category optimization"
+              }
+            },
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "Monthly Google Business Profile reporting"
+              }
+            }
+          ]
+        },
+        "serviceOutput": [
+          "Google Business Profile audit report",
+          "Industry-specific service and category recommendations",
+          "Review reply workflow",
+          "Google Posts calendar",
+          "Profile quality score",
+          "Monthly local visibility report"
+        ]
+      },
+      {
+        "@type": "WebPage",
+        "@id": "{{page_id}}",
+        "url": "{{page_url}}",
+        "name": "{{meta_title}}",
+        "headline": "Google Business Profile Management for {{industry_label}} in {{city_label}}",
+        "description": "{{meta_description}}",
+        "inLanguage": "en-IN",
+        "isPartOf": {
+          "@type": "WebSite",
+          "@id": "{{site_url}}/#website",
+          "url": "{{site_url}}/",
+          "name": "Pinzo"
+        },
+        "publisher": {
+          "@id": "{{organization_id}}"
+        },
+        "mainEntity": {
+          "@id": "{{service_id}}"
+        },
+        "breadcrumb": {
+          "@id": "{{breadcrumb_id}}"
+        },
+        "about": [
+          {
+            "@type": "Thing",
+            "name": "Google Business Profile management"
+          },
+          {
+            "@type": "Thing",
+            "name": "Local SEO"
+          },
+          {
+            "@type": "Thing",
+            "name": "Google Maps visibility"
+          }
+        ],
+        "mentions": [
+          {
+            "@type": "SoftwareApplication",
+            "@id": "{{software_id}}"
+          }
+        ],
+        "datePublished": "{{date_published}}",
+        "dateModified": "{{date_modified}}"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "@id": "{{breadcrumb_id}}",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "{{site_url}}/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "Google Business Profile Management",
+            "item": "{{site_url}}/google-business-profile-management-tool/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "{{industry_label}} in {{city_label}}",
+            "item": "{{page_url}}"
+          }
+        ]
+      }
+    ]
+  },
+  "faqpage_addon_template": {
+    "@type": "FAQPage",
+    "@id": "{{page_url}}#faq",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "{{faq_question}}",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "{{faq_answer}}"
+        }
+      }
+    ]
+  },
+  "itemlist_addon_template": {
+    "@type": "ItemList",
+    "@id": "{{page_url}}#gbp-checklist",
+    "name": "Google Business Profile checklist for {{industry_label}} in {{city_label}}",
+    "itemListOrder": "https://schema.org/ItemListOrderAscending",
+    "numberOfItems": "{{checklist_count}}",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "{{checklist_item_1}}"
+      }
+    ]
+  },
+  "offer_addon_template": {
+    "@type": "Offer",
+    "@id": "{{page_url}}#offer",
+    "name": "{{lead_magnet}} for {{industry_label}} in {{city_label}}",
+    "url": "{{page_url}}",
+    "priceCurrency": "INR",
+    "availability": "https://schema.org/InStock",
+    "itemOffered": {
+      "@id": "{{service_id}}"
+    },
+    "eligibleRegion": {
+      "@type": "City",
+      "name": "{{city_label}}"
+    }
+  },
+  "localbusiness_default_allowed": false,
+  "localbusiness_rule": "Do not use LocalBusiness unless Pinzo has truthful local office/service-area data for that city.",
+  "forbidden_schema_claims": [
+    "fake aggregateRating",
+    "fake Review",
+    "fake local address",
+    "fake pricing",
+    "guaranteed ranking",
+    "guaranteed review removal",
+    "official Google affiliation unless verified"
+  ]
+}

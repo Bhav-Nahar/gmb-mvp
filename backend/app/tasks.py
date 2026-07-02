@@ -909,6 +909,13 @@ def purge_soft_deleted_accounts_task() -> str:
                 if not org or not _past_grace(org.deleted_at):
                     db.rollback()
                     continue
+                # Backstop: normally delete_organization already cancelled the mandate at
+                # soft-delete time. Re-cancel here for orgs deleted before that existed, or
+                # deleted directly in the DB — once the subscription_id is gone with the row
+                # we can never stop the charge. Cancelling an already-cancelled sub is a
+                # harmless no-op (logged, not raised).
+                from app.services.billing.subscription_service import SubscriptionService
+                SubscriptionService.cancel_active_subscriptions(org)
                 db.delete(org)   # cascades to all children
                 db.commit()
                 purged_orgs += 1
