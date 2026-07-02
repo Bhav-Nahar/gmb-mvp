@@ -11,7 +11,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useRazorpay } from '@/hooks/useRazorpay';
 import { toast } from 'sonner';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { isPaymentVerificationError, PAYMENT_VERIFICATION_FAILED_MSG } from '@/lib/payment';
 import { trackAddPaymentInfo, trackPurchase } from '@/lib/analytics';
 import { useAuth } from '@/hooks/useAuth';
@@ -62,6 +62,16 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const unlockRupees = pending?.quote ? Math.round(pending.quote.amount_paise / 100) : null; // GST-incl total
   const unlockBaseRupees = pending?.quote?.base_paise != null ? Math.round(pending.quote.base_paise / 100) : null;
   const unlockGstRupees = pending?.quote?.gst_paise != null ? Math.round(pending.quote.gst_paise / 100) : null;
+
+  // Non-India (non-IST) visitors see a USD estimate beside the real INR charge. The card
+  // is always billed in INR — this is display only. India sees nothing extra.
+  const [showUsd, setShowUsd] = useState(false);
+  useEffect(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (!/Kolkata|Calcutta/.test(tz)) setShowUsd(true);
+  }, []);
+  // 1 USD = 100 INR (display peg). Estimate the GST-inclusive total actually charged.
+  const usdEstimate = (rupees: number) => '≈ $' + Math.round(rupees / 100).toLocaleString('en-US');
 
   const handleUnlock = async () => {
     if (submitting) return;
@@ -259,6 +269,9 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                     <span className="font-medium text-foreground">₹{unlockRupees.toLocaleString('en-IN')}</span> total
                   </p>
                 )}
+                {showUsd && unlockRupees !== null && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{usdEstimate(unlockRupees)} (charged in INR)</p>
+                )}
               </div>
               <Button
                 className="w-full sm:w-auto"
@@ -366,6 +379,9 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                   + {gstPct}% GST (₹{gstRupees.toLocaleString('en-IN')}) ={' '}
                   <span className="font-medium text-foreground">₹{totalRupees.toLocaleString('en-IN')}</span> total
                 </p>
+              )}
+              {showUsd && totalRupees !== null && (
+                <p className="text-xs text-muted-foreground mt-0.5">{usdEstimate(totalRupees)} (charged in INR)</p>
               )}
             </div>
             <Button

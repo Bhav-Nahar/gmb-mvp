@@ -396,8 +396,21 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
 
   const [pricingLocations, setPricingLocations] = useState<number>(5)
   const [pricingInterval, setPricingInterval] = useState<'monthly' | 'annual'>('monthly')
+  const [pricingUsd, setPricingUsd] = useState(false)
   const { data: basicQuote } = useQuote(pricingLocations, pricingInterval, 'basic', true)
   const { data: proQuote } = useQuote(pricingLocations, pricingInterval, 'pro', true)
+
+  // Display-only FX (1 USD = 100 INR). Razorpay still charges/settles in INR; this just
+  // shows US visitors a familiar number. ponytail: hardcoded peg, swap for live FX if it drifts.
+  const fmtRupees = (r: number) =>
+    pricingUsd ? '$' + Math.round(r / 100).toLocaleString('en-US') : '₹' + r.toLocaleString('en-IN')
+
+  // Default non-India visitors to USD. Timezone beats IP lookup: zero deps, no API call.
+  // ponytail: heuristic (VPN/traveler slips through); user can toggle. Live geo? add an IP check.
+  useEffect(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+    if (!/Kolkata|Calcutta/.test(tz)) setPricingUsd(true)
+  }, [])
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -833,6 +846,11 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
             <button onClick={() => setPricingInterval('monthly')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'monthly' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Monthly</button>
             <button onClick={() => setPricingInterval('annual')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'annual' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Yearly <span className={pricingInterval === 'annual' ? 'text-emerald-500' : 'text-emerald-500'}>· Save 20%</span></button>
           </div>
+
+          <div className="flex items-center justify-center rounded-full bg-muted/40 p-1.5 backdrop-blur-md border border-border/50 shadow-inner">
+            <button onClick={() => setPricingUsd(false)} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${!pricingUsd ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>₹ INR</button>
+            <button onClick={() => setPricingUsd(true)} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingUsd ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>$ USD</button>
+          </div>
           
           {/* Shared location slider drives both per-location plans */}
           <div className="w-full max-w-xs space-y-3 rounded-2xl border border-border/50 bg-card/40 backdrop-blur-md p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md">
@@ -851,10 +869,10 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Basic</span>
               <p className="text-xs font-medium text-muted-foreground">Everything you need to manage Google reviews & posts.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="text-4xl font-extrabold">{basicQuote ? `₹${Math.round(basicQuote.price_paise / 100).toLocaleString('en-IN')}` : '...'}</span>
+                <span className="text-4xl font-extrabold">{basicQuote ? fmtRupees(Math.round(basicQuote.price_paise / 100)) : '...'}</span>
                 <span className="text-sm font-semibold text-muted-foreground">/{pricingInterval === 'monthly' ? 'mo' : 'yr'}</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ₹${Math.round(basicQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)).toLocaleString('en-IN')} per location / month · + ${Math.round(basicQuote.gst_rate * 100)}% GST` : ''}</p>
+              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ${fmtRupees(Math.round(basicQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingUsd ? 'billed in INR' : `+ ${Math.round(basicQuote.gst_rate * 100)}% GST`}` : ''}</p>
             </div>
             <button onClick={() => handleContinueWithGoogle('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-border pt-5 text-xs font-semibold text-muted-foreground">
@@ -884,10 +902,10 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
               <p className="text-xs font-medium text-foreground/70">Rank higher on Maps & turn searches into leads.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="text-4xl font-extrabold">{proQuote ? `₹${Math.round(proQuote.price_paise / 100).toLocaleString('en-IN')}` : '...'}</span>
+                <span className="text-4xl font-extrabold">{proQuote ? fmtRupees(Math.round(proQuote.price_paise / 100)) : '...'}</span>
                 <span className="text-sm font-semibold text-muted-foreground">/{pricingInterval === 'monthly' ? 'mo' : 'yr'}</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ₹${Math.round(proQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)).toLocaleString('en-IN')} per location / month · + ${Math.round(proQuote.gst_rate * 100)}% GST` : ''}</p>
+              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ${fmtRupees(Math.round(proQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingUsd ? 'billed in INR' : `+ ${Math.round(proQuote.gst_rate * 100)}% GST`}` : ''}</p>
             </div>
             <button onClick={() => handleContinueWithGoogle('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-primary/20 pt-5 text-xs font-semibold text-foreground">

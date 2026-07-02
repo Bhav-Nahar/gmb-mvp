@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Check, X, MessageCircle, Sparkles, ArrowRight } from 'lucide-react';
 import { MarketingHeader } from '@/components/MarketingHeader';
@@ -65,6 +65,12 @@ export default function PricingPage() {
     usd
       ? '$' + Math.round(inr * USD_PER_INR).toLocaleString('en-US')
       : '₹' + inr.toLocaleString('en-IN');
+
+  // Default non-India visitors to USD (timezone heuristic; user can still toggle).
+  useEffect(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (!/Kolkata|Calcutta/.test(tz)) setUsd(true);
+  }, []);
 
   return (
     <div className="relative min-h-screen bg-background text-foreground">
