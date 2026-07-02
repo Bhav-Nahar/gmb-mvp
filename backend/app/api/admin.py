@@ -201,7 +201,7 @@ def get_organization(org_id: int, db: Session = Depends(get_db), _: User = Depen
         "users": [
             {
                 "id": u.id, "email": u.email, "name": u.name, "role": u.role,
-                "is_active": u.is_active, "viewer_scope": u.viewer_scope,
+                "phone": u.phone, "is_active": u.is_active, "viewer_scope": u.viewer_scope,
                 "created_at": u.created_at, "deleted_at": u.deleted_at,
             }
             for u in users

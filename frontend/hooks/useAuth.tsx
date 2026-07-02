@@ -9,6 +9,7 @@ export interface User {
   email: string
   role: string
   avatar?: string
+  phone?: string | null
   is_superuser?: boolean
   organization_id: number
 }

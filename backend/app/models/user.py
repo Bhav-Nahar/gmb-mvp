@@ -9,6 +9,10 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     name = Column(String, nullable=False)
     avatar = Column(String, nullable=True)
+    # Owner's contact number, captured at onboarding (gate before the audit) so sales can
+    # follow up. Nullable: legacy users predate the field; new signups fill it via the
+    # required onboarding modal. Surfaced in the super-admin panel.
+    phone = Column(String, nullable=True)
     google_id = Column(String, unique=True, index=True, nullable=False)
     role = Column(String, default="Viewer", nullable=False)  # Owner, Admin, Regional Manager, Store Manager, Viewer
     is_active = Column(Boolean, default=True, nullable=False)

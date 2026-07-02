@@ -32,7 +32,7 @@ interface OrgDetail {
   custom_price_paise: number | null
   custom_credits_per_location: number | null
 }
-interface OrgUser { id: number; email: string; name: string; role: string; is_active: boolean; viewer_scope: string | null; created_at: string; deleted_at: string | null }
+interface OrgUser { id: number; email: string; name: string; role: string; phone: string | null; is_active: boolean; viewer_scope: string | null; created_at: string; deleted_at: string | null }
 interface OrgLocation { id: number; location_name: string; billing_status: string | null; sync_status: string | null; average_rating: number | null; total_reviews: number | null; last_synced_at: string | null }
 interface OrgTx { id: number; type: string | null; amount_paise: number | null; credits: number | null; status: string | null; source: string | null; invoice_url: string | null; created_at: string }
 interface OrgAudit { id: number; action: string; details: string | null; actor_user_id: number | null; target_user_id: number | null; created_at: string }
@@ -373,6 +373,7 @@ export default function AdminOrgDetailPage() {
             <thead>
               <tr className="border-b border-border text-left text-[10px] uppercase tracking-wider text-muted-foreground">
                 <th className="px-3 py-2 font-bold">User</th>
+                <th className="px-3 py-2 font-bold">Phone</th>
                 <th className="px-3 py-2 font-bold">Role</th>
                 <th className="px-3 py-2 font-bold">Active</th>
                 <th className="px-3 py-2 font-bold text-right">Actions</th>
@@ -387,6 +388,11 @@ export default function AdminOrgDetailPage() {
                       {u.deleted_at && <span className="ml-2 text-[10px] font-bold uppercase text-red-600">deleted</span>}
                     </div>
                     <div className="text-[11px] text-muted-foreground">{u.email}</div>
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {u.phone
+                      ? <a href={`tel:${u.phone}`} className="text-xs font-semibold text-primary hover:underline">{u.phone}</a>
+                      : <span className="text-xs text-muted-foreground">—</span>}
                   </td>
                   <td className="px-3 py-2">
                     <select
