@@ -25,6 +25,7 @@ class UserOut(ORMBase):
     email: EmailStr
     name: str
     avatar: Optional[str] = None
+    phone: Optional[str] = None
     google_id: str
     role: str
     is_active: bool
@@ -44,6 +45,9 @@ class UserOut(ORMBase):
 class PreferencesUpdate(BaseModel):
     weekly_report_email: Optional[bool] = None
     lead_email_notifications: Optional[bool] = None
+
+class PhoneUpdate(BaseModel):
+    phone: str
 
 class RoleUpdate(BaseModel):
     role: str

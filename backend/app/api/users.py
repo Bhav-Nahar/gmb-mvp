@@ -19,7 +19,7 @@ from app.models.sync_log import SyncLog
 from app.models.location import Location
 from app.models.user_location_access import UserLocationAccess
 from app.models.audit_log import AuditLog
-from app.schemas.schemas import UserOut, RoleUpdate, LocationsUpdate, TransferOwnershipRequest, PreferencesUpdate
+from app.schemas.schemas import UserOut, RoleUpdate, LocationsUpdate, TransferOwnershipRequest, PreferencesUpdate, PhoneUpdate
 from app.schemas.invite import InviteCreate, InviteURLResponse, InviteVerificationOut, InviteOut, InviteWithTokenOut
 from app.models.invite import Invite
 from app.services.invite_service import invite_service
@@ -97,6 +97,27 @@ def update_my_preferences(
     db.refresh(current_user)
     current_user.is_superuser = settings.is_superadmin(current_user.email)
     return current_user
+
+@router.post("/me/phone", response_model=UserOut)
+def save_my_phone(
+    body: PhoneUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save the user's contact number, captured at onboarding before the audit is shown.
+    Stored for sales follow-up (visible in the super-admin panel). Light validation only:
+    strip formatting and require 10–15 digits — we don't verify the number."""
+    import re
+    raw = (body.phone or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if not (10 <= len(digits) <= 15):
+        raise HTTPException(status_code=400, detail="Enter a valid phone number.")
+    current_user.phone = raw
+    db.commit()
+    db.refresh(current_user)
+    current_user.is_superuser = settings.is_superadmin(current_user.email)
+    return current_user
+
 
 @router.get("/me/token-status")
 def get_token_status(
