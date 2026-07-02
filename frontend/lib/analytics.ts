@@ -2,7 +2,7 @@
 // Debug: `window.dataLayer` in console, or set NEXT_PUBLIC_ANALYTICS_DEBUG=1 to log each push.
 
 export type CtaLocation =
-  | "hero" | "pricing" | "navbar" | "header" | "footer" | "faq" | "mobile_menu" | "login_page"
+  | "hero" | "pricing" | "navbar" | "header" | "footer" | "faq" | "mobile_menu" | "login_page" | "sticky_mobile"
 
 // All params we may ever send (the agreed global schema). All optional — push only what's known.
 type EventParams = {
