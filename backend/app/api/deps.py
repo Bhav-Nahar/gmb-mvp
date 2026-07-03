@@ -220,6 +220,11 @@ def check_csrf(request: Request):
     path = request.url.path
     if path in _CSRF_EXCLUDED_PATHS:
         return
+
+    # Public microsite endpoints are unauthenticated by design — anonymous
+    # visitors have no CSRF cookie/header. They're safe: no session, rate-limited.
+    if path.startswith("/api/v1/public/"):
+        return
         
     csrf_cookie = request.cookies.get("gmb_csrf_token")
     csrf_header = request.headers.get("X-CSRF-Token")
