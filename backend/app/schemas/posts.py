@@ -64,16 +64,6 @@ class PostListResponse(BaseModel):
     page: int
     pages: int
 
-class PostVariantResponse(ORMBase):
-    id: int
-    organization_id: int
-    post_id: int
-    location_id: int
-    rendered_summary: str
-    rendered_cta_url: Optional[str]
-    rendering_variables: Optional[Any]
-    created_at: datetime
-
 class PostMediaResponse(ORMBase):
     id: int
     organization_id: int
@@ -117,17 +107,6 @@ class PublishJobResponse(ORMBase):
     published_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
-
-class PostAuditLogResponse(ORMBase):
-    id: int
-    organization_id: int
-    post_id: int
-    actor_user_id: Optional[int]
-    action: str
-    previous_status: Optional[str]
-    new_status: Optional[str]
-    log_metadata: Optional[Any]
-    created_at: datetime
 
 class CampaignAuditLogResponse(ORMBase):
     id: int

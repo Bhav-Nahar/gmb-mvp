@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2 } from 'lucide-react'
+import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2, Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -35,6 +35,11 @@ export default function Sidebar({
     { label: 'Dashboard', href: '/dashboard', icon: MapPin },
     { label: 'Leaderboard', href: '/dashboard/compare', icon: Trophy },
     { label: 'Local Rank', href: '/dashboard/local-rank', icon: Grid3x3 },
+    // AI Visibility is Owner/Admin only — hide the nav item for other roles (the
+    // backend enforces 403 regardless). Plan gating (Lite) is handled by the page guard.
+    ...(userRole && ['Owner', 'Admin'].includes(userRole)
+      ? [{ label: 'AI Visibility', href: '/dashboard/aeo', icon: Sparkles }]
+      : []),
     { label: 'Reviews', href: '/dashboard/reviews', icon: MessageSquare },
     { label: 'Posts & Media', href: '/dashboard/posts', icon: Calendar },
   ]

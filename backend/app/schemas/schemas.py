@@ -3,14 +3,6 @@ from typing import Optional, List, Any
 from pydantic import BaseModel, EmailStr
 from app.schemas.base import ORMBase
 
-# Organization schemas
-class OrganizationBase(BaseModel):
-    name: str
-
-class OrganizationOut(OrganizationBase, ORMBase):
-    id: int
-    created_at: datetime
-    
 # OAuthAccount schemas
 class OAuthAccountOut(ORMBase):
     id: int

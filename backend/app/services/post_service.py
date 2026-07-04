@@ -242,36 +242,6 @@ class PostService:
         return str(raw).lower()
 
     @staticmethod
-    def create_post_variant(db: Session, post_id: int, location_id: int, variables: dict, organization_id: int) -> PostVariant:
-        post = PostService._verify_ownership(db, Post, post_id, organization_id)
-        PostService._verify_ownership(db, Location, location_id, organization_id)
-        
-        # Rendering logic would ideally happen here using variables
-        # For Phase 1, we just store the variant record
-        rendered_cta_url = None
-        if post.cta_url:
-            from app.utils.utm_generator import generate_utm_link
-            touchpoint = PostService._get_post_type_value(post)
-            rendered_cta_url = generate_utm_link(
-                base_url=post.cta_url,
-                location_id=str(location_id),
-                touchpoint=touchpoint
-            )
-
-        variant = PostVariant(
-            organization_id=organization_id,
-            post_id=post_id,
-            location_id=location_id,
-            rendered_summary="[Placeholder Rendered Summary]", 
-            rendered_cta_url=rendered_cta_url,
-            rendering_variables=variables
-        )
-        db.add(variant)
-        db.commit()
-        db.refresh(variant)
-        return variant
-
-    @staticmethod
     def _validate_publish_eligibility(
         db: Session,
         post: Post,

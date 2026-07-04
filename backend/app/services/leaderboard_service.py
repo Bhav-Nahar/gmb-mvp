@@ -84,21 +84,6 @@ class LeaderboardService:
         return {k: v / total for k, v in w.items()}
 
     @staticmethod
-    def calculate_metric_contributions(snapshot: LeaderboardSnapshot) -> Dict[str, float]:
-        """Helper to get actual point contributions from raw scores and weights."""
-        if snapshot.composite_score is None:
-            return {}
-            
-        w = LeaderboardService.effective_weights(snapshot.health_score_input is not None)
-        return {
-            "rating_contribution": (snapshot.rating_score or 0) * w.get("average_rating", 0),
-            "health_score_contribution": (snapshot.health_score_input or 0) * w.get("health_score", 0),
-            "review_volume_contribution": (snapshot.review_volume_score or 0) * w.get("review_volume", 0),
-            "review_velocity_contribution": (snapshot.review_velocity_score or 0) * w.get("review_velocity", 0),
-            "response_rate_contribution": (snapshot.response_rate_score or 0) * w.get("response_rate", 0)
-        }
-
-    @staticmethod
     def compute_next_action(snapshot: LeaderboardSnapshot, cohort_peers: List[LeaderboardSnapshot]) -> Optional[Dict]:
         """Highest-leverage action to climb the leaderboard: the metric whose gap to the
         cohort benchmark, weighted, yields the most composite points. Returns None for

@@ -1,6 +1,5 @@
 import os
 from app.storage.base.provider import BaseStorageProvider
-from app.storage.base.models import StorageFileMetadata
 from app.storage.base.exceptions import FileNotFoundStorageError, StorageError
 from app.core.config import settings
 
@@ -62,23 +61,3 @@ class LocalStorageProvider(BaseStorageProvider):
     async def file_exists(self, key: str) -> bool:
         filepath = self._get_absolute_path(key)
         return os.path.exists(filepath)
-
-    async def get_metadata(self, key: str) -> StorageFileMetadata:
-        filepath = self._get_absolute_path(key)
-        if not os.path.exists(filepath):
-            raise FileNotFoundStorageError(f"File not found: {key}")
-        
-        try:
-            size = os.path.getsize(filepath)
-            import mimetypes
-            mime, _ = mimetypes.guess_type(filepath)
-            if not mime:
-                mime = "application/octet-stream"
-                
-            return StorageFileMetadata(
-                key=key,
-                size_bytes=size,
-                mime_type=mime
-            )
-        except Exception as e:
-            raise StorageError(f"Failed to read local file metadata: {str(e)}")

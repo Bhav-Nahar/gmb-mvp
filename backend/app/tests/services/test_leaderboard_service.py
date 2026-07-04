@@ -78,25 +78,6 @@ def test_compute_next_action():
     bad = LeaderboardSnapshot(location_id=3, is_eligible=False, composite_score=None)
     assert LeaderboardService.compute_next_action(bad, []) is None
 
-def test_calculate_metric_contributions():
-    snap = LeaderboardSnapshot(
-        composite_score=50.0,
-        rating_score=100.0,
-        response_rate_score=100.0,
-        health_score_input=100.0,
-        review_volume_score=100.0,
-        engagement_growth_score=100.0,
-        review_velocity_score=100.0
-    )
-    
-    contribs = LeaderboardService.calculate_metric_contributions(snap)
-    w = leaderboard_config.LEADERBOARD_METRIC_WEIGHTS
-    
-    assert contribs["rating_contribution"] == 100.0 * w.get("average_rating", 0)
-    assert contribs["health_score_contribution"] == 100.0 * w.get("health_score", 0)
-    assert contribs["review_volume_contribution"] == 100.0 * w.get("review_volume", 0)
-    assert contribs["review_velocity_contribution"] == 100.0 * w.get("review_velocity", 0)
-    
 def test_prior_period_label():
     assert LeaderboardService._get_prior_period_label("2026-06") == "2026-05"
     assert LeaderboardService._get_prior_period_label("2026-01") == "2025-12"

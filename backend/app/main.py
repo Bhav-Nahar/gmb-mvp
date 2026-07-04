@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
-from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays
+from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays, aeo
 from app.api.endpoints import comparison
 from app.api.deps import check_csrf, check_billing_lock, require_feature
 from app.core import plan_config
@@ -129,6 +129,7 @@ app.include_router(media.router, prefix="/api/v1/media", tags=["Media"])
 app.include_router(listing_edits.router, prefix="/api/v1", tags=["Listing Edits"])
 app.include_router(descriptions.router, prefix="/api/v1", tags=["Descriptions"])
 app.include_router(local_rank.router, prefix="/api/v1", tags=["Local Rank"])
+app.include_router(aeo.router, prefix="/api/v1", tags=["AI Visibility"])
 app.include_router(location_media.router, prefix="/api/v1", tags=["Location Media"])
 app.include_router(insights.router, prefix="/api/v1/insights", tags=["Insights"])
 app.include_router(billing.router, prefix="/api/v1/billing", tags=["Billing"])

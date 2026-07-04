@@ -42,12 +42,3 @@ class GBPReviewRaw(BaseModel):
     reviewReply: Optional[Dict[str, Any]] = None
     createTime: Optional[str] = None
     updateTime: Optional[str] = None
-
-class GBPPostRaw(BaseModel):
-    name: str
-    state: str
-    summary: Optional[str] = None
-    callToAction: Optional[Dict[str, Any]] = None
-    media: Optional[List[Dict[str, Any]]] = None
-    createTime: Optional[str] = None
-    updateTime: Optional[str] = None

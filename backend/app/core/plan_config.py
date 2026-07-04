@@ -78,6 +78,12 @@ FEATURE_LEADERBOARD = "leaderboard"    # monthly leaderboard / rankings
 FEATURE_COMPARISON = "comparison"      # competitor / location comparison
 FEATURE_LOCAL_RANK = "local_rank"      # geo-grid rank scans
 FEATURE_MICROSITE = "microsite"        # published microsite
+FEATURE_AEO = "aeo"                    # AI-search visibility (AEO) scans
+
+# AEO: both Basic and Pro get one manual sync per location per calendar month.
+# The tier differs by DEPTH, not count — Basic covers Google AI surfaces only;
+# Pro adds the third-party LLMs + brand share-of-voice.
+AEO_SYNCS_PER_MONTH = 1
 
 # Limit keys (a tier's `limits` dict caps these; absent = unlimited).
 LIMIT_MAX_LOCATIONS = "max_locations"
@@ -106,14 +112,14 @@ PLANS = {
         "name": "Basic",
         "price_tiers": LOCATION_PRICE_TIERS,            # current graduated pricing
         "credits_per_location": CREDITS_PER_LOCATION,   # 30
-        "features": list(_STANDARD_FEATURES),
+        "features": _STANDARD_FEATURES + [FEATURE_AEO],
         "limits": {},
     },
     "pro": {
         "name": "Pro",
         "price_tiers": [(10, 300_000), (25, 250_000), (None, 200_000)],  # ~₹500/loc more
         "credits_per_location": 45,
-        "features": _STANDARD_FEATURES + [FEATURE_LOCAL_RANK, FEATURE_MICROSITE],
+        "features": _STANDARD_FEATURES + [FEATURE_LOCAL_RANK, FEATURE_MICROSITE, FEATURE_AEO],
         "limits": {},
     },
 }
@@ -133,18 +139,18 @@ def plan_limit(plan_tier: str | None, key: str, default=None):
     return get_plan(plan_tier).get("limits", {}).get(key, default)
 
 
+def aeo_tier_for_plan(plan_tier: str | None) -> str | None:
+    """AEO scan depth for a plan: 'full' on Pro, 'google' on any other tier that
+    has the feature, None if the tier doesn't include AEO at all (e.g. Lite)."""
+    if not plan_has_feature(plan_tier, FEATURE_AEO):
+        return None
+    return "full" if plan_tier == "pro" else "google"
+
+
 def price_with_gst(price_paise: int) -> dict:
     """base / gst / total (paise) for a price, applying GST_RATE."""
     gst = round(price_paise * GST_RATE)
     return {"base_paise": price_paise, "gst_paise": gst, "total_paise": price_paise + gst}
-
-
-def per_location_price_paise(plan_tier: str, location_count: int) -> int:
-    """Graduated per-location price for a plan at a given location count."""
-    for upper, price in get_plan(plan_tier)["price_tiers"]:
-        if upper is None or location_count <= upper:
-            return price
-    return get_plan(plan_tier)["price_tiers"][-1][1]
 
 
 PLATFORM_AI_ACTIONS = {
