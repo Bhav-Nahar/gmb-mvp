@@ -122,3 +122,54 @@ def trigger_bulk_microsite_revalidation(location_ids: List[int]) -> None:
         logger.error(f"Bulk microsite revalidation encountered an error: {str(e)}")
     finally:
         db.close()
+
+
+async def _post_revalidate_paths(paths: List[str]) -> None:
+    """POST a batch of literal paths to the frontend revalidate route. Fire-and-forget."""
+    secret = settings.REVALIDATE_SECRET
+    if not secret:
+        logger.warning("REVALIDATE_SECRET is not set, skipping pSEO revalidation call.")
+        return
+    url = f"{settings.FRONTEND_URL.rstrip('/')}/api/revalidate"
+    headers = {"x-revalidate-secret": secret, "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, json={"paths": paths}, headers=headers)
+            resp.raise_for_status()
+            logger.info(f"Revalidated pSEO paths: {paths}")
+    except Exception as e:
+        logger.warning(f"pSEO revalidation failed for {paths}: {e}")
+
+
+def trigger_bulk_pseo_revalidation(entries: List[dict]) -> None:
+    """Revalidate pSEO pages after admin edits, publishes, or bulk imports.
+
+    Each entry is {"slug", "country", "industry_slug"}. For every entry we
+    revalidate the locale-prefixed leaf (/{locale}/gbp-management/{slug}), its
+    industry hub (/{locale}/gbp-management/{industry_slug}) and that locale's root
+    hub (/{locale}/gbp-management) — so a newly published city appears in the hub
+    listings immediately, and deletes clear the card + serve a 404. Callers pass
+    country explicitly so deleted rows (already gone from the DB) still resolve the
+    right locale. Fire-and-forget: never raises, never blocks; a miss falls back to
+    the hourly ISR cycle."""
+    entries = [e for e in (entries or []) if e and e.get("slug")]
+    if not entries:
+        return
+
+    paths = set()
+    for e in entries:
+        locale = f"en-{(e.get('country') or 'in')}"
+        base = f"/{locale}/gbp-management"
+        paths.add(base)
+        paths.add(f"{base}/{e['slug']}")
+        if e.get("industry_slug"):
+            paths.add(f"{base}/{e['industry_slug']}")
+
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_post_revalidate_paths(sorted(paths)))
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"Bulk pSEO revalidation encountered an error: {str(e)}")

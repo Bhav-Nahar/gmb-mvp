@@ -98,6 +98,7 @@ export default async function MicrositePage({ params }: { params: { slug: string
     // 404 for missing/draft/unpublished. We intentionally do NOT run middleware to
     // return a distinct 410 — that would require an uncached per-request fetch on
     // every visit. Keeping this fully static ISR; 404 and 410 both deindex in search.
+    // (pSEO landing pages live under /gbp-management/, not this root namespace.)
     notFound()
   }
 
