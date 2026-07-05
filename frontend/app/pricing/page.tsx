@@ -17,14 +17,14 @@ const PLANS = [
   {
     key: 'basic', name: 'Basic', tagline: 'For growing multi-location brands',
     monthly: 2500, annualPerMo: 2000, credits: 30, highlight: false,
-    perks: ['Unlimited locations', 'Post scheduling + reply templates', 'Auto-reply + email alerts',
-            'Team members & roles', 'Full insights & search intelligence'],
+    perks: ['Unlimited locations', 'AI Search Visibility (Google AI)', 'Post scheduling + reply templates',
+            'Auto-reply + email alerts', 'Team members & roles', 'Full insights & search intelligence'],
   },
   {
     key: 'pro', name: 'Pro', tagline: 'To rank higher & convert more',
     monthly: 3000, annualPerMo: 2400, credits: 45, highlight: false,
-    perks: ['Everything in Basic', 'Local Rank geo-grid heatmaps', 'Lead-capture microsite',
-            'Most AI credits per location'],
+    perks: ['Everything in Basic', 'Full AI Search Visibility (ChatGPT, Gemini, Perplexity)',
+            'Local Rank geo-grid heatmaps', 'Lead-capture microsite', 'Most AI credits per location'],
   },
 ] as const;
 
@@ -47,6 +47,8 @@ const FEATURES: { label: string; lite: boolean | string; basic: boolean | string
   { label: 'Search intelligence', lite: 'Top 10', basic: 'Full', pro: 'Full' },
   { label: 'Insights history', lite: '7 days', basic: 'Full', pro: 'Full' },
   { label: 'Leaderboard & comparison', lite: false, basic: true, pro: true },
+  { label: 'AI Visibility — Google AI answers', lite: false, basic: true, pro: true },
+  { label: 'AI Visibility — ChatGPT / Gemini / Perplexity', lite: false, basic: false, pro: true },
   { label: 'Local Rank (geo-grid)', lite: false, basic: false, pro: true },
   { label: 'Lead-capture microsite', lite: false, basic: false, pro: true },
 ];

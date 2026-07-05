@@ -3833,3 +3833,45 @@ def fire_purchase_conversion_task(payment_id: str, amount_paise: int, currency: 
         user_id=user_id,
     )
     return f"conversion dispatched for payment {payment_id}"
+
+
+@shared_task(name="app.tasks.run_aeo_scan_task")
+def run_aeo_scan_task(scan_id: int) -> dict:
+    """Run a queued AI-Visibility (AEO) scan via the real DataForSEO provider.
+
+    No credit charge — AEO is quota-metered (one scan/location/month), and the
+    Pending scan row already claims that quota. `aeo_service.run_scan` marks the
+    scan Failed on any provider error, which refunds the quota (Failed rows don't
+    count). Enqueued only when AEO_PROVIDER != "mock".
+    """
+    import logging
+    from app.models.aeo_scan import AEOScan
+    from app.services import aeo_service
+
+    logger = logging.getLogger(__name__)
+    db: Session = SessionLocal()
+    try:
+        scan = db.query(AEOScan).filter(AEOScan.id == scan_id).first()
+        if not scan:
+            return {"status": "error", "reason": "scan not found"}
+        location = db.query(Location).filter(Location.id == scan.location_id).first()
+        if not location:
+            scan.status = "Failed"
+            scan.error = "Location not found"
+            db.commit()
+            return {"status": "error", "reason": "location not found"}
+
+        aeo_service.run_scan(db, scan, location)
+        money = (scan.result or {}).get("money_spent")
+        logger.info("AEO scan %s finished: status=%s money_spent=%s", scan_id, scan.status, money)
+        return {"status": scan.status, "money_spent": money}
+    except Exception as e:  # noqa: BLE001 — never leave a stuck Pending row
+        db.rollback()
+        scan = db.query(AEOScan).filter(AEOScan.id == scan_id).first()
+        if scan and scan.status == "Pending":
+            scan.status = "Failed"
+            scan.error = str(e)[:500]
+            db.commit()
+        raise
+    finally:
+        db.close()

@@ -37,11 +37,6 @@ export async function enablePush(): Promise<boolean> {
   return true
 }
 
-export async function currentPushPermission(): Promise<NotificationPermission | 'unsupported'> {
-  if (!pushSupported()) return 'unsupported'
-  return Notification.permission
-}
-
 /** Whether this device currently has an active push subscription. */
 export async function isPushSubscribed(): Promise<boolean> {
   if (!pushSupported()) return false

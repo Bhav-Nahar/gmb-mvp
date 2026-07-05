@@ -10,6 +10,7 @@ import { useBillingStatus } from '@/hooks/useBilling';
 // already hides these; this covers bookmarks / typed URLs.) Matched on a path boundary so
 // /dashboard/compare (leaderboard) doesn't swallow /dashboard/comparison.
 const GATED = [
+  { prefix: '/dashboard/aeo', feature: 'aeo', name: 'AI Visibility' },
   { prefix: '/dashboard/local-rank', feature: 'local_rank', name: 'Local Rank' },
   { prefix: '/dashboard/comparison', feature: 'comparison', name: 'Comparison' },
   { prefix: '/dashboard/compare', feature: 'leaderboard', name: 'Leaderboard' },

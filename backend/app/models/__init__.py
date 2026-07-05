@@ -33,6 +33,7 @@ from app.models.location_media import LocationMedia
 from app.models.reply_template import ReplyTemplate
 from app.models.description_generation import DescriptionGeneration
 from app.models.local_rank_scan import LocalRankScan
+from app.models.aeo_scan import AEOScan
 from app.models.leaderboard_snapshot import LeaderboardSnapshot
 from app.models.enums import IneligibilityReason
 from app.models.region import Region
@@ -53,7 +54,7 @@ __all__ = [
     "LocationDailyInsight", "OrganizationSyncState", "GbpAttributeMetadata", "GbpAttributeDefinition",
     "GbpLocationAttributeRejection", "BillingWebhookEvent", "BillingTransaction",
     "RazorpayPlan", "LocationHealthScore", "KeywordMonthlyMetric", "OrganizationBrandTerm",
-    "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan", "LeaderboardSnapshot",
+    "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan", "AEOScan", "LeaderboardSnapshot",
     "IneligibilityReason", "Region", "RegionLocation", "CustomGroup", "CustomGroupLocation",
     "GroupDailyInsight", "SavedComparisonView", "Microsite", "Lead", "PushSubscription",
     "Holiday"

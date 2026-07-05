@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from app.storage.base.models import StorageFileMetadata
 
 class BaseStorageProvider(ABC):
     @abstractmethod
@@ -34,12 +33,5 @@ class BaseStorageProvider(ABC):
     async def file_exists(self, key: str) -> bool:
         """
         Checks if a file exists under the given storage key.
-        """
-        pass
-
-    @abstractmethod
-    async def get_metadata(self, key: str) -> StorageFileMetadata:
-        """
-        Retrieves file size, MIME type, and other storage metadata.
         """
         pass

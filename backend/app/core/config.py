@@ -157,6 +157,19 @@ class Settings(BaseSettings):
     DATAFORSEO_PASSWORD: str = ""
     DATAFORSEO_BASE_URL: str = "https://sandbox.dataforseo.com"
 
+    # AEO (AI-search visibility). Defaults to the "mock" provider — realistic
+    # sample results, zero external calls, zero spend — so the whole UI/UX is
+    # explorable in a sandbox before wiring the real DataForSEO AI endpoints
+    # (set AEO_PROVIDER="dataforseo"). See app/services/aeo_service.py.
+    AEO_PROVIDER: str = "mock"          # "mock" | "dataforseo"
+    AEO_QUERIES_PER_SCAN: int = 10      # auto-generated (category+city) queries
+    AEO_MAX_CUSTOM_QUERIES: int = 10    # extra queries an Owner/Admin may add per location
+    AEO_MAX_QUERIES: int = 20           # hard cap on total (custom + auto) per scan
+    # Location targeting for real (dataforseo) scans. DataForSEO wants a numeric
+    # location_code; 2356 = India (country-level). City-level codes exist but need
+    # a lookup — country-level is fine for a first pass.
+    AEO_LOCATION_CODE: int = 2356
+
     # Task Settings
     REVIEW_SYNC_CHUNK_SIZE: int = 20
     REVIEW_SYNC_SLEEP_SECONDS: float = 0.2
