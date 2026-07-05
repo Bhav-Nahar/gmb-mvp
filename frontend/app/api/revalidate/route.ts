@@ -25,15 +25,23 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { slug } = body;
+    const { slug, paths } = body;
 
-    if (!slug) {
-      return Response.json({ error: "Missing slug" }, { status: 400 });
+    // Two callers:
+    //  - microsites send { slug } -> revalidate the single-level /{slug} route
+    //  - pSEO sends { paths: [...] } -> revalidate each literal path (leaf + hubs)
+    if (Array.isArray(paths) && paths.length > 0) {
+      for (const p of paths) {
+        if (typeof p === 'string' && p.startsWith('/')) revalidatePath(p);
+      }
+      return Response.json({ revalidated: true, count: paths.length });
     }
 
-    // Revalidate the single-level microsite page route
+    if (!slug) {
+      return Response.json({ error: "Missing slug or paths" }, { status: 400 });
+    }
+
     revalidatePath(`/${slug}`);
-    
     return Response.json({ revalidated: true });
   } catch (err) {
     console.error("Error in revalidation route:", err);
