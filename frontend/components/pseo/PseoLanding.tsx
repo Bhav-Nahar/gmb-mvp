@@ -5,14 +5,14 @@ import {
 } from 'lucide-react'
 import { MarketingHeader } from '@/components/MarketingHeader'
 import { MarketingFooter } from '@/components/MarketingFooter'
-import { buildPseoJsonLd, industryHubPath, rootHubPath, type PseoPageData } from '@/lib/pseo'
+import { buildPseoJsonLd, industryHubPath, rootHubPath, pseoPath, type PseoPageData, type PseoListItem } from '@/lib/pseo'
 
 /**
  * Programmatic SEO landing page (industry x city), 13-section template.
  * Server component — pure HTML/CSS, no client JS beyond the shared header.
  * Sections with no content in the CMS blob are skipped entirely.
  */
-export default function PseoLanding({ page }: { page: PseoPageData }) {
+export default function PseoLanding({ page, siblings = [] }: { page: PseoPageData; siblings?: PseoListItem[] }) {
   const c = page.content || {}
   const industry = page.industry_label
   const city = page.city_label
@@ -39,6 +39,58 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
       </a>
     </div>
   )
+
+  // Contextual internal links (audit §8). The targets are identical on every pSEO
+  // page — only locale/industry swap — so they're derived here, not entered per page
+  // or via CSV. Point ONLY at routes that exist today (broken links hurt SEO); when
+  // the /features/* pages ship, add their href here and every page links them.
+  // Per-page `content.internal_links` (with a `section`) still merge in as overrides.
+  const defaultLinks: Record<string, { anchor: string; href: string }[]> = {
+    solutions: [{ anchor: 'Run a free GBP audit', href: '/features/gbp-audit' }],
+    reviews: [{ anchor: `AI review replies for ${industry.toLowerCase()}`, href: '/features/ai-review-replies' }],
+    posts: [{ anchor: 'Google Posts scheduler', href: '/features/google-posts-scheduler' }],
+    city: [{ anchor: 'Local rank tracking', href: '/features/local-rank-tracker' }],
+    multi: [{ anchor: 'Multi-location GBP dashboard', href: '/features/multi-location-gbp-management' }],
+  }
+  const RelatedLinks = ({ section }: { section: string }) => {
+    const cms = (c.internal_links || []).filter((l) => l.section === section).map((l) => ({ anchor: l.anchor, href: l.url }))
+    const seen = new Set<string>()
+    const links = [...(defaultLinks[section] || []), ...cms].filter((l) => !seen.has(l.href) && seen.add(l.href))
+    if (links.length === 0) return null
+    return (
+      <p className="text-center text-sm text-muted-foreground">
+        Related:{' '}
+        {links.map((l, i) => (
+          <span key={l.href}>
+            {i > 0 && ' · '}
+            <Link href={l.href} className="font-semibold text-primary underline-offset-4 hover:underline">{l.anchor}</Link>
+          </span>
+        ))}
+      </p>
+    )
+  }
+
+  // Audit-added sections. Comparison + audit checklist are near-constant, so they
+  // default here and render on every page; per-page CMS values override them. The
+  // answer block defaults from the industry/city; review examples fall back to the
+  // legacy single example so nothing regresses.
+  const answerBlock = c.answer_block || `Google Business Profile management for ${industry.toLowerCase()} in ${city} means keeping the profile updated with correct business information, categories, services, product photos, customer reviews, Google Posts, offers and performance tracking — so local customers can find and trust the business on Google Search and Maps.`
+  const comparison = (c.comparison && c.comparison.length > 0) ? c.comparison : [
+    { point: 'Review replies', manual: 'Written one by one — some slip through', pinzo: 'AI drafts every reply in your tone; you approve' },
+    { point: 'Google Posts', manual: 'Posted ad hoc, with visible gaps', pinzo: 'Scheduled ahead across every location' },
+    { point: 'Profile audits', manual: 'No clear view of what’s missing', pinzo: 'Health Score with a prioritized fix list' },
+    { point: 'Multiple locations', manual: 'Log into each listing separately', pinzo: 'One dashboard for every profile' },
+    { point: 'Local visibility', manual: 'Guesswork on where you rank', pinzo: 'Geo-grid rank tracking, street by street' },
+    { point: 'Reporting', manual: 'Manual spreadsheets', pinzo: 'Calls, directions and clicks in one report' },
+  ]
+  const auditChecklist = (c.audit_checklist && c.audit_checklist.length > 0) ? c.audit_checklist : [
+    'Profile completeness check', 'Category and service gap check', 'Review reply gap check',
+    'Google Posts activity check', 'Photo freshness check', 'Competitor profile comparison',
+    'Branch information consistency check', 'Local visibility improvement opportunities',
+  ]
+  const reviewExamples = (c.review_examples && c.review_examples.length > 0)
+    ? c.review_examples
+    : (c.example_review ? [{ review: c.example_review, reply: c.example_reply || '' }] : [])
 
   return (
     <div className="relative min-h-screen overflow-x-clip bg-background font-sans text-foreground">
@@ -73,6 +125,16 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
           {['Free 7-day trial', 'No credit card required', 'Secure Google OAuth', 'Cancel anytime'].map((t) => (
             <span key={t} className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />{t}</span>
           ))}
+        </div>
+      </section>
+
+      {/* 1b. DIRECT ANSWER (AEO) — extractable definition under the hero */}
+      <section className="pb-6">
+        <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+          <div className="rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
+            <h2 className="mb-3 text-lg font-bold text-foreground">What is Google Business Profile management for {industry.toLowerCase()} in {city}?</h2>
+            <p className="leading-relaxed text-muted-foreground">{answerBlock}</p>
+          </div>
         </div>
       </section>
 
@@ -128,15 +190,37 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
               ))}
             </div>
             <div className="pt-2"><CtaButtons location="solutions" /></div>
+            <RelatedLinks section="solutions" />
           </div>
         </section>
       )}
+
+      {/* 4b. MANUAL VS PINZO COMPARISON */}
+      <section className="py-16">
+        <div className="mx-auto max-w-4xl space-y-8 px-4 sm:px-6 lg:px-8">
+          <SectionHeading eyebrow="Manual vs Pinzo" title="Doing it by hand vs running it with Pinzo" />
+          <div className="overflow-hidden rounded-2xl border border-border shadow-sm">
+            <div className="grid grid-cols-3 border-b border-border bg-muted/30 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              <div className="p-3.5" />
+              <div className="p-3.5 text-center">Manual management</div>
+              <div className="p-3.5 text-center text-primary">With Pinzo</div>
+            </div>
+            {comparison.map((row, i) => (
+              <div key={row.point} className={`grid grid-cols-3 items-start text-xs ${i % 2 ? 'bg-muted/10' : 'bg-card'}`}>
+                <div className="p-3.5 font-bold text-foreground">{row.point}</div>
+                <div className="flex items-start gap-1.5 p-3.5 text-muted-foreground"><X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" />{row.manual}</div>
+                <div className="flex items-start gap-1.5 p-3.5 font-medium text-foreground"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />{row.pinzo}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* 5. WHAT TO ADD TO GBP FOR {INDUSTRY} */}
       {((c.gbp_categories || []).length > 0 || (c.gbp_services || []).length > 0 || (c.gbp_attributes || []).length > 0) && (
         <section className="py-16">
           <div className="mx-auto max-w-5xl space-y-8 px-4 sm:px-6 lg:px-8">
-            <SectionHeading title={`What ${industry.toLowerCase()} should add to their Google Business Profile`} sub="Complete profiles rank higher and give AI engines more to recommend. Pinzo audits every field and flags what's missing." />
+            <SectionHeading title={`What ${industry.toLowerCase()} should add to their Google Business Profile`} sub="A complete, active profile gives customers clearer information and helps search systems better understand your business. Pinzo audits every field and flags what's missing." />
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               {([
                 { label: 'Categories', items: c.gbp_categories || [], icon: Building },
@@ -160,40 +244,47 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
         </section>
       )}
 
-      {/* 6. REVIEW MANAGEMENT USE CASE */}
-      {(c.reviews_body || (c.review_themes || []).length > 0 || c.example_review) && (
+      {/* 6. REVIEW MANAGEMENT USE CASE — centered header + responsive review grid */}
+      {(c.reviews_body || (c.review_themes || []).length > 0 || reviewExamples.length > 0) && (
         <section className="border-y border-border/40 bg-muted/10 py-16">
-          <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-4 sm:px-6 lg:grid-cols-2 lg:px-8">
-            <div className="space-y-5">
+          <div className="mx-auto max-w-6xl space-y-10 px-4 sm:px-6 lg:px-8">
+            <div className="mx-auto max-w-3xl space-y-4 text-center">
               <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">Reputation management</div>
               <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Review management for {industry.toLowerCase()} in {city}</h2>
               {c.reviews_body && <p className="leading-relaxed text-muted-foreground">{c.reviews_body}</p>}
               {(c.review_themes || []).length > 0 && (
-                <div>
-                  <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">What customers mention most</p>
-                  <div className="flex flex-wrap gap-2">
-                    {(c.review_themes || []).map((t) => (
-                      <span key={t} className="rounded-full border border-border bg-card px-3 py-1.5 text-xs font-bold text-foreground shadow-sm">{t}</span>
-                    ))}
-                  </div>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  {(c.review_themes || []).map((t) => (
+                    <span key={t} className="rounded-full border border-border bg-card px-3 py-1.5 text-xs font-bold text-foreground shadow-sm">{t}</span>
+                  ))}
                 </div>
               )}
             </div>
-            {c.example_review && (
-              <div className="space-y-4 rounded-2xl border border-border bg-card p-5 shadow-lg">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-foreground">Customer review</span>
-                  <div className="flex gap-0.5 text-amber-400">{[...Array(5)].map((_, i) => <Star key={i} className="h-3 w-3 fill-current" />)}</div>
-                </div>
-                <p className="text-xs italic leading-relaxed text-muted-foreground">&quot;{c.example_review}&quot;</p>
-                {c.example_reply && (
-                  <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3.5">
-                    <div className="flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-primary" /><span className="text-[10px] font-bold uppercase tracking-wide text-primary">AI drafted reply</span></div>
-                    <p className="text-xs leading-normal text-foreground">&quot;{c.example_reply}&quot;</p>
+            {reviewExamples.length > 0 && (
+              // 1 -> centered single; 2 -> two columns; 3+ -> three columns; all stack to 1 on mobile.
+              <div className={
+                reviewExamples.length === 1 ? 'mx-auto max-w-2xl'
+                : reviewExamples.length === 2 ? 'mx-auto grid max-w-4xl gap-4 sm:grid-cols-2'
+                : 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3'
+              }>
+                {reviewExamples.map((ex, i) => (
+                  <div key={i} className="flex h-full flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-foreground">Customer review</span>
+                      <div className="flex gap-0.5 text-amber-400">{[...Array(5)].map((_, j) => <Star key={j} className="h-3 w-3 fill-current" />)}</div>
+                    </div>
+                    <p className="text-xs italic leading-relaxed text-muted-foreground">&quot;{ex.review}&quot;</p>
+                    {ex.reply && (
+                      <div className="mt-auto space-y-2 rounded-lg border border-border bg-muted/30 p-3.5">
+                        <div className="flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-primary" /><span className="text-[10px] font-bold uppercase tracking-wide text-primary">AI drafted reply</span></div>
+                        <p className="text-xs leading-normal text-foreground">&quot;{ex.reply}&quot;</p>
+                      </div>
+                    )}
                   </div>
-                )}
+                ))}
               </div>
             )}
+            <RelatedLinks section="reviews" />
           </div>
         </section>
       )}
@@ -202,7 +293,7 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
       {(c.post_ideas || []).length > 0 && (
         <section className="py-16">
           <div className="mx-auto max-w-5xl space-y-8 px-4 sm:px-6 lg:px-8">
-            <SectionHeading eyebrow="Stay active on Google" title={`Google Posts ideas for ${industry.toLowerCase()}`} sub="Fresh posts signal an active business to Google and to AI engines. Schedule these across every location with Pinzo." />
+            <SectionHeading eyebrow="Stay active on Google" title={`Google Posts ideas for ${industry.toLowerCase()}`} sub="Fresh posts help customers see recent offers, collections, announcements and updates when they view your profile. Schedule these across every location with Pinzo." />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {(c.post_ideas || []).map((idea) => (
                 <div key={idea} className="flex items-start gap-3 rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -211,6 +302,7 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
                 </div>
               ))}
             </div>
+            <RelatedLinks section="posts" />
           </div>
         </section>
       )}
@@ -219,7 +311,7 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
       {(c.photo_checklist || []).length > 0 && (
         <section className="border-y border-border/40 bg-muted/10 py-16">
           <div className="mx-auto max-w-4xl space-y-8 px-4 sm:px-6 lg:px-8">
-            <SectionHeading title={`Photo & content checklist for ${industry.toLowerCase()}`} sub="Profiles with complete, current photos get more calls and direction requests." />
+            <SectionHeading title={`Photo & content checklist for ${industry.toLowerCase()}`} sub="Current, real photos can improve customer trust before customers call or ask for directions." />
             <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {(c.photo_checklist || []).map((item) => (
                 <li key={item} className="flex items-start gap-3 rounded-xl border border-border bg-card p-4 text-sm font-medium text-foreground shadow-sm">
@@ -232,7 +324,7 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
       )}
 
       {/* 9. WHY {CITY} BUSINESSES NEED STRONGER LOCAL VISIBILITY */}
-      {(c.city_visibility_body || (c.neighborhoods || []).length > 0) && (
+      {(c.city_visibility_body || (c.neighborhoods || []).length > 0 || siblings.length > 0) && (
         <section className="py-16">
           <div className="mx-auto max-w-5xl space-y-8 px-4 sm:px-6 lg:px-8">
             <SectionHeading title={`Why ${city} businesses need stronger local visibility`} sub={c.city_visibility_body} />
@@ -248,6 +340,19 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
                 </div>
               </div>
             )}
+            {siblings.length > 0 && (
+              <div className="space-y-3 text-center">
+                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{industry} in other cities</p>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {siblings.map((s) => (
+                    <Link key={s.slug} href={pseoPath(s.locale, s.slug)} className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-bold text-foreground shadow-sm transition-colors hover:border-primary/40 hover:text-primary">
+                      <MapPin className="h-3.5 w-3.5 text-primary" />{s.city_label}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+            <RelatedLinks section="city" />
           </div>
         </section>
       )}
@@ -285,6 +390,7 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
                 </div>
               )}
             </div>
+            <RelatedLinks section="multi" />
           </div>
         </section>
       )}
@@ -309,6 +415,27 @@ export default function PseoLanding({ page }: { page: PseoPageData }) {
           </div>
         </section>
       )}
+
+      {/* 11b. FREE AUDIT / PROOF BLOCK (CRO §7.1) */}
+      <section className="py-16">
+        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+          <div className="rounded-3xl border border-primary/20 bg-primary/5 p-8 sm:p-10">
+            <div className="mx-auto max-w-2xl space-y-3 text-center">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-background px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">Free audit</div>
+              <h2 className="text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">See what your free {industry.toLowerCase()} GBP audit includes</h2>
+              <p className="text-sm text-muted-foreground">Connect Google and get a Health Score for your {city} profile in minutes. Secure Google OAuth — no password sharing.</p>
+            </div>
+            <ul className="mx-auto mt-7 grid max-w-3xl grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {auditChecklist.map((item) => (
+                <li key={item} className="flex items-start gap-2.5 rounded-xl border border-border bg-card p-3.5 text-sm font-medium text-foreground shadow-sm">
+                  <ListChecks className="mt-0.5 h-[18px] w-[18px] shrink-0 text-primary" />{item}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-8"><CtaButtons location="audit" /></div>
+          </div>
+        </div>
+      </section>
 
       {/* 12. FAQS */}
       {(c.faqs || []).length > 0 && (

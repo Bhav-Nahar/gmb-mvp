@@ -26,7 +26,12 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 
   if (page) {
     const canonical = page.canonical_url || `${SITE_URL}${pseoPath(page.locale, page.slug)}`
+    // Backend already folds the quality-score gate into index_status (noindex when
+    // score < 80), so this stays a single check.
     const noindex = page.index_status === 'noindex'
+    // Per-page social image when the CMS sets one; brand logo otherwise.
+    // ponytail: logo isn't 1200x630 — swap for a real OG image per industry when we have one.
+    const ogImage = page.content?.og_image || `${SITE_URL}/logo-horizontal-3.png`
     return {
       title: page.meta_title,
       description: page.meta_description,
@@ -37,8 +42,8 @@ export async function generateMetadata({ params }: { params: { slug: string } })
         // stays correct and future-proofs cross-market variants).
         languages: { [page.locale]: canonical, 'x-default': canonical },
       },
-      openGraph: { title: page.meta_title, description: page.meta_description, url: canonical, siteName: 'Pinzo', type: 'website' },
-      twitter: { card: 'summary_large_image', title: page.meta_title, description: page.meta_description },
+      openGraph: { title: page.meta_title, description: page.meta_description, url: canonical, siteName: 'Pinzo', type: 'website', images: [{ url: ogImage }] },
+      twitter: { card: 'summary_large_image', title: page.meta_title, description: page.meta_description, images: [ogImage] },
     }
   }
 
@@ -68,7 +73,13 @@ export default async function GbpManagementSlugPage({ params }: { params: { slug
     // which is an India page) → 404 so the two markets never serve duplicate content.
     if (!locale) redirect(pseoPath(page.locale, page.slug))
     if (locale !== page.locale) notFound()
-    return <PseoLanding page={page} />
+    // Sibling city pages (same industry + market) for contextual internal links.
+    // Link the next few after this one (wrapping) so every city gets an even share
+    // of inbound links; the hub still reaches the full set. Capped to keep it tidy.
+    const all = await listPseoPages({ industry: page.industry_slug, country: page.country })
+    const idx = all.findIndex((p) => p.slug === page.slug)
+    const siblings = idx === -1 ? [] : [...all.slice(idx + 1), ...all.slice(0, idx)].slice(0, 6)
+    return <PseoLanding page={page} siblings={siblings} />
   }
 
   // Industry hub — needs a locale to scope to a market.

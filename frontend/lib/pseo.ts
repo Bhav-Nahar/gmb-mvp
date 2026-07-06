@@ -3,12 +3,18 @@
 
 export interface PseoPair { title: string; detail: string }
 export interface PseoFaq { q: string; a: string }
+export interface PseoCompareRow { point: string; manual: string; pinzo: string }
 
 export interface PseoContent {
   badge?: string
   hero_sub?: string
   primary_cta?: string
   secondary_cta?: string
+  // Audit-added sections. All optional — sensible defaults render when absent.
+  answer_block?: string                                 // AEO direct answer under the hero
+  comparison?: PseoCompareRow[]                          // Manual-vs-Pinzo table
+  audit_checklist?: string[]                             // "free audit includes" checks
+  review_examples?: { review: string; reply: string }[] // multiple review/reply pairs
   why_matters_body?: string
   why_matters_points?: string[]
   problems?: PseoPair[]
@@ -35,7 +41,11 @@ export interface PseoContent {
   primary_keyword?: string
   secondary_keywords?: string[]
   related_pages?: { anchor: string; url: string }[]
-  internal_links?: { anchor: string; url: string }[]
+  // Optional per-page overrides. Contextual section links default from a static map
+  // in PseoLanding (same on every page); set `section` here to add an extra link to
+  // that block (reviews/posts/city/multi/solutions). No section -> footer link row only.
+  internal_links?: { anchor: string; url: string; section?: string }[]
+  og_image?: string
   region?: string
   last_updated?: string
 }

@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -75,6 +76,20 @@ def _locale(country: str) -> str:
     return f"en-{country}"
 
 
+# Approval gate: a page is served/listed as indexable only if not manually flagged
+# noindex AND its QA score clears 80. A null score is treated as ungated (existing
+# live pages don't get silently deindexed); set a score below 80 to auto-noindex.
+_QUALITY_GATE = 80
+
+
+def _effective_index_status(p: PseoPage) -> str:
+    if (p.index_status or "index") != "index":
+        return "noindex"
+    if p.quality_score is not None and p.quality_score < _QUALITY_GATE:
+        return "noindex"
+    return "index"
+
+
 def _public_payload(p: PseoPage) -> dict:
     locale = _locale(p.country)
     return {
@@ -91,7 +106,7 @@ def _public_payload(p: PseoPage) -> dict:
         # Explicit admin override only; the frontend builds the default self-canonical
         # from its own public NEXT_PUBLIC_APP_URL when this is null.
         "canonical_url": p.canonical_url or None,
-        "index_status": p.index_status or "index",
+        "index_status": _effective_index_status(p),
         "quality_score": p.quality_score,
         "content": p.content or {},
         "published_at": p.published_at.isoformat() if p.published_at else None,
@@ -118,6 +133,7 @@ def list_published_pages(
         .filter(
             PseoPage.status == PseoPageStatus.PUBLISHED.value,
             PseoPage.index_status == "index",
+            or_(PseoPage.quality_score.is_(None), PseoPage.quality_score >= _QUALITY_GATE),
         )
     )
     if industry:
@@ -360,7 +376,7 @@ IDENTITY_COLS = ["slug", "country", "industry_label", "industry_slug", "city_lab
                  "meta_title", "meta_description", "h1", "canonical_url", "index_status",
                  "quality_score", "status"]
 CONTENT_TEXT_COLS = [
-    "badge", "hero_sub", "primary_cta", "secondary_cta",
+    "badge", "hero_sub", "primary_cta", "secondary_cta", "answer_block",
     "why_matters_body", "reviews_body", "example_review", "example_reply",
     "city_visibility_body", "final_heading", "final_sub", "final_button",
     # Softer SEO/meta fields — stored in content JSON, rendered where relevant.
@@ -371,12 +387,19 @@ CONTENT_LIST_COLS = [
     "review_themes", "post_ideas", "photo_checklist", "neighborhoods",
     "single_points", "multi_points", "secondary_keywords",
 ]
-# Pair cells: "Title :: detail" per item. internal_links/related_pages use "Anchor :: url".
-CONTENT_PAIR_COLS = ["problems", "solutions", "monthly_workflow", "faqs", "internal_links", "related_pages"]
+# Pair cells: "Title :: detail" per item.
+CONTENT_PAIR_COLS = ["problems", "solutions", "monthly_workflow", "faqs"]
+# Tuple cells: split on every "::" into typed dicts per item.
+#   review_examples: "review :: reply"
+#   related_pages:   "anchor :: url"  (optional editorial cross-links)
+# CSV holds only per-page content. Excluded on purpose because the template
+# auto-generates them or renders a near-constant default (override via admin JSON
+# if ever needed): internal_links, comparison, audit_checklist, og_image.
+CONTENT_TUPLE_COLS = ["review_examples", "related_pages"]
 # `url` and `schema_type` are accepted in the header but ignored: url is derived from
 # locale+slug, schema_type is generated server-side to keep structured data valid.
 IGNORED_COLS = ["url", "schema_type"]
-ALL_COLS = IDENTITY_COLS + CONTENT_TEXT_COLS + CONTENT_LIST_COLS + CONTENT_PAIR_COLS + IGNORED_COLS
+ALL_COLS = IDENTITY_COLS + CONTENT_TEXT_COLS + CONTENT_LIST_COLS + CONTENT_PAIR_COLS + CONTENT_TUPLE_COLS + IGNORED_COLS
 
 
 def _split_list(cell: str) -> list[str]:
@@ -391,6 +414,18 @@ def _split_pairs(cell: str) -> list[dict]:
     return out
 
 
+def _split_tuples(cell: str) -> list[list[str]]:
+    """Each '|'-separated item split on every '::' into stripped parts."""
+    return [[p.strip() for p in item.split("::")] for item in _split_list(cell)]
+
+
+def _map_tuple(col: str, parts: list[str]) -> dict:
+    g = lambda i: parts[i] if i < len(parts) else ""  # parts already stripped
+    if col == "review_examples":
+        return {"review": g(0), "reply": g(1)}
+    return {"anchor": g(0), "url": g(1)}  # related_pages
+
+
 def _row_to_page_in(row: dict[str, str]) -> PseoPageIn:
     content: dict[str, Any] = {}
     for col in CONTENT_TEXT_COLS:
@@ -402,12 +437,12 @@ def _row_to_page_in(row: dict[str, str]) -> PseoPageIn:
     for col in CONTENT_PAIR_COLS:
         if (row.get(col) or "").strip():
             content[col] = _split_pairs(row[col])
-    # FAQs read better as q/a; link lists as anchor/url.
+    # FAQs read better as q/a.
     if "faqs" in content:
         content["faqs"] = [{"q": f["title"], "a": f["detail"]} for f in content["faqs"]]
-    for link_col in ("internal_links", "related_pages"):
-        if link_col in content:
-            content[link_col] = [{"anchor": p["title"], "url": p["detail"]} for p in content[link_col]]
+    for col in CONTENT_TUPLE_COLS:
+        if (row.get(col) or "").strip():
+            content[col] = [_map_tuple(col, parts) for parts in _split_tuples(row[col])]
 
     qs = (row.get("quality_score") or "").strip()
     try:
@@ -466,6 +501,8 @@ def admin_import_columns(_: User = Depends(superadmin_required)):
         "pair_separator": "::",
         "pair_columns": CONTENT_PAIR_COLS,
         "list_columns": CONTENT_LIST_COLS,
+        # Multi-field cells: "a :: b [:: c]" per item, items joined by "|".
+        "tuple_columns": CONTENT_TUPLE_COLS,
     }
 
 
