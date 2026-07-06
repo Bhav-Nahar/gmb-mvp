@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next'
 import { listPseoPages, pseoPath, industryHubPath, rootHubPath } from '@/lib/pseo'
+import { FEATURES } from '@/lib/features'
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
 
@@ -13,6 +14,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE_URL}/`, changeFrequency: 'weekly', priority: 1 },
     { url: `${SITE_URL}/pricing`, changeFrequency: 'weekly', priority: 0.8 },
     { url: `${SITE_URL}/google-business-profile-management`, changeFrequency: 'weekly', priority: 0.8 },
+    { url: `${SITE_URL}/features`, changeFrequency: 'weekly', priority: 0.7 },
+    ...FEATURES.map((f) => ({ url: `${SITE_URL}/features/${f.slug}`, changeFrequency: 'monthly' as const, priority: 0.7 })),
     { url: `${SITE_URL}/contact`, changeFrequency: 'monthly', priority: 0.3 },
     { url: `${SITE_URL}/privacy`, changeFrequency: 'yearly', priority: 0.1 },
     { url: `${SITE_URL}/terms`, changeFrequency: 'yearly', priority: 0.1 },
