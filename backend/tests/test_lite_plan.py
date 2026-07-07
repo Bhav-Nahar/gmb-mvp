@@ -78,16 +78,19 @@ def test_lite_has_no_premium_features_and_tight_limits():
 # --- central feature gate ----------------------------------------------------
 
 def test_require_feature_blocks_lite_allows_basic(db):
+    import types
     from app.api.deps import require_feature
     gate = require_feature(plan_config.FEATURE_LEADERBOARD)
+    # Minimal stand-in for the Request the dep now uses for per-request org caching.
+    _req = lambda: types.SimpleNamespace(state=types.SimpleNamespace())
 
     _, lite_user = _org_user(db, "lite")
     with pytest.raises(HTTPException) as exc:
-        gate(db=db, current_user=lite_user)
+        gate(request=_req(), db=db, current_user=lite_user)
     assert exc.value.status_code == 403
 
     _, basic_user = _org_user(db, "basic")
-    assert gate(db=db, current_user=basic_user) is None   # allowed
+    assert gate(request=_req(), db=db, current_user=basic_user) is None   # allowed
 
 
 # --- 1-location cap (anti-cannibalization) -----------------------------------

@@ -61,14 +61,8 @@ async def get_form_schema(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
+    # require_location_access already fetched and org-scoped this row.
     location_id = location.id
-    location = db.query(Location).filter(
-        Location.id == location_id,
-        Location.organization_id == current_user.organization_id
-    ).first()
-    
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
 
     cache_key = f"location:attributes_schema:{location_id}"
     redis_client = None

@@ -565,13 +565,11 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             sync_reviews_chunk_task.delay(chunk, organization_id, run_type, user_id)
             time.sleep(0.1)
             
-        # Trigger attribute sync
-        for loc_id in sync_jobs:
-            sync_location_attributes_task.delay(loc_id)
-
-        # Trigger gallery-photo reconciliation (pulls existing Google photos in)
-        for loc_id in sync_jobs:
-            sync_location_media_task.delay(loc_id)
+        # Trigger attribute + gallery-photo sync, chunked like reviews above:
+        # one dispatch per ~20 locations instead of two per location. Cuts
+        # broker commands and per-task overhead ~40x for large orgs.
+        for i in range(0, len(sync_jobs), chunk_size):
+            sync_location_extras_chunk_task.delay(sync_jobs[i:i + chunk_size])
             
         # Log successful sync operation
         log_message = f"Synchronized {synced_count} locations successfully."
@@ -1432,11 +1430,15 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
                     campaign.status = CampaignStatus.PROCESSING.value
                     db.commit()
                 
-                if current_retry < 30: # 5 minutes total (30 retries * 10 seconds)
-                    logger.info(f"Campaign {campaign_id}: Media is still optimizing. Retrying orchestrator task in 10 seconds. (Retry {current_retry + 1}/30)")
+                if current_retry < 12: # ~5.5 min total wall clock with backoff below
+                    # Backoff 10s -> 20s -> 40s -> 60s cap: media usually optimizes in
+                    # the first minute (fast retries preserved), but a slow job no longer
+                    # re-runs this whole task every 10s — 12 executions max instead of 30.
+                    countdown = min(60, 10 * (2 ** min(current_retry, 3)))
+                    logger.info(f"Campaign {campaign_id}: Media is still optimizing. Retrying orchestrator task in {countdown} seconds. (Retry {current_retry + 1}/12)")
                     db.commit()
                     db.close()
-                    raise self.retry(countdown=10, max_retries=30)
+                    raise self.retry(countdown=countdown, max_retries=12)
                 else:
                     campaign.status = CampaignStatus.FAILED.value
                     db.add(CampaignAuditLog(
@@ -1446,7 +1448,7 @@ def orchestrate_campaign_task(self, campaign_id: int, organization_id: int, loca
                         action="failed",
                         previous_status=CampaignStatus.PROCESSING.value,
                         new_status=CampaignStatus.FAILED.value,
-                        log_metadata={"error": "Media optimization timed out (exceeded 5 minutes)."}
+                        log_metadata={"error": "Media optimization timed out (exceeded 10 minutes)."}
                     ))
                     db.commit()
                     return {"status": "error", "reason": "Media optimization timed out."}
@@ -3204,15 +3206,21 @@ def sync_all_insights_beat_task() -> dict:
     """
     import datetime
     from app.models.organization import Organization
+    from app.services.billing.entitlement_service import EntitlementService
     db: Session = SessionLocal()
     try:
         orgs = db.query(Organization).all()
         today = datetime.date.today()
         yesterday = today - datetime.timedelta(days=1)
         start_date = today - datetime.timedelta(days=7)
-        
+
         enqueued_count = 0
         for org in orgs:
+            # Locked/expired orgs get no paid processing — same guard as
+            # sync_all_organizations_task. Skipping here saves the child task's
+            # Redis lock + sync-state writes per locked org every night.
+            if EntitlementService.is_org_locked(org):
+                continue
             sync_organization_insights_task.delay(
                 organization_id=org.id,
                 start_date_str=start_date.isoformat(),
@@ -3321,6 +3329,28 @@ def sync_location_attributes_task(location_id: int) -> dict:
         raise e
     finally:
         db.close()
+
+@shared_task(name="app.tasks.sync_location_extras_chunk_task")
+def sync_location_extras_chunk_task(location_ids: list) -> dict:
+    """Attribute + gallery sync for a batch of locations.
+
+    Runs the two single-location tasks in-process for each id. The single-id
+    tasks stay as-is because the API/webhook layers still dispatch them
+    individually by name (billing.py, location_media.py, webhook_service.py).
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    for loc_id in location_ids:
+        try:
+            sync_location_attributes_task(loc_id)
+        except Exception as e:
+            logger.error(f"attribute sync failed for location {loc_id}: {e}")
+        try:
+            sync_location_media_task(loc_id)
+        except Exception as e:
+            logger.error(f"media sync failed for location {loc_id}: {e}")
+    return {"status": "success", "count": len(location_ids)}
+
 
 @shared_task(name="app.tasks.sync_location_media_task")
 def sync_location_media_task(location_id: int) -> dict:

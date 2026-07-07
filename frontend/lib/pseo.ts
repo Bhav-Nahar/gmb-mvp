@@ -99,7 +99,9 @@ function apiBase(): string {
 
 export async function getPseoPage(slug: string): Promise<PseoPageData | null> {
   try {
-    const res = await fetch(`${apiBase()}/public/pseo/${slug}`, { next: { revalidate: 3600 } })
+    // 24h ISR. Tagged twice: 'pseo' lets admin publishes bust everything at once;
+    // 'pseo:{slug}' lets the per-page flush button bust just this page.
+    const res = await fetch(`${apiBase()}/public/pseo/${slug}`, { next: { revalidate: 86400, tags: ['pseo', `pseo:${slug}`] } })
     if (!res.ok) return null
     return res.json()
   } catch (err) {
@@ -126,7 +128,8 @@ export async function listPseoPages(opts?: { industry?: string; country?: string
     if (opts?.industry) params.set('industry', opts.industry)
     if (opts?.country) params.set('country', opts.country)
     const qs = params.toString() ? `?${params}` : ''
-    const res = await fetch(`${apiBase()}/public/pseo${qs}`, { next: { revalidate: 3600 } })
+    // 24h ISR; 'pseo' tag so publishes/deletes refresh hubs + sitemap data immediately.
+    const res = await fetch(`${apiBase()}/public/pseo${qs}`, { next: { revalidate: 86400, tags: ['pseo'] } })
     if (!res.ok) return []
     const data = await res.json()
     return data.pages || []

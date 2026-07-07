@@ -1,11 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
-import redis
 from app.models.organization import Organization
 from app.core.config import settings
-
-def get_redis_client() -> redis.Redis:
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+from app.core.redis_client import get_redis
 
 class EntitlementService:
     """Service to handle organization locks and trial/subscription lifecycle transitions."""
@@ -54,7 +51,7 @@ class EntitlementService:
         Scan and transition expired trials and subscriptions.
         Uses a Redis lock to ensure only one worker executes this at a time.
         """
-        redis_client = get_redis_client()
+        redis_client = get_redis()
         lock = redis_client.lock("lock:transition_expired_subscriptions", timeout=300)
         
         if not lock.acquire(blocking=False):

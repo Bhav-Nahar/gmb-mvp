@@ -22,6 +22,14 @@ def get_current_user(
     request: Request,
     db: Session = Depends(get_db)
 ) -> User:
+    # Per-request cache: check_billing_lock (global dep) resolves the user
+    # manually before the route's Depends(get_current_user) runs, which FastAPI's
+    # dependency cache can't dedupe — without this every mutating request paid
+    # the User + Organization queries twice.
+    cached = getattr(request.state, "current_user", None)
+    if cached is not None:
+        return cached
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -89,7 +97,18 @@ def get_current_user(
             )
             set_committed_value(user, "organization_id", target_org_id)
 
+    request.state.current_user = user
     return user
+
+
+def _get_request_org(request: Request, db: Session, organization_id: int) -> Optional[Organization]:
+    """Per-request Organization cache shared by check_billing_lock and
+    require_feature so a gated mutating request loads the org row once."""
+    org = getattr(request.state, "org", None)
+    if org is None or org.id != organization_id:
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        request.state.org = org
+    return org
 
 class RoleChecker:
     def __init__(self, allowed_roles: list[str]):
@@ -109,8 +128,8 @@ def require_feature(feature: str):
     leaderboard, comparison, local_rank, microsite) — see plan_config.PLANS."""
     from app.core import plan_config
 
-    def _dep(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> None:
-        org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    def _dep(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> None:
+        org = _get_request_org(request, db, current_user.organization_id)
         if not org or not plan_config.plan_has_feature(org.plan_tier, feature):
             raise HTTPException(
                 status_code=403,
@@ -278,6 +297,6 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
     if not current_user.organization_id:
         return
 
-    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    org = _get_request_org(request, db, current_user.organization_id)
     if org and EntitlementService.is_org_locked(org):
         raise HTTPException(status_code=402, detail="Organization is locked. Please update your subscription.")

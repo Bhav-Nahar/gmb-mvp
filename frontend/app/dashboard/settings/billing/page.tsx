@@ -243,11 +243,15 @@ export default function BillingPage() {
   useEffect(() => {
     if (!billing) return;
 
-    // Poll every 3 seconds if we are in a pending activation or locked state, as webhook might fix it
-    if ((billing.subscription_status === 'trial' && !billing.trial_ends_at) || billing.is_org_locked) {
+    // Pending activation is a short-lived webhook race — poll fast (3s).
+    // A locked org can stay locked for days — poll slow (30s) or it hammers
+    // /billing/status for as long as the tab stays open. Both skip hidden tabs.
+    const pendingActivation = billing.subscription_status === 'trial' && !billing.trial_ends_at;
+    if (pendingActivation || billing.is_org_locked) {
       const interval = setInterval(() => {
+        if (document.visibilityState === 'hidden') return;
         refetch();
-      }, 3000);
+      }, pendingActivation ? 3000 : 30000);
       return () => clearInterval(interval);
     }
   }, [billing, refetch]);
