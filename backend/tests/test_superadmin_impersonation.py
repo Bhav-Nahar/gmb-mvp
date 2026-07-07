@@ -45,6 +45,7 @@ class _FakeRequest:
         self.headers = headers or {}
         self.method = method
         self.url = types.SimpleNamespace(path=path)
+        self.state = types.SimpleNamespace()  # real Requests always carry .state
 
 
 class SuperadminImpersonationTests(unittest.TestCase):

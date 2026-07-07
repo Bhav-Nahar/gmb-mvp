@@ -97,7 +97,9 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
 
   useEffect(() => {
     if (!syncState.insights_sync_in_progress) return
-    const t = setInterval(fetchSyncStatus, 5000)
+    const t = setInterval(() => {
+      if (document.visibilityState !== 'hidden') fetchSyncStatus()
+    }, 5000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncState.insights_sync_in_progress])

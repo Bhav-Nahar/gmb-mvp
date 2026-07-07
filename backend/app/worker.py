@@ -36,9 +36,17 @@ celery.conf.update(
         'socket_connect_timeout': 30,
         'fanout_prefix': True,
         'fanout_patterns': True,
-        'polling_interval': 60.0,
+        'polling_interval': 120.0, # Idle maintenance/visibility-scan cadence. Real tasks
+                                   # still dispatch instantly (BRPOP wakes on LPUSH); this
+                                   # only thins idle polling. Doubled 60->120 to halve the
+                                   # residual idle read stream on Upstash's per-command quota.
     },
     broker_pool_limit=5, # Limit concurrent connections
+    # Single worker: no peers to gossip/sync with and no need for the remote-control
+    # pidbox. The pidbox is a fanout queue the worker polls every loop even when idle —
+    # a steady, pointless Redis read source on Upstash. Kill it.
+    worker_enable_remote_control=False,
+    worker_send_task_events=False,
 )
 
 if settings.REDIS_URL.startswith("rediss://"):
@@ -70,11 +78,11 @@ celery.conf.beat_schedule = {
     },
     "check-scheduled-posts": {
         "task": "app.tasks.check_scheduled_posts_task",
-        "schedule": 180.0, # Every 3 minutes. The task publishes everything with
+        "schedule": 300.0, # Every 5 minutes. The task publishes everything with
                            # scheduled_at <= now (oldest-first, batched), so cadence
-                           # only sets max publish lag, not correctness. 3 min (vs 60s)
-                           # cuts this — the most frequent beat job — ~3x in Redis
-                           # commands + DB checks, at up to ~3 min publish delay.
+                           # only sets max publish lag, not correctness. Raised 180->300
+                           # to further cut this — the most frequent beat job — in Redis
+                           # commands + worker wakeups, at up to ~5 min publish delay.
     },
     "archive-activity-logs-daily": {
         "task": "app.tasks.archive_old_activity_logs_task",

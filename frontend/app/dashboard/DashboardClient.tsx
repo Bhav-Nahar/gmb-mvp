@@ -269,6 +269,7 @@ function DashboardContent() {
 
     let pollCount = 0
     onboardingIntervalRef.current = setInterval(async () => {
+      if (document.visibilityState === 'hidden') return // resume when tab is visible again
       pollCount++
 
       try {
@@ -347,6 +348,7 @@ function DashboardContent() {
     let pollCount = 0;
 
     locationPollingIntervalRef.current = setInterval(() => {
+      if (document.visibilityState === 'hidden') return; // don't burn the poll budget on a hidden tab
       pollCount++;
       loadLocations(false);
       if (pollCount >= MAX_LOCATION_POLLS && locationPollingIntervalRef.current) {
@@ -659,6 +661,10 @@ function DashboardContent() {
     let sawInProgress = false
     let attempts = 0
     const tick = async () => {
+      if (document.visibilityState === 'hidden') { // pause polling while hidden, resume on return
+        syncPollRef.current = setTimeout(tick, 2500)
+        return
+      }
       attempts++
       let s: any = null
       try { s = await api.get('/locations/sync-status') } catch { /* transient — retry */ }

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import {
   Plus, Upload, Download, Trash2, Loader2, Pencil, Globe, EyeOff, ExternalLink,
-  Search, ArrowLeft, Save, AlertTriangle, CheckCircle2, FileSpreadsheet,
+  Search, ArrowLeft, Save, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw,
 } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -212,6 +212,18 @@ export default function AdminPseoPage() {
       await load()
     } catch (e: any) {
       setError(e.message || 'Status change failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const flushCache = async (row: PageRow) => {
+    setBusy(true); setError('')
+    try {
+      await api.post(`/admin/pseo/${row.id}/flush-cache`, {})
+      flash(`Cache flushed for /${row.slug} — changes are live now.`)
+    } catch (e: any) {
+      setError(e.message || 'Cache flush failed')
     } finally {
       setBusy(false)
     }
@@ -435,6 +447,9 @@ export default function AdminPseoPage() {
                   <div className="flex items-center justify-end gap-1.5">
                     {p.status === 'published' && (
                       <a href={`/${p.locale}/gbp-management/${p.slug}`} target="_blank" rel="noopener noreferrer" title="View live" className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground"><ExternalLink className="h-3.5 w-3.5" /></a>
+                    )}
+                    {p.status === 'published' && (
+                      <button onClick={() => flushCache(p)} disabled={busy} title="Flush cache (this page only)" className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground disabled:opacity-50"><RefreshCw className="h-3.5 w-3.5" /></button>
                     )}
                     <button onClick={() => openEdit(p)} disabled={busy} title="Edit" className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground disabled:opacity-50"><Pencil className="h-3.5 w-3.5" /></button>
                     {p.status === 'published' ? (

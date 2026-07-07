@@ -26,7 +26,7 @@ from app.api.deps import superadmin_required
 from app.core.redis_client import get_redis
 from app.models.pseo_page import PseoPage, PseoPageStatus
 from app.models.user import User
-from app.services.revalidation_service import trigger_bulk_pseo_revalidation
+from app.services.revalidation_service import trigger_bulk_pseo_revalidation, trigger_pseo_page_flush
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +352,21 @@ def _set_status(page_id: int, new_status: str, db: Session) -> dict:
     db.commit()
     _invalidate(page.slug, page.country, page.industry_slug)
     return _admin_row(page)
+
+
+@admin_router.post("/{page_id:int}/flush-cache")
+def admin_flush_page_cache(page_id: int, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    """Flush the ISR + backend caches for ONE page so its data changes go live now,
+    without busting any other pSEO page (unlike publish, which uses the global tag)."""
+    page = db.query(PseoPage).get(page_id)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    try:
+        get_redis().delete(_cache_key(page.slug))
+    except Exception:
+        pass
+    trigger_pseo_page_flush(page.slug, page.country)
+    return {"flushed": True, "slug": page.slug, "path": f"/{_locale(page.country)}/gbp-management/{page.slug}"}
 
 
 @admin_router.delete("/{page_id}")
