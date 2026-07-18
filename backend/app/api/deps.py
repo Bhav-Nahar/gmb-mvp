@@ -130,12 +130,30 @@ def require_feature(feature: str):
 
     def _dep(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> None:
         org = _get_request_org(request, db, current_user.organization_id)
+        # Card-required onboarding: a premium capability is also locked until the trial is
+        # started (or the org is paying). Checked before the tier check so an onboarding
+        # org gets 'trial_required' (402), not a misleading 'upgrade your tier' (403).
+        if org and settings.CARD_REQUIRED_ONBOARDING and not EntitlementService.is_premium_unlocked(org):
+            raise HTTPException(status_code=402, detail="trial_required: start your free trial to unlock this.")
         if not org or not plan_config.plan_has_feature(org.plan_tier, feature):
             raise HTTPException(
                 status_code=403,
                 detail=f"upgrade_required: your plan does not include {feature.replace('_', ' ')}.",
             )
     return _dep
+
+
+def require_premium(request: Request, db: Session = Depends(get_db),
+                    current_user: User = Depends(get_current_user)) -> None:
+    """402 'trial_required' for premium DATA reads that aren't tied to a specific tier
+    feature (e.g. insights/performance). No-op when CARD_REQUIRED_ONBOARDING is off, so
+    the legacy frictionless flow is untouched. Apply at the router level for premium
+    routers whose reads must not leak to a pre-payment onboarding org."""
+    if not settings.CARD_REQUIRED_ONBOARDING:
+        return
+    org = _get_request_org(request, db, current_user.organization_id)
+    if org and not EntitlementService.is_premium_unlocked(org):
+        raise HTTPException(status_code=402, detail="trial_required: start your free trial to unlock this.")
 
 
 # Predefined role dependencies
@@ -285,7 +303,11 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
         "/api/v1/billing/checkout-subscription",
         "/api/v1/billing/buy-credits",
         "/api/v1/billing/confirm",
-        "/api/v1/webhooks/razorpay"
+        "/api/v1/webhooks/razorpay",
+        # Onboarding phone capture and a retry-sync both run BEFORE the trial starts, so
+        # they must not be blocked by the onboarding mutation gate below.
+        "/api/v1/users/me/phone",
+        "/api/v1/locations/sync",
     })
     
     if request.url.path in _WHITELIST:
@@ -300,3 +322,8 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
     org = _get_request_org(request, db, current_user.organization_id)
     if org and EntitlementService.is_org_locked(org):
         raise HTTPException(status_code=402, detail="Organization is locked. Please update your subscription.")
+    # Card-required onboarding: a pre-payment org can view its audit but must not perform
+    # premium write actions (posts, manual replies, listing edits) before starting the
+    # trial. Billing/auth mutations are whitelisted above, so Start-Trial still works.
+    if org and settings.CARD_REQUIRED_ONBOARDING and EntitlementService.is_onboarding(org):
+        raise HTTPException(status_code=402, detail="trial_required: start your free trial to make changes.")

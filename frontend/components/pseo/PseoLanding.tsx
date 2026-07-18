@@ -19,6 +19,12 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
   const jsonLd = buildPseoJsonLd(page)
   const primaryCta = c.primary_cta || 'Start Free Trial'
   const secondaryCta = c.secondary_cta || 'Book a Demo'
+  // Non-India pSEO pages present pricing in USD by default; India (country 'in') stays in ₹.
+  // Display-only: Razorpay still charges INR. 'From' price = Lite plan (₹999/mo); the USD
+  // figure uses the same 1 USD = ₹100 peg as /pricing.
+  const isIndia = page.country === 'in'
+  const fromPrice = isIndia ? '₹999' : '$10'
+  const pricingHref = isIndia ? '/pricing' : '/pricing?ccy=usd'
   const whatsappDemo = 'https://wa.me/917021052482?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo for my ${industry.toLowerCase()} business in ${city}.`)
 
   const SectionHeading = ({ eyebrow, title, sub }: { eyebrow?: string; title: string; sub?: string }) => (
@@ -126,6 +132,11 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
             <span key={t} className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />{t}</span>
           ))}
         </div>
+        <p className="text-xs font-medium text-muted-foreground">
+          Plans from <span className="font-semibold text-foreground">{fromPrice}/mo</span>
+          {' · '}
+          <Link href={pricingHref} className="underline underline-offset-2 hover:text-foreground">see full pricing</Link>
+        </p>
       </section>
 
       {/* 1b. DIRECT ANSWER (AEO) — extractable definition under the hero */}
@@ -474,7 +485,7 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
           <Link href={industryHubPath(page.locale, page.industry_slug)} className="inline-flex items-center gap-1.5 hover:text-foreground"><MapPin className="h-3.5 w-3.5" />{industry} in other cities</Link>
           <Link href={rootHubPath(page.locale)} className="inline-flex items-center gap-1.5 hover:text-foreground"><Building className="h-3.5 w-3.5" />All industries</Link>
           <Link href="/" className="inline-flex items-center gap-1.5 hover:text-foreground"><Search className="h-3.5 w-3.5" />AI Visibility platform</Link>
-          <Link href="/pricing" className="inline-flex items-center gap-1.5 hover:text-foreground"><ListChecks className="h-3.5 w-3.5" />Pricing</Link>
+          <Link href={pricingHref} className="inline-flex items-center gap-1.5 hover:text-foreground"><ListChecks className="h-3.5 w-3.5" />Pricing</Link>
           {(c.related_pages || []).map((r) => (
             <a key={r.url} href={r.url} className="inline-flex items-center gap-1.5 hover:text-foreground"><ArrowRight className="h-3.5 w-3.5" />{r.anchor}</a>
           ))}

@@ -1,15 +1,19 @@
 import logging
+import re
 import razorpay
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from app.core.config import settings
 from app.core import plan_config
 from app.models.organization import Organization
 from app.models.location import Location
+from app.models.user import User
+from app.models.oauth_account import OAuthAccount
+from app.core.redis_client import get_redis
 from app.services.billing.pricing_service import PricingService
 
 logger = logging.getLogger(__name__)
@@ -19,6 +23,17 @@ logger = logging.getLogger(__name__)
 _DAYS_IN_CYCLE = {"monthly": 30, "annual": 365}
 # Razorpay rejects orders below ₹1. Floor tiny prorated amounts to this.
 _MIN_ORDER_PAISE = 100
+
+
+def normalize_phone(raw: str | None) -> str | None:
+    """Canonicalize an Indian phone to '+91XXXXXXXXXX' so the trial-abuse dedup can't be
+    defeated by formatting (spaces, dashes, +91, leading 0). Strips non-digits and keeps
+    the last 10 digits. Returns None if there aren't at least 10 digits. Storing and
+    comparing this canonical form is what makes the phone a reliable one-trial identity."""
+    digits = re.sub(r"\D", "", raw or "")
+    if len(digits) < 10:
+        return None
+    return "+91" + digits[-10:]
 
 
 class SubscriptionService:
@@ -58,8 +73,11 @@ class SubscriptionService:
         return "test" if (settings.RAZORPAY_KEY_ID or "").startswith("rzp_test_") else "live"
 
     @staticmethod
-    def ensure_razorpay_customer(db: Session, org_id: int, org_name: str, user_email: str) -> str:
-        """Get-or-create the org's Razorpay customer id under a row lock."""
+    def ensure_razorpay_customer(db: Session, org_id: int, org_name: str, user_email: str,
+                                 contact: str | None = None) -> str:
+        """Get-or-create the org's Razorpay customer id under a row lock. `contact` (the
+        owner's phone) is attached on first create for UPI Autopay / receipts; ignored on
+        an existing customer (create is idempotent by email)."""
         stmt = select(Organization).where(Organization.id == org_id).with_for_update()
         org = db.scalars(stmt).first()
         if not org:
@@ -83,12 +101,15 @@ class SubscriptionService:
             # fail_existing=0 tells Razorpay to return the existing customer for this
             # email instead of throwing "already exists". This makes the call idempotent
             # and avoids extra list API calls (which were causing rate-limit 429s).
-            customer = client.customer.create(data={
+            customer_data = {
                 "name": org_name,
                 "email": user_email,
                 "fail_existing": "0",
                 "notes": {"organization_id": str(org_id)},
-            })
+            }
+            if contact:
+                customer_data["contact"] = contact
+            customer = client.customer.create(data=customer_data)
             cust_id = customer["id"]
             org.razorpay_customer_id = f"{current_mode}:{cust_id}"
             db.commit()
@@ -184,6 +205,8 @@ class SubscriptionService:
         location_count: int,
         interval: str = "monthly",
         plan_tier: str = "basic",
+        trial: bool = False,
+        contact: str | None = None,
     ) -> Dict[str, Any]:
         PricingService.validate_location_count(location_count)
         if interval not in ("monthly", "annual"):
@@ -205,13 +228,30 @@ class SubscriptionService:
         custom_rate = _org.custom_price_paise if _org else None
         custom_credits = _org.custom_credits_per_location if _org else None
 
-        customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
-        plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier, custom_rate)
-        client = SubscriptionService.get_razorpay_client()
-        credits = PricingService.get_credits_for_locations(location_count, plan_tier, custom_credits)
-
+        # Serialize checkouts per org. Without this, a double-submit (two tabs / rapid
+        # clicks) races: each creates its OWN Razorpay mandate and only the id-write is
+        # locked, orphaning a mandate that still debits real money. A second concurrent
+        # call is rejected rather than allowed to mint a second mandate.
+        redis_client = get_redis()
+        lock = redis_client.lock(f"lock:checkout:org_{org_id}", timeout=90)
+        if not lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=409,
+                detail="A checkout is already in progress. Please wait a moment and try again.",
+            )
         try:
-            subscription = client.subscription.create(data={
+            customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email, contact)
+            plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier, custom_rate)
+            client = SubscriptionService.get_razorpay_client()
+            credits = PricingService.get_credits_for_locations(location_count, plan_tier, custom_credits)
+
+            # Re-read the prior mandate id UNDER the lock (a sequential re-checkout may have
+            # set it since _org was read above).
+            _cur = db.query(Organization).filter(Organization.id == org_id).first()
+            prior_sub_id = _cur.razorpay_subscription_id if _cur else None
+            needs_remandate = bool(_cur.subscription_needs_remandate) if _cur else False
+
+            data = {
                 "plan_id": plan_id,
                 "customer_id": customer_id,
                 "quantity": 1,
@@ -223,21 +263,169 @@ class SubscriptionService:
                     "interval": interval,
                     "credits": str(credits),
                     "plan_tier": plan_tier,
+                    "trial": "1" if trial else "0",
                 },
-            })
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to create subscription: {str(e)}")
+            }
+            if trial:
+                # Card-required onboarding: register the mandate now but schedule the first
+                # real debit TRIAL_DAYS out. Until then the subscription sits 'authenticated'
+                # (mandate approved, nothing charged); that gap is the free trial.
+                start_at = int(datetime.now(timezone.utc).timestamp()) + plan_config.TRIAL_DAYS * 86400
+                data["start_at"] = start_at
+            try:
+                subscription = client.subscription.create(data=data)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to create subscription: {str(e)}")
 
-        # Persist the subscription id so we can reconcile / cancel later. Entitlements
-        # (quota, credits) are granted by the subscription.charged webhook.
+            # Now that the NEW mandate exists, cancel a PRIOR UN-CHARGED mandate so we never
+            # leave two authenticated mandates that both debit at day 7 (double-charge). Done
+            # AFTER creation so a create failure leaves the old mandate intact. Scoped to
+            # created/authenticated (un-charged) only — an active recurring mandate is left
+            # alone, and a pending re-mandate (separate flow) must not be cancelled here.
+            if (prior_sub_id and prior_sub_id != subscription["id"] and not needs_remandate):
+                try:
+                    prev = client.subscription.fetch(prior_sub_id)
+                    if prev.get("status") in ("created", "authenticated"):
+                        client.subscription.cancel(prior_sub_id, {"cancel_at_cycle_end": 0})
+                except Exception as e:
+                    logger.warning("Could not cancel prior un-charged mandate %s for org %s: %s",
+                                   prior_sub_id, org_id, e)
+
+            # Persist the subscription id so we can reconcile / cancel later. Entitlements
+            # (quota, credits) are granted by the subscription.charged webhook.
+            stmt = select(Organization).where(Organization.id == org_id).with_for_update()
+            org = db.scalars(stmt).first()
+            if org:
+                org.razorpay_subscription_id = subscription["id"]
+                org.billing_cycle = interval
+                db.commit()
+
+            return subscription
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
+
+    @staticmethod
+    def activate_trial(db: Session, org: Organization, subscription: Dict[str, Any]) -> bool:
+        """Start the free trial once the payment mandate is authenticated (card/UPI
+        approved) but before the first debit. Sets the trial clock to the scheduled
+        first-charge date and records the mandate mode. Shared by the /confirm fast path
+        and the subscription.authenticated webhook; both are idempotent. Caller locks
+        `org` and commits.
+
+        Returns True if the org is in a trial (or already active) afterwards."""
+        # Only a pre-payment onboarding org (status 'trial', clock not started) activates
+        # here. A re-run once the clock is set — webhook/confirm race, redelivery — is a
+        # no-op that still reports success.
+        if not (org.subscription_status == "trial" and org.trial_ends_at is None):
+            return org.subscription_status in ("trial", "active")
+
+        status = subscription.get("status")
+        if status == "active":
+            # The first charge already landed (e.g. start_at elapsed before we processed
+            # this) — treat as a normal paid activation, not a trial start.
+            from app.services.billing.webhook_service import WebhookService
+            WebhookService.apply_subscription_charged(db, org, subscription, payment=None)
+            return True
+        if status != "authenticated":
+            return False  # mandate not approved yet — nothing to start
+
+        # Trial ends when the first debit is scheduled (Razorpay charge_at / start_at);
+        # fall back to a fixed window if the field is absent.
+        charge_at = subscription.get("charge_at") or subscription.get("start_at")
+        if charge_at:
+            org.trial_ends_at = datetime.fromtimestamp(charge_at, tz=timezone.utc)
+        else:
+            org.trial_ends_at = datetime.now(timezone.utc) + timedelta(days=plan_config.TRIAL_DAYS)
+
+        mode = subscription.get("payment_method")  # 'card' | 'upi' | 'emandate' | ...
+        if mode in ("card", "upi"):
+            org.subscription_payment_mode = mode
+
+        # ponytail: premium data prep (deferred expensive tasks — insights/rank/competitor)
+        # is wired in step #4; the cheap audit already synced during onboarding, and the
+        # scheduled beats backfill until then. Nothing expensive is fired from this hot path.
+        return True
+
+    @staticmethod
+    def activate_trial_from_subscription(db: Session, org_id: int) -> bool:
+        """Fast path: pull the org's subscription from Razorpay and, if the mandate is
+        authenticated, start the trial. Called on the user's return from checkout; the
+        subscription.authenticated webhook is the backstop. Both idempotent."""
         stmt = select(Organization).where(Organization.id == org_id).with_for_update()
         org = db.scalars(stmt).first()
-        if org:
-            org.razorpay_subscription_id = subscription["id"]
-            org.billing_cycle = interval
-            db.commit()
+        if not org:
+            return False
+        if org.subscription_status == "active":
+            return True
+        if org.subscription_status == "trial" and org.trial_ends_at is not None:
+            return True  # trial already started
+        if not org.razorpay_subscription_id:
+            return False
 
-        return subscription
+        client = SubscriptionService.get_razorpay_client()
+        try:
+            subscription = client.subscription.fetch(org.razorpay_subscription_id)
+        except Exception:
+            return False
+        # Refuse to act on a subscription that isn't this org's.
+        if str(subscription.get("notes", {}).get("organization_id")) != str(org_id):
+            return False
+
+        ok = SubscriptionService.activate_trial(db, org, subscription)
+        db.commit()
+        return ok
+
+    @staticmethod
+    def assert_trial_not_abused(db: Session, org_id: int, phone: str | None = None) -> None:
+        """Block a second free trial for the same person. A card-authorization mandate
+        alone doesn't stop someone spinning up N accounts, so we dedupe on the two stable
+        identities we hold: the Google account id(s) behind this org, and the owner phone.
+
+        A trial is 'consumed' once its clock has started (trial_ends_at set) or the org
+        advanced past onboarding (active/past_due/locked). Raises 409 if a DIFFERENT org
+        with a matching identity already consumed one. No-op when the flag is off."""
+        if not settings.CARD_REQUIRED_ONBOARDING:
+            return
+
+        consumed = or_(
+            Organization.trial_ends_at.isnot(None),
+            Organization.subscription_status.in_(["active", "past_due", "locked"]),
+        )
+
+        google_ids = [
+            r[0] for r in db.query(OAuthAccount.provider_account_id)
+            .join(User, OAuthAccount.user_id == User.id)
+            .filter(User.organization_id == org_id,
+                    OAuthAccount.provider.in_(["google", "gbp"]))
+            .all()
+        ]
+        if google_ids:
+            dup = (
+                db.query(Organization.id)
+                .join(User, User.organization_id == Organization.id)
+                .join(OAuthAccount, OAuthAccount.user_id == User.id)
+                .filter(OAuthAccount.provider_account_id.in_(google_ids),
+                        Organization.id != org_id, consumed)
+                .first()
+            )
+            if dup:
+                raise HTTPException(status_code=409,
+                                    detail="trial_already_used: this Google account has already used a free trial.")
+
+        canon_phone = normalize_phone(phone)
+        if canon_phone:
+            dup = (
+                db.query(Organization.id)
+                .join(User, User.organization_id == Organization.id)
+                .filter(User.phone == canon_phone, Organization.id != org_id, consumed)
+                .first()
+            )
+            if dup:
+                raise HTTPException(status_code=409,
+                                    detail="trial_already_used: this phone number has already used a free trial.")
 
     @staticmethod
     def create_remandate_subscription(

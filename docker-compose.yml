@@ -46,6 +46,7 @@ services:
       - "8000:8000"
     environment:
       - APP_ENV=${APP_ENV:-development}
+      - CARD_REQUIRED_ONBOARDING=${CARD_REQUIRED_ONBOARDING:-false}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}
@@ -97,6 +98,7 @@ services:
       - ./backend:/app
     environment:
       - APP_ENV=${APP_ENV:-development}
+      - CARD_REQUIRED_ONBOARDING=${CARD_REQUIRED_ONBOARDING:-false}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}
@@ -148,6 +150,7 @@ services:
       - ./backend:/app
     environment:
       - APP_ENV=${APP_ENV:-development}
+      - CARD_REQUIRED_ONBOARDING=${CARD_REQUIRED_ONBOARDING:-false}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}
@@ -183,6 +186,7 @@ services:
         NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
         NEXT_PUBLIC_RAZORPAY_KEY: ${RAZORPAY_KEY_ID}
+        NEXT_PUBLIC_CARD_REQUIRED_ONBOARDING: ${NEXT_PUBLIC_CARD_REQUIRED_ONBOARDING:-false}
     container_name: gmb_frontend
     restart: always
     ports:
@@ -191,6 +195,7 @@ services:
       - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
       - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - NEXT_PUBLIC_RAZORPAY_KEY=${RAZORPAY_KEY_ID}
+      - NEXT_PUBLIC_CARD_REQUIRED_ONBOARDING=${NEXT_PUBLIC_CARD_REQUIRED_ONBOARDING:-false}
       - REVALIDATE_SECRET=${REVALIDATE_SECRET}
     depends_on:
       backend:

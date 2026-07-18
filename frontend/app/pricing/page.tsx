@@ -68,8 +68,12 @@ export default function PricingPage() {
       ? '$' + Math.round(inr * USD_PER_INR).toLocaleString('en-US')
       : '₹' + inr.toLocaleString('en-IN');
 
-  // Default non-India visitors to USD (timezone heuristic; user can still toggle).
+  // Default currency: an explicit ?ccy= hint wins (e.g. links from non-India pSEO pages
+  // pass ?ccy=usd), otherwise fall back to the visitor timezone. User can still toggle.
   useEffect(() => {
+    const ccy = new URLSearchParams(window.location.search).get('ccy');
+    if (ccy === 'usd') { setUsd(true); return; }
+    if (ccy === 'inr') { setUsd(false); return; }
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
     if (!/Kolkata|Calcutta/.test(tz)) setUsd(true);
   }, []);

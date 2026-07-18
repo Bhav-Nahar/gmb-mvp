@@ -23,6 +23,8 @@ export interface BillingStatus {
   remandate_due_at?: string;
   paid_location_quota?: number;
   location_reassign_available_at?: string | null;
+  // Onboarding audit sync: 'syncing' | 'ready' | 'failed' | 'idle'. Gates the paywall.
+  onboarding_sync_status?: 'syncing' | 'ready' | 'failed' | 'idle';
 }
 
 export interface Quote {
@@ -42,6 +44,33 @@ export function useBillingStatus(enabled = true) {
   return useQuery({
     queryKey: ['billing_status'],
     queryFn: () => api.get<BillingStatus>('/billing/status'),
+    enabled: !!user && enabled,
+    retry: false,
+    // While the onboarding audit is still syncing, poll so the gate flips to 'ready'
+    // (and reveals the FOMO) the moment the sync completes — no manual refresh.
+    refetchInterval: (query) =>
+      query.state.data?.onboarding_sync_status === 'syncing' ? 3000 : false,
+  });
+}
+
+export interface AuditIssue { label: string; detail: string }
+export interface AuditSummary {
+  locations: number;
+  total_reviews: number;
+  avg_rating: number | null;
+  unanswered_reviews: number;
+  negative_unanswered: number;
+  profile_gaps: number;
+  critical_issues: number;
+  issues: AuditIssue[];
+}
+
+// Real synced findings for the onboarding gate's FOMO. Open to pre-payment orgs.
+export function useAuditSummary(enabled = true) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['audit_summary'],
+    queryFn: () => api.get<AuditSummary>('/billing/audit-summary'),
     enabled: !!user && enabled,
     retry: false,
   });
@@ -83,11 +112,13 @@ export function useBillingTransactions(page = 0, pageSize = 10, enabled = true) 
 
 export function useCheckoutSubscription() {
   return useMutation({
-    mutationFn: (data: { location_count: number; interval: 'monthly' | 'annual'; plan_tier?: string }) =>
+    mutationFn: (data: { location_count: number; interval: 'monthly' | 'annual'; plan_tier?: string; phone?: string }) =>
       api.post<{ subscription: { id: string; razorpay_key?: string } }>('/billing/checkout-subscription', {
         location_count: data.location_count,
         interval: data.interval,
         plan_tier: data.plan_tier ?? 'basic',
+        // Card-required onboarding sends the owner phone; ignored by the legacy flow.
+        ...(data.phone ? { phone: data.phone } : {}),
       })
   });
 }

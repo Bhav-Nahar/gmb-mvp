@@ -62,6 +62,10 @@ class WebhookService:
 
             if event_type == "subscription.charged":
                 WebhookService._handle_subscription_charged(db, payload)
+            elif event_type == "subscription.authenticated":
+                # Mandate approved (card/UPI) but not yet charged. In the card-required
+                # flow this is the signal to START the trial — backstop for /confirm.
+                WebhookService._handle_subscription_authenticated(db, payload)
             elif event_type == "subscription.halted":
                 WebhookService._handle_subscription_halted(db, payload)
             elif event_type in ("subscription.pending", "subscription.paused"):
@@ -318,6 +322,19 @@ class WebhookService:
         return not (sub_id and org.razorpay_subscription_id and sub_id != org.razorpay_subscription_id)
 
     @staticmethod
+    def _handle_subscription_authenticated(db: Session, payload: Dict[str, Any]) -> None:
+        """Start the trial when the mandate is authenticated. No-op unless the
+        card-required flow is on and this is the org's current, still-onboarding
+        subscription. Idempotent via activate_trial."""
+        if not settings.CARD_REQUIRED_ONBOARDING:
+            return
+        org, subscription = WebhookService._locked_org(db, payload, "subscription")
+        if not org or not WebhookService._is_current_subscription(org, subscription):
+            return
+        from app.services.billing.subscription_service import SubscriptionService
+        SubscriptionService.activate_trial(db, org, subscription)
+
+    @staticmethod
     def _handle_subscription_halted(db: Session, payload: Dict[str, Any]) -> None:
         org, subscription = WebhookService._locked_org(db, payload, "subscription")
         if org and WebhookService._is_current_subscription(org, subscription):
@@ -333,15 +350,22 @@ class WebhookService:
         # re-mandate cutover).
         if not WebhookService._is_current_subscription(org, subscription):
             return
-        # Only downgrade from active; never resurrect a locked/past_due org that a late
-        # cancellation event happens to arrive for.
-        if org.subscription_status != "active":
-            return
-        # Cancelled but still valid until the end of the paid period: stays "active" with
-        # subscription_ends_at set; the periodic sweep locks it once that date passes.
-        current_end = subscription.get("current_end")
-        if current_end:
-            org.subscription_ends_at = datetime.fromtimestamp(current_end, tz=timezone.utc)
+        if org.subscription_status == "active":
+            # Cancelled but still valid until the end of the paid period: stays "active"
+            # with subscription_ends_at set; the periodic sweep locks it once that passes.
+            current_end = subscription.get("current_end")
+            if current_end:
+                org.subscription_ends_at = datetime.fromtimestamp(current_end, tz=timezone.utc)
+        elif (settings.CARD_REQUIRED_ONBOARDING
+              and org.subscription_status == "trial" and org.trial_ends_at is not None):
+            # SAFEGUARD (card-required flow only): the user revoked the mandate mid-trial,
+            # before any charge. There is no paid period to honor, so lock now — a dead
+            # mandate must not ride out the remaining trial. (An onboarding org with no
+            # trial started yet, or one already past_due/locked, needs no action.)
+            org.subscription_status = "locked"
+            org.trial_ends_at = None
+            logger.warning("Mandate cancelled mid-trial for org %s; locked.", org.id)
+        # else: onboarding (no trial started) or already past_due/locked — nothing to do.
 
     @staticmethod
     def _handle_refund(db: Session, payload: Dict[str, Any]) -> None:

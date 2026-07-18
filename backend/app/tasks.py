@@ -432,7 +432,22 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         # admitted as 'active' only while we are under the paid quota; otherwise it is
         # inserted 'pending_payment' (visible, but excluded from all paid processing
         # until a prorated charge unlocks it).
-        quota = org.location_quota if (org and org.location_quota is not None) else plan_config.TRIAL_LOCATION_QUOTA
+        # Card-required onboarding: the very first sync happens BEFORE any payment, and
+        # its whole purpose is to audit every location so we can price the mandate for the
+        # real count. So admit ALL discovered locations as 'active' (quota = the number
+        # found) instead of capping at the trial default. Detected as an org still in the
+        # pre-payment onboarding state with no mandate yet. Legacy flow is unchanged.
+        onboarding_first_sync = (
+            settings.CARD_REQUIRED_ONBOARDING
+            and org is not None
+            and org.subscription_status == "trial"
+            and org.trial_ends_at is None
+            and not org.razorpay_subscription_id
+        )
+        if onboarding_first_sync:
+            quota = len(provider_locations)
+        else:
+            quota = org.location_quota if (org and org.location_quota is not None) else plan_config.TRIAL_LOCATION_QUOTA
         active_count = sum(1 for loc in existing_locations if loc.billing_status == "active")
 
         synced_count = 0
@@ -587,12 +602,21 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
         
         db.commit()
         
-        # Start the trial clock on first successful location sync. A pending trial
-        # is status "trial" with trial_ends_at still NULL.
+        # Onboarding billing bookkeeping on first successful sync (status "trial",
+        # trial_ends_at still NULL).
         org = db.query(Organization).filter(Organization.id == organization_id).with_for_update().first()
         if org and org.subscription_status == "trial" and org.trial_ends_at is None:
-            org.trial_ends_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)
-            db.commit()
+            if settings.CARD_REQUIRED_ONBOARDING:
+                # Card-required flow: DON'T start the trial clock here — it starts when the
+                # user adds a payment method (see billing trial activation). Only record the
+                # discovered active-location count so the mandate bills for all of them.
+                if onboarding_first_sync:
+                    org.location_quota = active_count
+                    db.commit()
+            else:
+                # Legacy frictionless flow: first sync starts the 7-day trial.
+                org.trial_ends_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=plan_config.TRIAL_DAYS)
+                db.commit()
         
         return {"status": "success", "result": log_message}
 

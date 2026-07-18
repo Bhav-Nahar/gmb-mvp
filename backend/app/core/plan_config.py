@@ -38,6 +38,11 @@ TRIAL_AI_CREDITS = 10
 # signup is treated as expired.
 PENDING_TRIAL_MAX_DAYS = 14
 
+# Length of the free trial, in days. In the legacy frictionless flow the clock starts
+# on first sync; in the card-required flow it starts when the payment mandate is set up
+# and the first real debit is scheduled for TRIAL_DAYS later.
+TRIAL_DAYS = 7
+
 # Owners can reassign WHICH locations fill their paid slots for free, but only this
 # often. Without a limit, an org could cycle its active locations daily and farm
 # per-location value (syncs, posts, profile management) for far more locations than it

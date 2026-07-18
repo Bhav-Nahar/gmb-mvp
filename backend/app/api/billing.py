@@ -12,6 +12,7 @@ from app.models.organization import Organization
 from app.models.location import Location
 from app.models.billing_transaction import BillingTransaction
 from app.core import plan_config
+from app.core.config import settings
 from app.services.billing.pricing_service import PricingService
 from app.services.billing.subscription_service import SubscriptionService
 from app.services.billing.webhook_service import WebhookService
@@ -34,6 +35,9 @@ class CheckoutRequest(BaseModel):
     location_count: int = 1
     interval: str = "monthly"
     plan_tier: str = "basic"
+    # Owner phone, collected at the Start-Trial step (card-required flow). Stored on the
+    # user for sales + trial-abuse dedupe, and attached to the Razorpay customer.
+    phone: str | None = None
 
 class BuyCreditsRequest(BaseModel):
     pack: str = "small"
@@ -93,14 +97,46 @@ def checkout_subscription(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    # Card-required onboarding: the FIRST subscription is a trial — register the mandate
+    # now, charge nothing for TRIAL_DAYS. Bill for every audited location, counted
+    # server-side (not from the client) so the mandate can't be under-priced.
+    trial_signup = settings.CARD_REQUIRED_ONBOARDING and EntitlementService.is_onboarding(org)
+    eff_phone = None
+    if trial_signup:
+        # Phone comes from the gate's inline field (or is already on the user). Required
+        # for a trial: it is a real identity for the abuse guard, so a missing phone must
+        # not fall back to Google-id-only (which a fresh Google account trivially defeats).
+        eff_phone = ((request.phone or current_user.phone or "").strip()) or None
+        if not eff_phone:
+            raise HTTPException(status_code=400, detail="phone_required: add your mobile number to start the trial.")
+        # One free trial per Google account / phone.
+        SubscriptionService.assert_trial_not_abused(db, org.id, eff_phone)
+        location_count = db.query(Location).filter(
+            Location.organization_id == org.id,
+            Location.billing_status == "active",
+        ).count()
+        if location_count < 1:
+            # Nothing to bill/audit yet — don't create a ₹0/1-location mandate.
+            raise HTTPException(
+                status_code=400,
+                detail="no_locations: connect a Google Business Profile with at least one location first.",
+            )
+        if request.phone and request.phone.strip() and not current_user.phone:
+            current_user.phone = request.phone.strip()
+            db.commit()
+    else:
+        location_count = request.location_count
+
     subscription = SubscriptionService.create_subscription_checkout(
         db=db,
         org_id=org.id,
         org_name=org.name,
         user_email=current_user.email,
-        location_count=request.location_count,
+        location_count=location_count,
         interval=request.interval,
         plan_tier=request.plan_tier,
+        trial=trial_signup,
+        contact=eff_phone,
     )
     return {"subscription": subscription}
 
@@ -179,7 +215,14 @@ def confirm_payment(
         # Only reconcile the subscription we actually own.
         if org.razorpay_subscription_id != request.razorpay_subscription_id:
             raise HTTPException(status_code=400, detail="Subscription does not belong to this organization")
-        activated = SubscriptionService.reconcile_subscription(db, org.id)
+        # Card-required onboarding: the returning subscription is an authenticated (not
+        # yet charged) mandate, so START THE TRIAL rather than waiting on a first charge.
+        # Once the trial is running (or the org has paid) this falls through to the normal
+        # reconcile. subscription.authenticated / subscription.charged webhooks back it up.
+        if settings.CARD_REQUIRED_ONBOARDING and org.subscription_status == "trial":
+            activated = SubscriptionService.activate_trial_from_subscription(db, org.id)
+        else:
+            activated = SubscriptionService.reconcile_subscription(db, org.id)
     else:
         # Order payments are either a credit top-up or a location add-on. Try the
         # add-on path first (it no-ops unless the order's notes say location_addon),
@@ -192,7 +235,28 @@ def confirm_payment(
                 db, org.id, request.razorpay_payment_id
             )
 
+    # Persist the IP/UA snapshot set above. The activate/reconcile calls commit on the
+    # normal path, but when the webhook already activated the trial they return early
+    # without committing, which would silently drop the Meta CAPI match keys.
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
     return {"confirmed": True, "activated": activated}
+
+
+@router.get("/audit-summary")
+def get_audit_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Real, already-synced findings for the pre-payment onboarding gate (the FOMO hook).
+    Teaser counts only — no premium insight — so it stays accessible before the trial."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+    from app.services.onboarding_audit import compute_audit_summary
+    return compute_audit_summary(db, current_user.organization_id)
 
 
 @router.get("/status")
@@ -215,7 +279,26 @@ def get_billing_status(
         Location.organization_id == org.id, Location.billing_status == "pending_payment"
     ).count()
 
+    # Onboarding sync status, so the (app-wide) paywall gate only appears once the audit
+    # is actually ready — never mid-sync with an empty audit. NOTE: last_review_sync_at is
+    # unreliable (review tasks don't stamp it), so 'ready' keys off location-sync success.
+    from app.models.organization_sync_state import OrganizationSyncState
+    ss = db.query(OrganizationSyncState).filter(
+        OrganizationSyncState.organization_id == org.id
+    ).first()
+    if ss is None:
+        onboarding_sync_status = "idle"
+    elif ss.sync_in_progress:
+        onboarding_sync_status = "syncing"
+    elif ss.last_sync_status == "Failed":
+        onboarding_sync_status = "failed"
+    elif ss.last_location_sync_at is not None and ss.last_sync_status == "Success":
+        onboarding_sync_status = "ready"
+    else:
+        onboarding_sync_status = "syncing"  # pending / not yet completed
+
     return {
+        "onboarding_sync_status": onboarding_sync_status,
         "plan": org.plan,
         "plan_tier": org.plan_tier,
         "features": plan_config.get_plan(org.plan_tier).get("features", []),
@@ -548,26 +631,26 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     if not event_type:
         raise HTTPException(status_code=400, detail="Missing event type")
 
-    # Prefer Razorpay's event id header. If absent, derive a stable id from the
-    # event type + the primary entity id so distinct events never collide (a
-    # constant fallback would make the second event look "already processed").
-    event_id = request.headers.get("X-Razorpay-Event-Id")
-    if not event_id:
-        contains = payload.get("contains", []) or []
-        # Prefer the PAYMENT entity id: it is unique per charge. The subscription id
-        # is the SAME every billing cycle, so keying off it would make month-2's
-        # subscription.charged collide with month-1's and be skipped as a duplicate —
-        # the customer would be charged but never get the credit reset / quota.
-        ordered_keys = (["payment"] if "payment" in contains else []) + \
-            [k for k in contains if k != "payment"]
-        entity_id = None
-        for key in ordered_keys:
-            entity_id = payload.get("payload", {}).get(key, {}).get("entity", {}).get("id")
-            if entity_id:
-                break
-        if not entity_id:
-            raise HTTPException(status_code=400, detail="Cannot determine event id")
-        event_id = f"{event_type}:{entity_id}"
+    # Derive the idempotency id from the SIGNED body only. We deliberately do NOT use the
+    # X-Razorpay-Event-Id header: it is outside the signed content, so a replay of one valid
+    # (signed) event body with a varied header would produce a new idempotency key and
+    # re-run apply_subscription_charged (re-granting credits/quota). The body-derived id is
+    # unique per charge (payment id) and stable, which is exactly what we want.
+    contains = payload.get("contains", []) or []
+    # Prefer the PAYMENT entity id: it is unique per charge. The subscription id is the SAME
+    # every billing cycle, so keying off it would make month-2's subscription.charged
+    # collide with month-1's and be skipped as a duplicate — the customer would be charged
+    # but never get the credit reset / quota.
+    ordered_keys = (["payment"] if "payment" in contains else []) + \
+        [k for k in contains if k != "payment"]
+    entity_id = None
+    for key in ordered_keys:
+        entity_id = payload.get("payload", {}).get(key, {}).get("entity", {}).get("id")
+        if entity_id:
+            break
+    if not entity_id:
+        raise HTTPException(status_code=400, detail="Cannot determine event id")
+    event_id = f"{event_type}:{entity_id}"
 
     # Process webhook
     WebhookService.process_webhook(db, event_id, event_type, payload)
