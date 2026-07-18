@@ -214,6 +214,12 @@ class Settings(BaseSettings):
     GOOGLE_ADS_LOGIN_CUSTOMER_ID: str = ""    # optional, for manager accounts
     GOOGLE_ADS_CONVERSION_ACTION_ID: str = ""
 
+    # Google Search Console (pSEO organic performance). Service-account credential,
+    # separate from the per-org GBP OAuth flow — pSEO pages aren't org-scoped, so one
+    # shared read-only credential on the property covers every pSEO page.
+    GSC_SERVICE_ACCOUNT_JSON: str = ""  # raw JSON key content
+    GSC_PROPERTY_URL: str = ""          # e.g. "sc-domain:pinzo.io" or "https://pinzo.io/"
+
     @model_validator(mode="after")
     def _validate_razorpay(self) -> "Settings":
         import os
