@@ -1,0 +1,470 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import { api } from '@/lib/api'
+import {
+  Plus, Upload, Download, Trash2, Loader2, Pencil, Globe, EyeOff, ExternalLink,
+  Search, ArrowLeft, Save, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw,
+} from 'lucide-react'
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface PageRow {
+  id: number
+  slug: string
+  country: string
+  locale: string
+  industry_label: string
+  city_label: string
+  status: string
+  index_status: string
+  quality_score: number | null
+  meta_title: string
+  published_at: string | null
+  updated_at: string | null
+}
+
+interface ImportResult {
+  created: number
+  updated: number
+  failed: number
+  results: { row: number; slug: string | null; action: string; status?: string; error?: string }[]
+}
+
+// Content field groups — mirror backend CONTENT_*_COLS. Lists edit as one-item-per-line
+// textareas; pairs as "Title :: detail" per line.
+const TEXT_FIELDS: [string, string][] = [
+  ['badge', 'Hero badge'],
+  ['hero_sub', 'Hero subheadline'],
+  ['primary_cta', 'Primary CTA label'],
+  ['secondary_cta', 'Secondary CTA label'],
+  ['why_matters_body', 'Why GBP matters — intro paragraph'],
+  ['reviews_body', 'Review management — body'],
+  ['example_review', 'Example customer review'],
+  ['example_reply', 'Example AI reply'],
+  ['city_visibility_body', 'City visibility — body'],
+  ['final_heading', 'Final CTA heading'],
+  ['final_sub', 'Final CTA subtext'],
+  ['primary_keyword', 'Primary keyword'],
+  ['region', 'Region / state'],
+  ['page_type', 'Page type'],
+  ['template_version', 'Template version'],
+  ['last_updated', 'Content last reviewed (date)'],
+]
+const LIST_FIELDS: [string, string][] = [
+  ['why_matters_points', 'Why GBP matters — points'],
+  ['problems', 'Common GBP problems (Title :: detail)'],
+  ['solutions', 'How Pinzo solves (Title :: detail)'],
+  ['gbp_categories', 'GBP categories to add'],
+  ['gbp_services', 'GBP services to add'],
+  ['gbp_attributes', 'GBP attributes/extras'],
+  ['review_themes', 'Review themes'],
+  ['post_ideas', 'Google Posts ideas'],
+  ['photo_checklist', 'Photo/content checklist'],
+  ['neighborhoods', 'City neighborhoods'],
+  ['single_points', 'Single-location points'],
+  ['multi_points', 'Multi-location points'],
+  ['monthly_workflow', 'Monthly workflow (Step :: detail)'],
+  ['faqs', 'FAQs (Question :: Answer)'],
+  ['secondary_keywords', 'Secondary keywords'],
+  ['related_pages', 'Related pages (Anchor :: url)'],
+  ['internal_links', 'Internal links (Anchor :: url)'],
+]
+const PAIR_KEYS = new Set(['problems', 'solutions', 'monthly_workflow', 'faqs', 'related_pages', 'internal_links'])
+const LINK_KEYS = new Set(['related_pages', 'internal_links'])
+
+// ── Content JSON <-> textarea codecs ─────────────────────────────────────────
+
+function contentToDraft(content: any): Record<string, string> {
+  const d: Record<string, string> = {}
+  for (const [k] of TEXT_FIELDS) d[k] = content?.[k] || ''
+  for (const [k] of LIST_FIELDS) {
+    const v = content?.[k]
+    if (!Array.isArray(v)) { d[k] = ''; continue }
+    d[k] = v.map((item: any) => {
+      if (typeof item === 'string') return item
+      if (k === 'faqs') return `${item.q || ''} :: ${item.a || ''}`
+      if (LINK_KEYS.has(k)) return `${item.anchor || ''} :: ${item.url || ''}`
+      return item.detail ? `${item.title || ''} :: ${item.detail}` : (item.title || '')
+    }).join('\n')
+  }
+  return d
+}
+
+function draftToContent(d: Record<string, string>): any {
+  const content: any = {}
+  for (const [k] of TEXT_FIELDS) if (d[k]?.trim()) content[k] = d[k].trim()
+  for (const [k] of LIST_FIELDS) {
+    const lines = (d[k] || '').split('\n').map((s) => s.trim()).filter(Boolean)
+    if (!lines.length) continue
+    if (PAIR_KEYS.has(k)) {
+      const pairs = lines.map((line) => {
+        const [title, ...rest] = line.split('::')
+        const detail = rest.join('::').trim()
+        if (k === 'faqs') return { q: title.trim(), a: detail }
+        if (LINK_KEYS.has(k)) return { anchor: title.trim(), url: detail }
+        return { title: title.trim(), detail }
+      })
+      content[k] = pairs
+    } else {
+      content[k] = lines
+    }
+  }
+  return content
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
+
+export default function AdminPseoPage() {
+  const [pages, setPages] = useState<PageRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [q, setQ] = useState('')
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Editor state: null = list view; {} draft object = editing/creating
+  const [editing, setEditing] = useState<any | null>(null)
+
+  const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(''), 6000) }
+
+  const load = async () => {
+    setLoading(true); setError('')
+    try {
+      const d = await api.get<{ pages: PageRow[] }>(`/admin/pseo${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+      setPages(d.pages || [])
+    } catch (e: any) {
+      setError(e.message || 'Failed to load pages')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openNew = () => setEditing({
+    id: null, country: 'us', industry_label: '', city_label: '', slug: '', meta_title: '', meta_description: '', h1: '',
+    canonical_url: '', index_status: 'index', quality_score: '',
+    status: 'draft', draft: Object.fromEntries([...TEXT_FIELDS, ...LIST_FIELDS].map(([k]) => [k, ''])),
+  })
+
+  const openEdit = async (row: PageRow) => {
+    setBusy(true)
+    try {
+      const p = await api.get<any>(`/admin/pseo/${row.id}`)
+      setEditing({
+        id: p.id, country: p.country || 'in', industry_label: p.industry_label, city_label: p.city_label, slug: p.slug,
+        meta_title: p.meta_title, meta_description: p.meta_description || '', h1: p.h1 || '',
+        canonical_url: p.canonical_url || '', index_status: p.index_status || 'index',
+        quality_score: p.quality_score ?? '', status: p.status, draft: contentToDraft(p.content),
+      })
+    } catch (e: any) {
+      setError(e.message || 'Failed to load page')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const save = async () => {
+    if (!editing.industry_label.trim() || !editing.city_label.trim()) {
+      setError('Industry and city are required'); return
+    }
+    setBusy(true); setError('')
+    const qs = String(editing.quality_score).trim()
+    const body = {
+      country: editing.country,
+      industry_label: editing.industry_label.trim(),
+      city_label: editing.city_label.trim(),
+      slug: editing.slug.trim() || null,
+      meta_title: editing.meta_title.trim() || null,
+      meta_description: editing.meta_description.trim() || null,
+      h1: editing.h1.trim() || null,
+      canonical_url: editing.canonical_url.trim() || null,
+      index_status: editing.index_status,
+      quality_score: qs ? Number(qs) : null,
+      status: editing.status,
+      content: draftToContent(editing.draft),
+    }
+    try {
+      if (editing.id) {
+        await api.patch(`/admin/pseo/${editing.id}`, body)
+        flash('Page saved.')
+      } else {
+        await api.post('/admin/pseo', body)
+        flash('Page created.')
+      }
+      setEditing(null)
+      await load()
+    } catch (e: any) {
+      setError(e.message || 'Save failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const setStatus = async (row: PageRow, publish: boolean) => {
+    setBusy(true); setError('')
+    try {
+      await api.post(`/admin/pseo/${row.id}/${publish ? 'publish' : 'unpublish'}`, {})
+      flash(publish ? `Published /${row.slug}` : `Unpublished /${row.slug}`)
+      await load()
+    } catch (e: any) {
+      setError(e.message || 'Status change failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const flushCache = async (row: PageRow) => {
+    setBusy(true); setError('')
+    try {
+      await api.post(`/admin/pseo/${row.id}/flush-cache`, {})
+      flash(`Cache flushed for /${row.slug} — changes are live now.`)
+    } catch (e: any) {
+      setError(e.message || 'Cache flush failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async (row: PageRow) => {
+    if (!window.confirm(`Delete /${row.slug}? This cannot be undone.`)) return
+    setBusy(true); setError('')
+    try {
+      await api.delete(`/admin/pseo/${row.id}`)
+      flash('Page deleted.')
+      await load()
+    } catch (e: any) {
+      setError(e.message || 'Delete failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const importFile = async (file: File) => {
+    setBusy(true); setError(''); setImportResult(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const r = await api.post<ImportResult>('/admin/pseo/import', fd)
+      setImportResult(r)
+      flash(`Import done: ${r.created} created, ${r.updated} updated, ${r.failed} failed.`)
+      await load()
+    } catch (e: any) {
+      setError(e.message || 'Import failed')
+    } finally {
+      setBusy(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const downloadTemplate = async () => {
+    try {
+      const meta = await api.get<{ columns: string[] }>('/admin/pseo/import/columns')
+      const example: Record<string, string> = {
+        country: 'us', industry_label: 'Doctors', city_label: 'New York, NY', status: 'draft',
+        index_status: 'index', quality_score: '85',
+        hero_sub: 'Keep every clinic profile complete, answer patient reviews with AI, and rank when patients search nearby.',
+        primary_keyword: 'google business profile management for doctors in new york',
+        secondary_keywords: 'GBP management for clinics NYC | Google Maps marketing for doctors',
+        why_matters_points: 'Patients check reviews before booking | Maps drives walk-in appointments',
+        problems: 'Missing services :: Google cannot match you to treatment searches | Unanswered reviews :: Patients read the silence',
+        solutions: 'AI review replies :: Drafted in your tone, you approve | Profile audits :: Every missing field flagged',
+        related_pages: 'Dentists in New York :: /en-us/gbp-management/dentists-in-new-york-ny',
+        faqs: 'Is Pinzo compliant for clinics? :: Yes — replies never disclose patient information.',
+      }
+      const esc = (s: string) => `"${(s || '').replace(/"/g, '""')}"`
+      const csv = [meta.columns.join(','), meta.columns.map((c) => esc(example[c] || '')).join(',')].join('\n')
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+      a.download = 'pinzo-pseo-template.csv'
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch (e: any) {
+      setError(e.message || 'Template download failed')
+    }
+  }
+
+  const inputCls = 'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none'
+  const labelCls = 'mb-1 block text-[11px] font-bold uppercase tracking-wide text-muted-foreground'
+
+  // ── Editor view ────────────────────────────────────────────────────────────
+  if (editing) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-6 p-6">
+        <div className="flex items-center justify-between">
+          <button onClick={() => setEditing(null)} className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to list
+          </button>
+          <div className="flex items-center gap-3">
+            <select value={editing.status} onChange={(e) => setEditing({ ...editing, status: e.target.value })} className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-bold">
+              <option value="draft">Draft</option>
+              <option value="published">Published</option>
+            </select>
+            <button onClick={save} disabled={busy} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold uppercase tracking-wider text-primary-foreground disabled:opacity-50">
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+            </button>
+          </div>
+        </div>
+
+        {error && <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs font-semibold text-red-500"><AlertTriangle className="h-4 w-4 shrink-0" />{error}</div>}
+
+        <div className="space-y-4 rounded-2xl border border-border bg-card p-6">
+          <h2 className="text-sm font-bold text-foreground">Identity & SEO meta</h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <label className={labelCls}>Country (market)</label>
+              <select className={inputCls} value={editing.country} onChange={(e) => setEditing({ ...editing, country: e.target.value })}>
+                {[['us','United States'],['in','India'],['gb','United Kingdom'],['ca','Canada'],['au','Australia'],['ae','UAE'],['sg','Singapore'],['za','South Africa'],['ie','Ireland'],['nz','New Zealand']].map(([c,n]) => <option key={c} value={c}>{n} (en-{c})</option>)}
+              </select>
+            </div>
+            <div><label className={labelCls}>Industry label *</label><input className={inputCls} value={editing.industry_label} onChange={(e) => setEditing({ ...editing, industry_label: e.target.value })} placeholder="Doctors & Clinics" /></div>
+            <div><label className={labelCls}>City label *</label><input className={inputCls} value={editing.city_label} onChange={(e) => setEditing({ ...editing, city_label: e.target.value })} placeholder="New York, NY" /></div>
+          </div>
+          <div><label className={labelCls}>Slug (blank = auto: industry-in-city)</label><input className={inputCls} value={editing.slug} onChange={(e) => setEditing({ ...editing, slug: e.target.value })} placeholder="doctors-in-new-york-ny" /><p className="mt-1 text-[11px] text-muted-foreground">Served at <span className="font-mono">/en-{editing.country}/gbp-management/{editing.slug || 'doctors-in-new-york-ny'}</span></p></div>
+          <div><label className={labelCls}>H1 (blank = auto)</label><input className={inputCls} value={editing.h1} onChange={(e) => setEditing({ ...editing, h1: e.target.value })} /></div>
+          <div><label className={labelCls}>Meta title (blank = auto)</label><input className={inputCls} value={editing.meta_title} onChange={(e) => setEditing({ ...editing, meta_title: e.target.value })} /></div>
+          <div><label className={labelCls}>Meta description (blank = auto)</label><textarea rows={2} className={inputCls} value={editing.meta_description} onChange={(e) => setEditing({ ...editing, meta_description: e.target.value })} /></div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <label className={labelCls}>Index status</label>
+              <select className={inputCls} value={editing.index_status} onChange={(e) => setEditing({ ...editing, index_status: e.target.value })}>
+                <option value="index">index (in sitemap)</option>
+                <option value="noindex">noindex (hidden from search)</option>
+              </select>
+            </div>
+            <div><label className={labelCls}>Quality score (0–100)</label><input type="number" min={0} max={100} className={inputCls} value={editing.quality_score} onChange={(e) => setEditing({ ...editing, quality_score: e.target.value })} placeholder="optional" /></div>
+            <div><label className={labelCls}>Canonical URL override</label><input className={inputCls} value={editing.canonical_url} onChange={(e) => setEditing({ ...editing, canonical_url: e.target.value })} placeholder="blank = self" /></div>
+          </div>
+        </div>
+
+        <div className="space-y-4 rounded-2xl border border-border bg-card p-6">
+          <h2 className="text-sm font-bold text-foreground">Copy blocks</h2>
+          {TEXT_FIELDS.map(([k, label]) => (
+            <div key={k}>
+              <label className={labelCls}>{label}</label>
+              <textarea rows={k.endsWith('_body') || k === 'hero_sub' ? 3 : 1} className={inputCls} value={editing.draft[k]} onChange={(e) => setEditing({ ...editing, draft: { ...editing.draft, [k]: e.target.value } })} />
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-4 rounded-2xl border border-border bg-card p-6">
+          <h2 className="text-sm font-bold text-foreground">Lists <span className="font-normal text-muted-foreground">— one item per line; pairs use <code>Title :: detail</code></span></h2>
+          {LIST_FIELDS.map(([k, label]) => (
+            <div key={k}>
+              <label className={labelCls}>{label}</label>
+              <textarea rows={4} className={`${inputCls} font-mono text-xs`} value={editing.draft[k]} onChange={(e) => setEditing({ ...editing, draft: { ...editing.draft, [k]: e.target.value } })} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // ── List view ──────────────────────────────────────────────────────────────
+  return (
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-extrabold text-foreground">pSEO landing pages</h1>
+          <p className="text-xs text-muted-foreground">Country × industry × city pages served at pinzo.io/en-&#123;country&#125;/gbp-management/&#123;industry&#125;-in-&#123;city&#125;. Import in bulk from CSV/XLSX or create one by one.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={downloadTemplate} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-bold text-muted-foreground hover:text-foreground">
+            <Download className="h-3.5 w-3.5" /> CSV template
+          </button>
+          <button onClick={() => fileRef.current?.click()} disabled={busy} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-bold text-muted-foreground hover:text-foreground disabled:opacity-50">
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Import CSV/XLSX
+          </button>
+          <input ref={fileRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
+          <button onClick={openNew} className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold uppercase tracking-wider text-primary-foreground">
+            <Plus className="h-3.5 w-3.5" /> New page
+          </button>
+        </div>
+      </div>
+
+      {notice && <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-4 w-4 shrink-0" />{notice}</div>}
+      {error && <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs font-semibold text-red-500"><AlertTriangle className="h-4 w-4 shrink-0" />{error}</div>}
+
+      {importResult && importResult.results.some((r) => r.action === 'error') && (
+        <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+          <p className="flex items-center gap-2 text-xs font-bold text-amber-600"><FileSpreadsheet className="h-4 w-4" />Rows with errors</p>
+          <ul className="space-y-1 text-xs text-muted-foreground">
+            {importResult.results.filter((r) => r.action === 'error').map((r) => (
+              <li key={r.row}>Row {r.row}{r.slug ? ` (${r.slug})` : ''}: {r.error}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm"
+            placeholder="Search slug, industry, city…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && load()}
+          />
+        </div>
+        <button onClick={load} className="rounded-lg border border-border px-3 py-2 text-xs font-bold text-muted-foreground hover:text-foreground">Search</button>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-border text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              <th className="px-4 py-3">Page</th>
+              <th className="px-4 py-3">Market</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Updated</th>
+              <th className="px-4 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={5} className="px-4 py-10 text-center text-xs text-muted-foreground">Loading…</td></tr>
+            ) : pages.length === 0 ? (
+              <tr><td colSpan={5} className="px-4 py-10 text-center text-xs text-muted-foreground">No pages yet. Import a CSV or create one.</td></tr>
+            ) : pages.map((p) => (
+              <tr key={p.id} className="border-b border-border/50 last:border-0">
+                <td className="px-4 py-3">
+                  <p className="font-semibold text-foreground">{p.industry_label} · {p.city_label}</p>
+                  <p className="font-mono text-[11px] text-muted-foreground">/{p.locale}/gbp-management/{p.slug}</p>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="rounded border border-border px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">{p.locale}</span>
+                  {p.index_status === 'noindex' && <span className="ml-1 rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-600">noindex</span>}
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${p.status === 'published' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'}`}>{p.status}</span>
+                </td>
+                <td className="px-4 py-3 text-xs text-muted-foreground">{p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '—'}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-end gap-1.5">
+                    {p.status === 'published' && (
+                      <a href={`/${p.locale}/gbp-management/${p.slug}`} target="_blank" rel="noopener noreferrer" title="View live" className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground"><ExternalLink className="h-3.5 w-3.5" /></a>
+                    )}
+                    {p.status === 'published' && (
+                      <button onClick={() => flushCache(p)} disabled={busy} title="Flush cache (this page only)" className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground disabled:opacity-50"><RefreshCw className="h-3.5 w-3.5" /></button>
+                    )}
+                    <button onClick={() => openEdit(p)} disabled={busy} title="Edit" className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground disabled:opacity-50"><Pencil className="h-3.5 w-3.5" /></button>
+                    {p.status === 'published' ? (
+                      <button onClick={() => setStatus(p, false)} disabled={busy} title="Unpublish" className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground disabled:opacity-50"><EyeOff className="h-3.5 w-3.5" /></button>
+                    ) : (
+                      <button onClick={() => setStatus(p, true)} disabled={busy} title="Publish" className="rounded-lg border border-border p-2 text-emerald-600 hover:bg-emerald-500/10 disabled:opacity-50"><Globe className="h-3.5 w-3.5" /></button>
+                    )}
+                    <button onClick={() => remove(p)} disabled={busy} title="Delete" className="rounded-lg border border-border p-2 text-rose-500 hover:bg-rose-500/10 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}

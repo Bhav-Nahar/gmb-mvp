@@ -174,3 +174,25 @@ def test_purge_task_removes_past_grace_keeps_recent(db):
     assert db.query(Organization).filter(Organization.id == old.id).first() is None      # purged
     assert db.query(Organization).filter(Organization.id == recent.id).first() is not None  # within grace
     assert db.query(Organization).filter(Organization.id == live.id).first() is not None    # never deleted
+
+
+def test_purge_cancels_razorpay_sub_before_deleting(db):
+    from app.core import plan_config
+    grace = plan_config.ACCOUNT_PURGE_GRACE_DAYS
+    now = datetime.now(timezone.utc)
+    paid = _org(db, "Paid", deleted_at=now - timedelta(days=grace + 1),
+                razorpay_subscription_id="sub_ABC123")
+
+    import app.tasks as tasks_mod
+    from app.services.billing.subscription_service import SubscriptionService
+    fake_redis = MagicMock()
+    fake_redis.lock.return_value.acquire.return_value = True
+    fake_client = MagicMock()
+    with patch.object(tasks_mod, "SessionLocal", return_value=db), \
+         patch.object(tasks_mod, "_get_redis", return_value=fake_redis), \
+         patch.object(SubscriptionService, "get_razorpay_client", return_value=fake_client), \
+         patch.object(db, "close"):
+        tasks_mod.purge_soft_deleted_accounts_task()
+
+    fake_client.subscription.cancel.assert_called_once_with("sub_ABC123", {"cancel_at_cycle_end": 0})
+    assert db.query(Organization).filter(Organization.id == paid.id).first() is None  # still purged

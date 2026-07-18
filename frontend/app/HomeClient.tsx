@@ -41,6 +41,8 @@ import {
   Scissors,
   Home,
   Car,
+  Mic,
+  Zap,
 } from 'lucide-react'
 import { useQuote } from '@/hooks/useBilling'
 import { INDIA_PATH, INDIA_PINS } from './indiaMap'
@@ -366,6 +368,204 @@ function AuditPreview() {
 }
 
 // Mini leaderboard used in the bento grid.
+// ── Brand marks for the AI engines (inline SVG, CSP-safe, no external images) ──
+function OpenAIMark({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden fill="currentColor">
+      <path d="M22.28 9.82a5.98 5.98 0 0 0-.52-4.91 6.05 6.05 0 0 0-6.51-2.9A6.07 6.07 0 0 0 4.98 4.18a5.98 5.98 0 0 0-3.99 2.9 6.05 6.05 0 0 0 .74 7.1 5.98 5.98 0 0 0 .51 4.91 6.05 6.05 0 0 0 6.52 2.9A5.98 5.98 0 0 0 13.26 24a6.06 6.06 0 0 0 5.77-4.21 5.99 5.99 0 0 0 4-2.9 6.06 6.06 0 0 0-.75-7.07zM13.26 22.43a4.48 4.48 0 0 1-2.88-1.04l.14-.08 4.78-2.76a.79.79 0 0 0 .39-.68v-6.74l2.02 1.17.01.06v5.58a4.5 4.5 0 0 1-4.48 4.49zM3.6 18.3a4.47 4.47 0 0 1-.54-3.01l.14.09 4.78 2.76a.77.77 0 0 0 .78 0l5.84-3.37v2.33l-.03.06L9.74 19.9a4.5 4.5 0 0 1-6.14-1.6zM2.34 7.9a4.49 4.49 0 0 1 2.34-1.97v5.67a.77.77 0 0 0 .39.68l5.8 3.35-2.02 1.17-.07-.01-4.83-2.79A4.5 4.5 0 0 1 2.34 7.9zm16.6 3.86-5.84-3.37 2.02-1.16.07.01 4.83 2.79a4.5 4.5 0 0 1-.68 8.12v-5.72a.79.79 0 0 0-.4-.67zm2.01-3.03-.14-.09-4.78-2.76a.78.78 0 0 0-.78 0L9.42 9.24V6.91l.03-.06 4.83-2.78a4.5 4.5 0 0 1 6.68 4.66zM8.31 12.86 6.29 11.7l-.03-.06V6.07a4.5 4.5 0 0 1 7.38-3.45l-.14.08L8.7 5.46a.79.79 0 0 0-.39.68zm1.1-2.37L12 8.99l2.6 1.5v3l-2.6 1.5-2.6-1.5z"/>
+    </svg>
+  )
+}
+function GoogleMark({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path fill="#4285F4" d="M23.06 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h6.2a5.3 5.3 0 0 1-2.3 3.48v2.89h3.72c2.18-2 3.44-4.96 3.44-8.38z"/>
+      <path fill="#34A853" d="M12 24c3.1 0 5.7-1.03 7.6-2.78l-3.72-2.89c-1.03.69-2.35 1.1-3.88 1.1-2.98 0-5.5-2.01-6.4-4.72H1.76v2.98A11.99 11.99 0 0 0 12 24z"/>
+      <path fill="#FBBC05" d="M5.6 14.71a7.2 7.2 0 0 1 0-4.62V7.11H1.76a12 12 0 0 0 0 10.78l3.84-2.98z"/>
+      <path fill="#EA4335" d="M12 4.75c1.68 0 3.2.58 4.39 1.72l3.29-3.29C17.7 1.24 15.1.2 12 .2A11.99 11.99 0 0 0 1.76 7.11l3.84 2.98C6.5 6.76 9.02 4.75 12 4.75z"/>
+    </svg>
+  )
+}
+function GeminiMark({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <defs><linearGradient id="pinzoGem" x1="2" y1="4" x2="22" y2="20" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#4285F4"/><stop offset=".5" stopColor="#9B72CB"/><stop offset="1" stopColor="#D96570"/>
+      </linearGradient></defs>
+      <path fill="url(#pinzoGem)" d="M12 0c.4 6.4 5.2 11.2 11.6 11.6-6.4.4-11.2 5.2-11.6 11.6-.4-6.4-5.2-11.2-11.6-11.6C6.8 11.2 11.6 6.4 12 0z"/>
+    </svg>
+  )
+}
+function PerplexityMark({ className = 'h-4 w-4' }: { className?: string }) {
+  // Simplified mark in Perplexity's brand teal.
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden fill="none" stroke="#20808D" strokeWidth="1.6">
+      <path d="M12 3v18M12 8 5 4v8l7-4 7 4V4l-7 4M4 9v6l8 4 8-4V9"/>
+    </svg>
+  )
+}
+
+// AI Search Visibility (AEO) hero visual — a mock AI answer that names the business,
+// with per-engine presence (real logos) and the visibility score.
+function AISearchPanel() {
+  const surfaces = [
+    { name: 'ChatGPT', mark: <OpenAIMark className="h-4 w-4 text-foreground" />, on: true },
+    { name: 'Google AI', mark: <GoogleMark className="h-4 w-4" />, on: true },
+    { name: 'Gemini', mark: <GeminiMark className="h-4 w-4" />, on: true },
+    { name: 'Perplexity', mark: <PerplexityMark className="h-4 w-4" />, on: false },
+  ]
+  return (
+    <div className="space-y-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+        <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="text-xs font-medium text-foreground">best jeweller in Malad, Mumbai</span>
+      </div>
+      <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3.5">
+        <div className="flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-primary" /><span className="text-[10px] font-bold uppercase tracking-wide text-primary">AI answer</span></div>
+        <p className="text-xs leading-relaxed text-foreground">For gold &amp; bridal jewellery in Malad, <span className="rounded bg-primary/15 px-1 font-semibold text-primary">Rupesh Jewellers</span> is a well-reviewed local choice known for its designs and service&hellip;</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {surfaces.map((s) => (
+          <div key={s.name} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/20 px-2.5 py-2">
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">{s.mark}{s.name}</span>
+            {s.on
+              ? <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500"><Check className="h-3 w-3" />Named</span>
+              : <span className="text-[10px] font-bold text-muted-foreground">Missing</span>}
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5">
+        <span className="text-[11px] font-bold text-foreground">AI Visibility Score</span>
+        <span className="font-mono text-lg font-extrabold text-primary">60<span className="text-xs font-semibold text-muted-foreground">/100</span></span>
+      </div>
+    </div>
+  )
+}
+
+// CommandCenter: the homepage hero visual — one floating dashboard mock that shows
+// the whole platform at a glance: AI Visibility Score, Local SEO health, per-engine
+// presence, the review inbox with an AI draft, and an AEO recommendation.
+// Static markup (no animation loop) so it costs nothing at load time.
+function CommandCenter() {
+  const engines = [
+    { name: 'ChatGPT', mark: <OpenAIMark className="h-3.5 w-3.5 text-foreground" />, on: true },
+    { name: 'Google AI', mark: <GoogleMark className="h-3.5 w-3.5" />, on: true },
+    { name: 'Gemini', mark: <GeminiMark className="h-3.5 w-3.5" />, on: true },
+    { name: 'Perplexity', mark: <PerplexityMark className="h-3.5 w-3.5" />, on: false },
+  ]
+  const seoBars = [
+    { label: 'Profile completeness', v: 92 },
+    { label: 'Citations & consistency', v: 84 },
+    { label: 'Content freshness', v: 71 },
+  ]
+  return (
+    <div className="relative">
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
+        {/* Window chrome */}
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/20 px-4 py-2.5">
+          <div className="flex gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" />
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
+          </div>
+          <span className="hidden text-[10px] font-bold uppercase tracking-widest text-muted-foreground sm:block">Pinzo · Visibility Command Center</span>
+          <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold text-emerald-600">12 locations synced</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 p-4">
+          {/* AI Visibility Score */}
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-primary">AI Visibility Score</p>
+            <div className="flex items-center gap-3">
+              <div className="relative h-14 w-14 shrink-0 rounded-full" style={{ background: 'conic-gradient(hsl(var(--primary)) 281deg, hsl(var(--muted)) 0)' }}>
+                <div className="absolute inset-[5px] flex items-center justify-center rounded-full bg-card">
+                  <span className="text-base font-extrabold text-foreground">78</span>
+                </div>
+              </div>
+              <div>
+                <p className="flex items-center gap-1 text-xs font-extrabold text-emerald-600"><TrendingUp className="h-3.5 w-3.5" />+16</p>
+                <p className="text-[10px] font-semibold text-muted-foreground">this quarter</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Local SEO Health */}
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Local SEO Health</p>
+              <span className="text-xs font-extrabold text-foreground">84<span className="text-[9px] font-semibold text-muted-foreground">/100</span></span>
+            </div>
+            <div className="space-y-2">
+              {seoBars.map((b) => (
+                <div key={b.label}>
+                  <div className="mb-0.5 flex justify-between text-[9px] font-semibold text-muted-foreground"><span>{b.label}</span><span>{b.v}%</span></div>
+                  <div className="h-1.5 rounded-full bg-muted"><div className="h-full rounded-full bg-primary/70" style={{ width: `${b.v}%` }} /></div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Per-engine presence */}
+          <div className="col-span-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {engines.map((e) => (
+              <div key={e.name} className="flex items-center justify-between gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+                <span className="flex items-center gap-1.5 text-[10px] font-semibold text-foreground">{e.mark}{e.name}</span>
+                {e.on
+                  ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                  : <span className="text-[9px] font-bold text-amber-600">Fix</span>}
+              </div>
+            ))}
+          </div>
+
+          {/* Review inbox + AI draft */}
+          <div className="col-span-2 rounded-xl border border-border/60 bg-muted/20 p-3.5">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[10px] font-bold text-foreground"><MessageSquare className="h-3.5 w-3.5 text-primary" />Reviews Inbox</span>
+              <span className="flex gap-0.5 text-amber-400">{[...Array(5)].map((_, i) => <Star key={i} className="h-2.5 w-2.5 fill-current" />)}</span>
+            </div>
+            <p className="mt-1.5 truncate text-[10px] italic text-muted-foreground">&quot;Amazing service, the team went above and beyond&hellip;&quot;</p>
+            <div className="mt-2 flex items-center justify-between rounded-lg border border-primary/15 bg-primary/5 px-2.5 py-1.5">
+              <span className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wide text-primary"><Sparkles className="h-3 w-3" />AI reply drafted</span>
+              <span className="rounded bg-primary px-2 py-0.5 text-[9px] font-extrabold uppercase text-primary-foreground">Publish</span>
+            </div>
+          </div>
+
+          {/* AEO recommendation */}
+          <div className="col-span-2 flex items-start gap-2.5 rounded-xl border border-border/60 bg-card p-3.5 shadow-sm">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"><Sparkles className="h-3.5 w-3.5 text-primary" /></div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-primary">AI Recommendation</p>
+              <p className="text-[11px] font-medium leading-snug text-foreground">Add &quot;emergency service&quot; to 3 profiles — AI engines can&apos;t match you to those searches yet.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Floating proof chips — straddle the panel's bottom edge so they never cover text */}
+      <div className="absolute -bottom-4 -right-3 hidden rotate-2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 shadow-lg sm:flex">
+        <Map className="h-3.5 w-3.5 text-emerald-500" />
+        <span className="text-[10px] font-bold text-foreground">#1 · &quot;near me&quot;</span>
+      </div>
+      <div className="absolute -bottom-4 -left-3 hidden -rotate-2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 shadow-lg sm:flex">
+        <OpenAIMark className="h-3.5 w-3.5 text-foreground" />
+        <span className="text-[10px] font-bold text-foreground">Named by ChatGPT</span>
+        <Check className="h-3 w-3 text-emerald-500" />
+      </div>
+    </div>
+  )
+}
+
+// Every surface a customer discovers businesses on — powered from the one dashboard.
+const SURFACES = [
+  { name: 'Google Search', mark: <GoogleMark className="h-4 w-4" /> },
+  { name: 'Google Maps', mark: <MapPin className="h-4 w-4 text-emerald-600" /> },
+  { name: 'ChatGPT', mark: <OpenAIMark className="h-4 w-4 text-foreground" /> },
+  { name: 'Gemini', mark: <GeminiMark className="h-4 w-4" /> },
+  { name: 'Perplexity', mark: <PerplexityMark className="h-4 w-4" /> },
+  { name: 'Apple Maps', mark: <Map className="h-4 w-4 text-muted-foreground" /> },
+  { name: 'Voice Search', mark: <Mic className="h-4 w-4 text-muted-foreground" /> },
+]
+
 const LEADERS = [
   { rank: 1, name: 'Downtown Hub', score: 94, up: true },
   { rank: 2, name: 'Westside Plaza', score: 89, up: true },
@@ -396,8 +596,21 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
 
   const [pricingLocations, setPricingLocations] = useState<number>(5)
   const [pricingInterval, setPricingInterval] = useState<'monthly' | 'annual'>('monthly')
+  const [pricingUsd, setPricingUsd] = useState(false)
   const { data: basicQuote } = useQuote(pricingLocations, pricingInterval, 'basic', true)
   const { data: proQuote } = useQuote(pricingLocations, pricingInterval, 'pro', true)
+
+  // Display-only FX (1 USD = 100 INR). Razorpay still charges/settles in INR; this just
+  // shows US visitors a familiar number. ponytail: hardcoded peg, swap for live FX if it drifts.
+  const fmtRupees = (r: number) =>
+    pricingUsd ? '$' + Math.round(r / 100).toLocaleString('en-US') : '₹' + r.toLocaleString('en-IN')
+
+  // Default non-India visitors to USD. Timezone beats IP lookup: zero deps, no API call.
+  // ponytail: heuristic (VPN/traveler slips through); user can toggle. Live geo? add an IP check.
+  useEffect(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+    if (!/Kolkata|Calcutta/.test(tz)) setPricingUsd(true)
+  }, [])
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -443,7 +656,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           </div>
 
           <nav className="hidden items-center gap-7 md:flex">
-            {[['how', 'How it works'], ['features', 'Features'], ['rank', 'Local Rank'], ['pricing', 'Pricing'], ['faq', 'FAQ']].map(([id, label]) => (
+            {[['how', 'How it works'], ['features', 'Features'], ['ai-visibility', 'AI Visibility'], ['rank', 'Local Rank'], ['pricing', 'Pricing'], ['faq', 'FAQ']].map(([id, label]) => (
               <button key={id} onClick={() => scrollToSection(id)} className="text-xs font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground">
                 {label}
               </button>
@@ -469,7 +682,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
       {mobileMenuOpen && (
         <div className="fixed inset-0 top-16 z-40 w-full border-b border-border bg-background/95 backdrop-blur-lg duration-300 animate-in fade-in slide-in-from-top-4 md:hidden">
           <div className="flex flex-col gap-2 p-6">
-            {[['how', 'How it works'], ['features', 'Features'], ['rank', 'Local Rank'], ['pricing', 'Pricing'], ['faq', 'FAQ']].map(([id, label]) => (
+            {[['how', 'How it works'], ['features', 'Features'], ['ai-visibility', 'AI Visibility'], ['rank', 'Local Rank'], ['pricing', 'Pricing'], ['faq', 'FAQ']].map(([id, label]) => (
               <button key={id} onClick={() => scrollToSection(id)} className="border-b border-border/50 py-3 text-left text-sm font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground">
                 {label}
               </button>
@@ -487,7 +700,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           <Reveal>
             <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3.5 py-1 text-xs font-semibold text-primary">
               <Sparkles className="h-3.5 w-3.5" />
-              <span>{paid ? 'Free GBP audit in 60 seconds' : 'Operational engine for multi-location GMB SEO'}</span>
+              <span>{paid ? 'Free GBP audit in 60 seconds' : 'AI Visibility (AEO) + Google Business Profile management'}</span>
             </div>
           </Reveal>
           <Reveal delay={80}>
@@ -496,8 +709,8 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                 <>Audit every Google Business Profile{' '}
                   <span className="text-primary">in 60 seconds.</span></>
               ) : (
-                <>Every Google Business Profile.{' '}
-                  <span className="text-primary">One command center.</span></>
+                <>Be the business{' '}
+                  <span className="text-primary">AI recommends.</span></>
               )}
             </h1>
           </Reveal>
@@ -505,17 +718,23 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
             <p className="mx-auto max-w-xl text-base text-muted-foreground sm:text-lg lg:mx-0">
               {paid
                 ? 'Connect Google and instantly see your Health Score, missing fields, and review gaps across every location, then fix them from one AI dashboard.'
-                : 'Track local rank heatmaps, answer reviews with AI, rank every location on a leaderboard, and schedule Google Posts across hundreds of stores, from one secure dashboard.'}
+                : 'Your customers ask Google, Maps, ChatGPT and Gemini who’s best nearby. Pinzo keeps every Google Business Profile sharp, answers reviews with AI, and optimizes your local presence so both search engines and AI engines put your business first.'}
             </p>
           </Reveal>
           <Reveal delay={240}>
             <div className="flex flex-col items-center gap-4 pt-2 sm:flex-row lg:justify-start">
               <button onClick={() => handleContinueWithGoogle('hero')} disabled={loading} className="flex w-full min-w-[220px] items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50 sm:w-auto">
-                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> {paid ? 'Get My Free GMB Audit' : 'Continue with Google'}</>}
+                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> {paid ? 'Get My Free GMB Audit' : 'Start Free Trial'}</>}
               </button>
-              <button onClick={() => scrollToSection('pricing')} className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
-                View Pricing <ArrowRight className="h-4 w-4" />
-              </button>
+              {paid ? (
+                <button onClick={() => scrollToSection('pricing')} className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
+                  View Pricing <ArrowRight className="h-4 w-4" />
+                </button>
+              ) : (
+                <a href="https://wa.me/917021052482?text=Hi%2C%20I%27d%20like%20to%20book%20a%20Pinzo%20demo." target="_blank" rel="noopener noreferrer" className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
+                  Book a Demo <ArrowRight className="h-4 w-4" />
+                </a>
+              )}
             </div>
             
             <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row lg:justify-start">
@@ -526,7 +745,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                 <img className="inline-block h-9 w-9 rounded-full ring-2 ring-background shadow-sm" src="https://i.pravatar.cc/100?img=45" alt="" />
                 <img className="inline-block h-9 w-9 rounded-full ring-2 ring-background shadow-sm" src="https://i.pravatar.cc/100?img=60" alt="" />
               </div>
-              <p className="text-xs font-semibold text-muted-foreground">⭐ Loved by <span className="font-bold text-foreground">500+</span> local SEO agencies</p>
+              <p className="text-xs font-semibold text-muted-foreground">⭐ Loved by <span className="font-bold text-foreground">500+</span> agencies &amp; multi-location brands</p>
             </div>
           </Reveal>
           {error && <div className="mx-auto max-w-md rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs font-semibold text-red-500 lg:mx-0">{error}</div>}
@@ -542,9 +761,82 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
         {/* Hero visual: paid page shows a plain audit-result mockup; homepage keeps the rank animation. */}
         <Reveal delay={200} className="relative">
           <div className="absolute -inset-4 -z-10 rounded-3xl bg-primary/5 blur-2xl" />
-          {paid ? <AuditPreview /> : <RankMapReveal />}
+          {paid ? <AuditPreview /> : <CommandCenter />}
         </Reveal>
       </section>
+
+      {/* 2a-home. THE AI SEARCH SHIFT — every surface customers discover you on, one dashboard. */}
+      {!paid && (
+        <section className="border-y border-border/40 bg-muted/10 py-16">
+          <div className="mx-auto max-w-5xl space-y-8 px-4 text-center sm:px-6 lg:px-8">
+            <Reveal className="mx-auto max-w-2xl space-y-3">
+              <h2 className="text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">Your customers no longer only search Google.</h2>
+              <p className="text-sm text-muted-foreground">They ask Maps on the move, ChatGPT for a shortlist, and their speaker for &quot;the best one near me&quot;. Every answer is built from your local presence — Pinzo keeps it accurate everywhere.</p>
+            </Reveal>
+            <Reveal delay={100}>
+              <div className="flex flex-wrap items-center justify-center gap-2.5">
+                {SURFACES.map((s) => (
+                  <span key={s.name} className="flex items-center gap-2 rounded-full border border-border bg-card px-3.5 py-2 text-xs font-bold text-foreground shadow-sm">
+                    {s.mark}{s.name}
+                  </span>
+                ))}
+              </div>
+            </Reveal>
+            <Reveal delay={180}>
+              <div className="flex flex-col items-center gap-1">
+                <div className="h-8 w-px bg-gradient-to-b from-border to-primary/60" />
+                <ChevronDown className="-mt-2 h-4 w-4 text-primary" />
+                <span className="mt-1 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-5 py-2.5 text-sm font-extrabold text-primary shadow-sm">
+                  <LayoutDashboard className="h-4 w-4" /> One Pinzo dashboard powering all of them
+                </span>
+              </div>
+            </Reveal>
+          </div>
+        </section>
+      )}
+
+      {/* 2b-home. PROBLEM → SOLUTION — why local visibility breaks, and how Pinzo centralizes it. */}
+      {!paid && (
+        <section className="py-20">
+          <div className="mx-auto max-w-6xl space-y-10 px-4 sm:px-6 lg:px-8">
+            <Reveal className="mx-auto max-w-2xl space-y-4 text-center">
+              <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Winning Google isn&apos;t enough anymore</h2>
+              <p className="text-muted-foreground">Most businesses are easy to miss — not because they&apos;re bad, but because their local presence is scattered, stale and invisible to AI.</p>
+            </Reveal>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                { icon: MapPin, p: 'Profiles go stale', i: 'Outdated hours, photos and services quietly cost calls and trust' },
+                { icon: MessageSquare, p: 'Reviews go unanswered', i: 'Customers and ranking algorithms both read the silence' },
+                { icon: Building, p: 'Locations drift apart', i: 'Inconsistent names, numbers and services confuse Google and AI alike' },
+                { icon: TrendingUp, p: 'Local SEO gets neglected', i: 'Nobody owns rankings, so competitors take the map pack' },
+                { icon: Sparkles, p: 'Invisible to AI search', i: "ChatGPT and Gemini recommend competitors because your data isn't AI-ready" },
+                { icon: Clock, p: 'Everything is manual', i: 'Teams juggle dozens of dashboards instead of one source of truth' },
+              ].map((row, idx) => (
+                <Reveal key={idx} delay={idx * 60}>
+                  <div className="flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-5 shadow-sm">
+                    <row.icon className="h-5 w-5 text-rose-500" />
+                    <p className="text-sm font-bold text-foreground">{row.p}</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">{row.i}</p>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+            <Reveal delay={120}>
+              <div className="rounded-2xl border border-primary/20 bg-primary/5 p-6 text-center sm:p-8">
+                <p className="text-lg font-extrabold text-foreground">Pinzo centralizes everything.</p>
+                <p className="mx-auto mt-1 max-w-xl text-sm text-muted-foreground">One platform keeps every location complete, responsive and AI-ready:</p>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                  {['Google Business Profiles', 'Reviews', 'AI Visibility', 'Local SEO', 'Google Posts', 'Performance', 'Multi-location management'].map((t) => (
+                    <span key={t} className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-bold text-foreground shadow-sm">
+                      <Check className="h-3.5 w-3.5 text-emerald-500" />{t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </Reveal>
+          </div>
+        </section>
+      )}
 
       {/* 2a. THE PROBLEM — paid page only. Agitate the branch-wise pain before the payoff. */}
       {paid && (
@@ -646,12 +938,20 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
       {/* 3. LIVE STATS BAND */}
       <section className="border-y border-border/40 bg-muted/5 py-12">
         <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 sm:px-6 md:grid-cols-4 lg:px-8">
-          {[
-            { v: 4.8, d: 1, suffix: ' ★', label: 'Avg rating managed' },
-            { v: 1482, label: 'Reviews synced' },
-            { v: 98, suffix: '%', label: 'NAP consistency' },
-            { v: 12, label: 'Locations, one login' },
-          ].map((s, i) => (
+          {(paid
+            ? [
+                { v: 4.8, d: 1, suffix: ' ★', label: 'Avg rating managed' },
+                { v: 1482, label: 'Reviews synced' },
+                { v: 98, suffix: '%', label: 'NAP consistency' },
+                { v: 12, label: 'Locations, one login' },
+              ]
+            : [
+                { v: 500, suffix: 'K+', label: 'Reviews managed' },
+                { v: 10000, suffix: '+', label: 'Locations optimized' },
+                { v: 2, suffix: 'M+', label: 'Local searches optimized' },
+                { v: 4.8, d: 1, suffix: ' ★', label: 'Avg rating managed' },
+              ]
+          ).map((s: { v: number; d?: number; suffix?: string; label: string }, i) => (
             <Reveal key={i} delay={i * 80} className="text-center">
               <div className="text-3xl font-extrabold text-foreground sm:text-4xl">
                 <CountUp value={s.v} decimals={s.d ?? 0} suffix={s.suffix ?? ''} />
@@ -677,8 +977,8 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
       {/* 5. BENTO FEATURES */}
       <section id="features" className="mx-auto max-w-7xl scroll-mt-20 space-y-12 px-4 py-20 sm:px-6 lg:px-8">
         <Reveal className="mx-auto max-w-3xl space-y-4 text-center">
-          <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Everything local SEO needs, in one place</h2>
-          <p className="text-muted-foreground">Stop logging into twelve Google dashboards. Rank tracking, reputation, posts, and team control, unified.</p>
+          <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Everything local visibility needs, in one place</h2>
+          <p className="text-muted-foreground">Stop logging into twelve Google dashboards. AI visibility, rank tracking, reputation, posts, and team control, unified.</p>
         </Reveal>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -714,7 +1014,12 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
 
           {/* Remaining features (Local Rank is now a normal card, not a repeated heatmap) */}
           {[
-            { title: 'Local Rank Tracking', desc: paid ? 'See your position on Google Maps in every area you serve, so you know exactly where customers find you and where they find a competitor instead.' : 'Per-keyword heatmaps across your trade area show exactly where you win the local pack and where you are invisible.', icon: Map },
+            { title: paid ? 'AI Search Visibility' : 'AI Visibility Dashboard', badge: paid ? undefined : 'New', desc: paid ? 'See whether ChatGPT, Gemini, Perplexity and Google’s AI name your business when customers ask for the best option nearby.' : 'Monitor how ChatGPT, Gemini, Perplexity and Google AI understand and recommend your business, with one score per location.', icon: Sparkles },
+            ...(paid ? [] : [
+              { title: 'AEO Recommendations', badge: 'New', desc: 'Get AI-generated fixes — services to add, content to refresh, citations to claim — that make your business easier for AI engines to recommend.', icon: Zap },
+              { title: 'Local SEO Health Score', badge: undefined as string | undefined, desc: 'One score per location covering completeness, consistency, freshness and reviews, so you always know what to fix first.', icon: Activity },
+            ]),
+            { title: 'Local Rank Tracking', badge: undefined, desc: paid ? 'See your position on Google Maps in every area you serve, so you know exactly where customers find you and where they find a competitor instead.' : 'Per-keyword heatmaps across your trade area show exactly where you win the local pack and where you are invisible.', icon: Map },
             { title: 'Lead-Capture Microsites', desc: 'A fast, SEO-friendly public page per location, with reviews, photos, hours, and a contact form that turns Google traffic into leads.', icon: Globe },
             { title: 'Unified Review Inbox', desc: 'Every Google review from all locations in one searchable inbox. Reply, track status, never miss a customer.', icon: MessageSquare },
             { title: 'Google Posts Scheduler', desc: 'Schedule offers, updates, and events across many locations at once with CTA buttons.', icon: Calendar },
@@ -723,8 +1028,11 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
             { title: 'GMB Profile Audits', desc: 'Automated health checks surface NAP discrepancies, missing fields, and optimization gaps.', icon: Shield },
           ].map((f, i) => (
             <Reveal key={f.title} delay={(i % 3) * 60}>
-              <div className="flex h-full flex-col gap-3 rounded-2xl border border-border bg-card p-6 shadow-sm transition-shadow hover:shadow-md">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"><f.icon className="h-5 w-5 text-primary" /></div>
+              <div className={`flex h-full flex-col gap-3 rounded-2xl border bg-card p-6 shadow-sm transition-shadow hover:shadow-md ${f.badge ? 'border-primary/30' : 'border-border'}`}>
+                <div className="flex items-start justify-between">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"><f.icon className="h-5 w-5 text-primary" /></div>
+                  {f.badge && <span className="rounded-full bg-primary px-2.5 py-1 text-[9px] font-extrabold uppercase tracking-widest text-primary-foreground">{f.badge}</span>}
+                </div>
                 <h3 className="text-base font-bold text-foreground">{f.title}</h3>
                 <p className="text-sm leading-relaxed text-muted-foreground">{f.desc}</p>
               </div>
@@ -749,8 +1057,49 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               ))}
             </ul>
           </Reveal>
-          <Reveal delay={120}><RankTrend /></Reveal>
+          <Reveal delay={120}>{paid ? <RankTrend /> : <RankMapReveal />}</Reveal>
         </div>
+      </section>
+
+      {/* 6b. AI SEARCH VISIBILITY (AEO) — the new differentiator */}
+      <section id="ai-visibility" className="mx-auto grid max-w-7xl scroll-mt-16 grid-cols-1 items-center gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:px-8">
+        <Reveal delay={120} className="order-2 lg:order-1"><AISearchPanel /></Reveal>
+        <Reveal className="order-1 space-y-6 lg:order-2">
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">
+            <Sparkles className="h-3 w-3" /> {paid ? 'Get found in AI answers' : 'AI Search Visibility · New'}
+          </div>
+          <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{paid ? 'When customers ask AI, does it say your name?' : 'Get recommended by AI'}</h2>
+          <p className="leading-relaxed text-muted-foreground">{paid
+            ? 'More people ask ChatGPT, Gemini and Google’s AI for the "best place near me" every day — and the AI names a handful of businesses. Pinzo checks whether yours is one of them, shows you the exact answers, and tells you what to fix to get included.'
+            : 'Modern customers increasingly discover businesses through AI assistants — and the AI names only a handful. Pinzo optimizes your local presence so AI systems have accurate, trustworthy and complete information to recommend your business.'}</p>
+          <ul className="space-y-3 text-xs font-semibold text-muted-foreground">
+            {['Track your presence across ChatGPT, Gemini, Perplexity & Google AI',
+              'See the exact queries you win — and where you’re invisible',
+              'Know which sources the AI cites, so you can influence the answer'].map((t) => (
+              <li key={t} className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-500" />{t}</li>
+            ))}
+          </ul>
+          {!paid && (
+            <div className="flex flex-wrap gap-2">
+              {['Business completeness', 'Review quality', 'Fresh content', 'Local authority', 'Citations', 'Structured data', 'Profile consistency'].map((t) => (
+                <span key={t} className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] font-bold text-primary">{t}</span>
+              ))}
+              <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-bold text-emerald-600"><TrendingUp className="h-3.5 w-3.5" />AI Visibility Score ↑</span>
+            </div>
+          )}
+          <div className="flex items-center gap-3.5 pt-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Checks</span>
+            <div className="flex items-center gap-3.5">
+              <OpenAIMark className="h-5 w-5 text-foreground/70" />
+              <GoogleMark className="h-5 w-5" />
+              <GeminiMark className="h-5 w-5" />
+              <PerplexityMark className="h-5 w-5" />
+            </div>
+          </div>
+          <button onClick={() => scrollToSection('pricing')} className="inline-flex items-center gap-1.5 text-sm font-bold text-primary hover:underline">
+            See it in every plan <ArrowRight className="h-4 w-4" />
+          </button>
+        </Reveal>
       </section>
 
       {/* 7. REVIEWS + AI (condensed, single section) */}
@@ -788,6 +1137,36 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
         </Reveal>
       </section>
 
+      {/* 7b-home. BENEFITS — outcomes, not features. */}
+      {!paid && (
+        <section className="border-y border-border/30 bg-muted/10 py-20">
+          <div className="mx-auto max-w-6xl space-y-10 px-4 sm:px-6 lg:px-8">
+            <Reveal className="mx-auto max-w-2xl space-y-4 text-center">
+              <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">What your business actually gets</h2>
+              <p className="text-muted-foreground">Not more software to babysit — more customers finding you, wherever they search.</p>
+            </Reveal>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+              {[
+                { icon: Search, t: 'Increase local visibility', d: 'Show up wherever nearby customers look' },
+                { icon: Map, t: 'Rank higher on Google Maps', d: 'Win the map pack, street by street' },
+                { icon: Sparkles, t: 'Get recommended by AI', d: 'Be the name ChatGPT & Gemini give' },
+                { icon: MessageSquare, t: 'Reply to reviews 10× faster', d: 'On-brand AI drafts, you approve' },
+                { icon: Building, t: 'Manage hundreds of locations', d: 'One dashboard, every profile in sync' },
+                { icon: Clock, t: 'Save hours every week', d: 'Automate the busywork of local presence' },
+              ].map((b, i) => (
+                <Reveal key={b.t} delay={(i % 3) * 60}>
+                  <div className="flex h-full flex-col items-center gap-2.5 rounded-2xl border border-border bg-card p-5 text-center shadow-sm sm:p-6">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-primary/20 bg-primary/10"><b.icon className="h-5 w-5 text-primary" /></div>
+                    <p className="text-sm font-extrabold text-foreground">{b.t}</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">{b.d}</p>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* 8. HOW IT WORKS */}
       <section id="how" className="mx-auto max-w-7xl scroll-mt-20 space-y-12 px-4 py-20 sm:px-6 lg:px-8">
         <Reveal className="mx-auto max-w-3xl space-y-4 text-center">
@@ -798,8 +1177,8 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {[
             { step: '01', title: 'Connect with Google', desc: 'Sign in with secure Google OAuth and grant access. We never see your password, only encrypted, revocable tokens.', icon: Plug },
-            { step: '02', title: 'We sync your locations', desc: 'Locations, reviews, ratings, rank, and performance are pulled in automatically and kept up to date.', icon: RefreshCw },
-            { step: '03', title: 'Manage from one dashboard', desc: 'Reply with AI, schedule posts, track rank and leaderboards, run audits, all with team roles and SLAs.', icon: LayoutDashboard },
+            { step: '02', title: 'Pinzo syncs everything', desc: 'Locations, reviews, posts, rank, and performance data are pulled in automatically and kept up to date.', icon: RefreshCw },
+            { step: '03', title: 'Grow on autopilot', desc: 'Get AI recommendations, reply to reviews with AI, schedule posts, and watch your visibility climb across Google and AI search.', icon: LayoutDashboard },
           ].map((item, i) => (
             <Reveal key={i} delay={i * 80}>
               <div className="flex h-full flex-col gap-4 rounded-2xl border border-border bg-card p-6 shadow-sm">
@@ -833,6 +1212,11 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
             <button onClick={() => setPricingInterval('monthly')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'monthly' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Monthly</button>
             <button onClick={() => setPricingInterval('annual')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'annual' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Yearly <span className={pricingInterval === 'annual' ? 'text-emerald-500' : 'text-emerald-500'}>· Save 20%</span></button>
           </div>
+
+          <div className="flex items-center justify-center rounded-full bg-muted/40 p-1.5 backdrop-blur-md border border-border/50 shadow-inner">
+            <button onClick={() => setPricingUsd(false)} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${!pricingUsd ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>₹ INR</button>
+            <button onClick={() => setPricingUsd(true)} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingUsd ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>$ USD</button>
+          </div>
           
           {/* Shared location slider drives both per-location plans */}
           <div className="w-full max-w-xs space-y-3 rounded-2xl border border-border/50 bg-card/40 backdrop-blur-md p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md">
@@ -851,10 +1235,10 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Basic</span>
               <p className="text-xs font-medium text-muted-foreground">Everything you need to manage Google reviews & posts.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="text-4xl font-extrabold">{basicQuote ? `₹${Math.round(basicQuote.price_paise / 100).toLocaleString('en-IN')}` : '...'}</span>
+                <span className="text-4xl font-extrabold">{basicQuote ? fmtRupees(Math.round(basicQuote.price_paise / 100)) : '...'}</span>
                 <span className="text-sm font-semibold text-muted-foreground">/{pricingInterval === 'monthly' ? 'mo' : 'yr'}</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ₹${Math.round(basicQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)).toLocaleString('en-IN')} per location / month · + ${Math.round(basicQuote.gst_rate * 100)}% GST` : ''}</p>
+              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ${fmtRupees(Math.round(basicQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingUsd ? 'billed in INR' : `+ ${Math.round(basicQuote.gst_rate * 100)}% GST`}` : ''}</p>
             </div>
             <button onClick={() => handleContinueWithGoogle('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-border pt-5 text-xs font-semibold text-muted-foreground">
@@ -864,6 +1248,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                 'Unified review inbox with AI drafts',
                 'Automated review SLAs & tracking',
                 'Bulk Google Posts scheduler',
+                'AI Search Visibility — Google AI answers',
                 'Multi-location performance analytics',
                 'Automated GMB health audits',
                 'Role-based access (RBAC) & permissions'
@@ -884,10 +1269,10 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
               <p className="text-xs font-medium text-foreground/70">Rank higher on Maps & turn searches into leads.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="text-4xl font-extrabold">{proQuote ? `₹${Math.round(proQuote.price_paise / 100).toLocaleString('en-IN')}` : '...'}</span>
+                <span className="text-4xl font-extrabold">{proQuote ? fmtRupees(Math.round(proQuote.price_paise / 100)) : '...'}</span>
                 <span className="text-sm font-semibold text-muted-foreground">/{pricingInterval === 'monthly' ? 'mo' : 'yr'}</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ₹${Math.round(proQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)).toLocaleString('en-IN')} per location / month · + ${Math.round(proQuote.gst_rate * 100)}% GST` : ''}</p>
+              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ${fmtRupees(Math.round(proQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingUsd ? 'billed in INR' : `+ ${Math.round(proQuote.gst_rate * 100)}% GST`}` : ''}</p>
             </div>
             <button onClick={() => handleContinueWithGoogle('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50">Start Free Trial</button>
             <ul className="space-y-2.5 border-t border-primary/20 pt-5 text-xs font-semibold text-foreground">
@@ -895,6 +1280,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                 'Everything in Basic, plus:',
                 `${proQuote ? proQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 45} AI credits / month`,
                 '45 AI credits per location',
+                'Full AI Search Visibility — ChatGPT, Gemini & Perplexity + share of voice',
                 paid ? 'Google Maps rank across every area you serve' : 'Local rank heatmaps (7x7 geo-grid)',
                 'Lead-capture microsite per location',
                 'Location leaderboard & cohort ranking',
@@ -944,7 +1330,10 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           </Reveal>
           <div className="space-y-3">
             {[
-              ...(paid ? [{ q: 'What does the free audit show, and is it really free?', a: 'Yes, it is free. The moment you connect Google, Pinzo scores each location and surfaces missing fields, pending review replies, weak branches and priority fixes, and no card is required to see it.' }] : []),
+              ...(paid ? [{ q: 'What does the free audit show, and is it really free?', a: 'Yes, it is free. The moment you connect Google, Pinzo scores each location and surfaces missing fields, pending review replies, weak branches and priority fixes, and no card is required to see it.' }] : [
+                { q: 'What is AI Visibility (AEO)?', a: 'Answer Engine Optimization is making sure AI assistants like ChatGPT, Gemini and Perplexity recommend your business when customers ask for the best option nearby. Pinzo tracks whether each engine names you, scores your AI visibility, and gives you the exact fixes to get included.' },
+                { q: 'How do I get my business recommended by ChatGPT and Gemini?', a: 'AI engines recommend businesses with complete, consistent, and well-reviewed local presences. Pinzo strengthens exactly those signals — profile completeness, review quality and response rate, fresh content, citations and consistency — and shows your AI Visibility Score improving as you fix them.' },
+              ]),
               { q: 'Do I need to give you my Google password?', a: 'Absolutely not. We authenticate using Google OAuth secure scopes. You sign in with Google once and grant read/write access. We never store or see your password.' },
               { q: 'How fast do edits update on Google Maps?', a: 'Updates such as phone numbers, hours, and posts are pushed via the Google Business Profile API and typically appear on Google Maps within 2 to 5 minutes.' },
               { q: 'Is there a limit to how many locations I can connect?', a: 'There are no hard limits. Our Enterprise package lets you connect hundreds or thousands of physical locations under a single workspace.' },
@@ -970,8 +1359,8 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
         <Reveal>
           <div className="relative overflow-hidden rounded-3xl border border-primary/20 bg-primary/5 p-8 text-center sm:p-12 lg:p-16">
             <div className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-3xl" />
-            <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{paid ? 'Find weak branches. Fix profile gaps. Grow local visibility.' : 'Start syncing your storefronts today'}</h2>
-            <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">{paid ? 'Connect Google and get your free Health Score audit across every location in under a minute. No card required to start.' : 'Join local SEO directors, franchise owners, and agency operators who have abandoned manual spreadsheets. Connect your locations and start automating.'}</p>
+            <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{paid ? 'Find weak branches. Fix profile gaps. Grow local visibility.' : 'Ready to be the business AI recommends?'}</h2>
+            <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">{paid ? 'Connect Google and get your free Health Score audit across every location in under a minute. No card required to start.' : 'Connect your Google Business Profiles in minutes and start growing your visibility across Google Search, Maps, ChatGPT, Gemini and Perplexity. Free 7-day trial, no card required.'}</p>
             <div className="flex justify-center pt-6">
               <button onClick={() => handleContinueWithGoogle('footer')} disabled={loading} className="flex items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50">
                 {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> {paid ? 'Get My Free GMB Audit' : 'Continue with Google'}</>}
@@ -986,12 +1375,13 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
         <div className="mx-auto grid max-w-7xl grid-cols-2 gap-8 px-4 sm:px-6 md:grid-cols-4 lg:px-8">
           <div className="col-span-2 space-y-4 md:col-span-1">
             <img src="/logo-horizontal-3.png" alt="Pinzo" className="h-8 shrink-0 object-contain" />
-            <p className="max-w-xs text-[11px] leading-relaxed text-muted-foreground">Synchronize, automate, and schedule locations under Google Business Profile. Dominating the local maps pack made simple.</p>
+            <p className="max-w-xs text-[11px] leading-relaxed text-muted-foreground">The AI visibility platform for local businesses. Manage Google Business Profiles, reviews, posts and local SEO — and get recommended across Google, ChatGPT, Gemini and Perplexity.</p>
           </div>
           <div className="space-y-3">
             <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">Product</span>
             <ul className="space-y-1.5 text-xs font-semibold text-muted-foreground">
               <li><button onClick={() => scrollToSection('features')} className="transition-colors hover:text-foreground">Features</button></li>
+              <li><button onClick={() => scrollToSection('ai-visibility')} className="transition-colors hover:text-foreground">AI Visibility</button></li>
               <li><button onClick={() => scrollToSection('rank')} className="transition-colors hover:text-foreground">Local Rank</button></li>
               <li><button onClick={() => scrollToSection('pricing')} className="transition-colors hover:text-foreground">Pricing</button></li>
             </ul>

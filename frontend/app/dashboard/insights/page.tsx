@@ -426,7 +426,10 @@ export default function InsightsPage() {
   useEffect(() => {
     let interval: NodeJS.Timeout
     if (syncState.insights_sync_in_progress) {
-      interval = setInterval(fetchSyncStatus, 5000) // Poll every 5 seconds when active
+      // Poll every 5 seconds when active; skip while the tab is hidden
+      interval = setInterval(() => {
+        if (document.visibilityState !== 'hidden') fetchSyncStatus()
+      }, 5000)
     }
     return () => {
       if (interval) clearInterval(interval)

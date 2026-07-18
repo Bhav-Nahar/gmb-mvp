@@ -1,7 +1,6 @@
 import boto3
 from botocore.exceptions import ClientError
 from app.storage.base.provider import BaseStorageProvider
-from app.storage.base.models import StorageFileMetadata
 from app.storage.base.exceptions import FileNotFoundStorageError, StorageError, StorageConnectionError
 from app.core.config import settings
 
@@ -85,18 +84,3 @@ class R2StorageProvider(BaseStorageProvider):
             raise StorageError(f"R2 file check failed: {str(ce)}")
         except Exception as e:
             raise StorageError(f"Failed to verify R2 file existence: {str(e)}")
-
-    async def get_metadata(self, key: str) -> StorageFileMetadata:
-        try:
-            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
-            return StorageFileMetadata(
-                key=key,
-                size_bytes=response.get("ContentLength", 0),
-                mime_type=response.get("ContentType", "application/octet-stream")
-            )
-        except ClientError as ce:
-            if ce.response["Error"]["Code"] in ["404", "NoSuchKey"]:
-                raise FileNotFoundStorageError(f"File not found in R2: {key}")
-            raise StorageError(f"Failed to fetch R2 file metadata: {str(ce)}")
-        except Exception as e:
-            raise StorageError(f"Failed to retrieve R2 metadata: {str(e)}")

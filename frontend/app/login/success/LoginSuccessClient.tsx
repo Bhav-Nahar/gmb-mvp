@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { RefreshCw, CheckCircle2 } from 'lucide-react'
 import { api, storeCsrfToken } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
-import { trackSignUpStart } from '@/lib/analytics'
+import { trackSignUp } from '@/lib/analytics'
 import { getAttribution } from '@/lib/attribution'
 
 function LoginSuccessContent() {
@@ -51,7 +51,7 @@ function LoginSuccessContent() {
         const isOnboarding = onboarding === 'true'
         // New user just completed OAuth -> the real signup. Fires once (consumes
         // the stored cta_location); returning users don't trigger it.
-        if (isOnboarding) trackSignUpStart()
+        if (isOnboarding) trackSignUp()
         setStatusMessage(isOnboarding ? 'Onboarding workspace...' : 'Loading your dashboard...')
         // Brief delay only for new-user onboarding; existing users redirect immediately
         setTimeout(() => {

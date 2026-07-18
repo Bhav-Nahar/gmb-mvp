@@ -71,7 +71,9 @@ class ComparisonCacheService:
         pattern = f"comparison:{org_id}:*" if org_id is not None else "comparison:*"
         try:
             keys = []
-            for key in redis_client.scan_iter(match=pattern):
+            # count=500: default SCAN batches are ~10 keys, i.e. one Redis
+            # round-trip (billed command on Upstash) per ~10 keys scanned.
+            for key in redis_client.scan_iter(match=pattern, count=500):
                 keys.append(key)
                 if len(keys) >= 500:
                     redis_client.delete(*keys)

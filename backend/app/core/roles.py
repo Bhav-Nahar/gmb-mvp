@@ -19,8 +19,3 @@ class Role:
 ADMIN_ROLES = frozenset({Role.OWNER, Role.ADMIN})
 STAFF_ROLES = frozenset({Role.OWNER, Role.ADMIN, Role.REGIONAL_MANAGER, Role.STORE_MANAGER})
 TEAM_VIEWER_ROLES = frozenset({Role.OWNER, Role.ADMIN, Role.REGIONAL_MANAGER})
-REGIONAL_MANAGER_PLUS = TEAM_VIEWER_ROLES
-
-# Roles that always have implicit access to every location in their organization
-# (i.e. get_user_location_ids returns None for them).
-ORG_WIDE_ROLES = ADMIN_ROLES

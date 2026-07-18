@@ -46,11 +46,6 @@ _VARIABLE_ALIASES: Dict[str, str] = {
     "rating": "rating",
 }
 
-# Variables offered in the editor's "Insert" toolbar (frontend mirrors this list).
-INSERTABLE_VARIABLES = [
-    "reviewer_name", "first_name", "location_name", "city", "phone", "website", "rating",
-]
-
 class ReplyTemplateService:
     @staticmethod
     def validate_template_variables(body: str) -> None:

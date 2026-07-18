@@ -23,6 +23,7 @@ type EventParams = {
   payment_status?: string
   cta_location?: CtaLocation
   page_path?: string
+  method?: string // GA4 sign_up: how the account was created (e.g. "google")
 }
 
 declare global {
@@ -65,7 +66,7 @@ export function track(event: string, params: EventParams = {}, group?: string): 
   if (process.env.NEXT_PUBLIC_ANALYTICS_DEBUG) console.debug("[dataLayer]", payload)
 }
 
-// Ecommerce events (select_plan, begin_checkout, purchase). GA4's built-in ecommerce
+// Ecommerce events (add_payment_info, begin_checkout, purchase). GA4's built-in ecommerce
 // reports only read the reserved `ecommerce` object + its `items` array, so money lives
 // there and identity under `user`. We push { ecommerce: null } first to clear the prior
 // object — otherwise its values leak into the next event. event_id stays top-level.
@@ -130,7 +131,7 @@ export function trackTrialStart(opts: {
 // "annual" is the UI's word; the schema uses "yearly".
 const toBillingCycle = (t: "monthly" | "annual") => (t === "annual" ? "yearly" : "monthly")
 
-// The configurable plan payload, shared by select_plan and begin_checkout.
+// The configurable plan payload, shared by add_payment_info and purchase.
 type PlanSelection = {
   plan_name: string
   paymentTerm: "monthly" | "annual"
@@ -149,10 +150,10 @@ const planItem = (p: PlanSelection) => ({
   locations_included: p.locations_included,
 })
 
-// User picked a plan tier in the upgrade modal.
-export function trackSelectPlan(p: PlanSelection) {
+// User picked a plan tier in the upgrade modal. Mapped to GA4's add_payment_info.
+export function trackAddPaymentInfo(p: PlanSelection) {
   trackEcom(
-    "select_plan",
+    "add_payment_info",
     { currency: "INR", value: p.value, items: [planItem(p)] },
     { lead_magnet: "direct_plan", email: p.email, ...(p.user_id ? { user_id: String(p.user_id) } : {}) },
     generateEventId(),
@@ -195,14 +196,38 @@ export function trackPurchase(p: {
   )
 }
 
-export function trackSignUpStart() {
+// Raw PII pushed for GTM to hash before any send (never leaves GTM unhashed).
+// device_type auto-detected; pass to override. gtm.uniqueEventId is normally
+// GTM-managed — omit it unless a tag specifically reads a value you set.
+export function trackCustomerData(c: {
+  name: string
+  mobile: string
+  email: string
+  device_type?: "desktop" | "mobile" | "tablet"
+}) {
+  if (typeof window === "undefined") return
+  const device_type =
+    c.device_type ?? (window.matchMedia("(max-width: 767px)").matches ? "mobile" : "desktop")
+  window.dataLayer = window.dataLayer || []
+  window.dataLayer.push({ customer: null }) // clear so prior fields don't leak
+  window.dataLayer.push({
+    event: "customerData",
+    customer: { name: c.name, mobile: c.mobile, email: c.email, device_type },
+  })
+  if (process.env.NEXT_PUBLIC_ANALYTICS_DEBUG) console.debug("[dataLayer] customerData")
+}
+
+// Fires at /login/success after OAuth completes — the account exists, so this is
+// GA4's sign_up (completed), not merely "started". method = the OAuth provider.
+export function trackSignUp() {
   const cta_location = (typeof window !== "undefined"
     ? sessionStorage.getItem(CTA_KEY)
     : null) as CtaLocation | null
   sessionStorage.removeItem(CTA_KEY) // consume so a back-nav can't re-fire it
-  track("sign_up_start", {
+  track("sign_up", {
     event_id: generateEventId(),
     lead_magnet: "7_day_trial",
+    method: "google",
     ...(cta_location ? { cta_location } : {}),
   }, "user")
 }

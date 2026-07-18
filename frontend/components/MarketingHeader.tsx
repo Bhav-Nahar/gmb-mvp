@@ -7,6 +7,7 @@ import { Menu, X } from 'lucide-react';
 const NAV = [
   { href: '/#how', label: 'How it works' },
   { href: '/#features', label: 'Features' },
+  { href: '/#ai-visibility', label: 'AI Visibility' },
   { href: '/#rank', label: 'Local Rank' },
   { href: '/pricing', label: 'Pricing' },
   { href: '/#faq', label: 'FAQ' },

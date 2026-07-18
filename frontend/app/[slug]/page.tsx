@@ -15,8 +15,20 @@ import Footer from '@/components/microsite/Footer'
 import BackToTop from '@/components/microsite/BackToTop'
 import { buildLocalBusinessJsonLd, buildBreadcrumbJsonLd } from '@/lib/microsite/jsonld'
 
-// Enable ISR caching (revalidate every 3600 seconds / 1 hour)
-export const revalidate = 3600
+// ISR fallback window: 1 week. Safe because every real change already busts the
+// cache immediately via revalidatePath (publish/unpublish, review & photo syncs —
+// see backend services/revalidation_service.py); this only caps how stale a page
+// can get if one of those signals is ever missed.
+export const revalidate = 604800
+
+// REQUIRED for the ISR above to work: without generateStaticParams a dynamic
+// segment is SSR'd on every request and revalidate is ignored. Empty list =
+// nothing prerendered at build (backend unreachable there); each visited slug
+// renders once on demand, then serves from cache. Publish/unpublish and sync
+// flows still bust it early via revalidatePath (services/revalidation_service).
+export function generateStaticParams(): { slug: string }[] {
+  return []
+}
 
 async function getMicrositeData(slug: string) {
   // Use internal routing for docker-compose SSR, fallback to public URL
@@ -28,7 +40,8 @@ async function getMicrositeData(slug: string) {
   }
 
   try {
-    const res = await fetch(url, { next: { revalidate: 3600 } })
+    // Must match the page-level revalidate — the shortest window wins.
+    const res = await fetch(url, { next: { revalidate: 604800 } })
     if (res.status === 404) return null
     if (!res.ok) return null
     return res.json()
@@ -98,6 +111,7 @@ export default async function MicrositePage({ params }: { params: { slug: string
     // 404 for missing/draft/unpublished. We intentionally do NOT run middleware to
     // return a distinct 410 — that would require an uncached per-request fetch on
     // every visit. Keeping this fully static ISR; 404 and 410 both deindex in search.
+    // (pSEO landing pages live under /gbp-management/, not this root namespace.)
     notFound()
   }
 

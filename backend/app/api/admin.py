@@ -305,6 +305,11 @@ def update_organization(
             plan_change = "error"
 
     msg = "Organization updated"
+    if "custom_price_paise" in changes and plan_change is None:
+        # Price changed but no live subscription reschedule ran (not active, no Razorpay
+        # sub, or no quota). Say so — otherwise it looks like the save silently no-op'd.
+        msg = ("Organization updated. No active card subscription to reschedule — the custom "
+               "rate will be billed when this org next checks out.")
     if plan_change == "upgraded":
         msg = "Organization updated — new price takes effect at the next renewal."
     elif plan_change == "needs_remandate":
@@ -380,6 +385,11 @@ def delete_organization(
         raise HTTPException(status_code=404, detail="Organization not found")
     if org.deleted_at is not None:
         raise HTTPException(status_code=409, detail="Organization is already deleted.")
+    # Stop billing now, not at purge — a live mandate would otherwise keep charging the
+    # customer through the 14-day grace window. Trade-off: restore can't revive billing,
+    # a restored org must re-authorize a fresh mandate.
+    from app.services.billing.subscription_service import SubscriptionService
+    SubscriptionService.cancel_active_subscriptions(org)
     org.deleted_at = datetime.now(timezone.utc)
     _audit(db, actor=admin, organization_id=org.id, action="superadmin.org_delete",
            changes={"deleted_at": {"old": None, "new": org.deleted_at}}, reason=body.reason)

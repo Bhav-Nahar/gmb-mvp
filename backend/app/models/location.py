@@ -41,6 +41,12 @@ class Location(Base):
     google_category_resource_name = Column(String, nullable=True) # Example: "categories/gcid:jewelry_store"
     # Secondary/additional categories: list of {"name": "categories/gcid:x", "displayName": "X"}
     additional_categories = Column(JSONB, default=list, server_default='[]', nullable=False)
+    # Owner/Admin-added custom queries to track for AI Visibility (AEO), on top of
+    # the auto-generated category+city ones. List of plain strings.
+    aeo_queries = Column(JSONB, default=list, server_default='[]', nullable=False)
+    # When False, a scan runs ONLY the custom queries above (no auto-generated ones),
+    # giving the owner exact control over query count and therefore cost.
+    aeo_auto_enabled = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Additional rich GBP fields — captured for full parity with what Google returns.
     additional_phones = Column(JSONB, default=list, server_default='[]', nullable=False)  # list of strings
     special_hours = Column(JSONB, nullable=True)      # holiday / one-off hours

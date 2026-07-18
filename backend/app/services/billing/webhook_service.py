@@ -108,6 +108,11 @@ class WebhookService:
         org = db.scalars(stmt).first()
         if not org:
             logger.error(f"Organization {org_id_str} not found")
+        elif org.deleted_at is not None:
+            # Org is soft-deleted (mandate already cancelled at delete). Don't mutate its
+            # billing state from a late/in-flight event — treat as gone.
+            logger.warning(f"Ignoring {entity} webhook for soft-deleted org {org_id_str}")
+            return None, ent
         return org, ent
 
     @staticmethod

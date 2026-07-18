@@ -353,16 +353,19 @@ export default function AdminOrgDetailPage() {
             )}
           </div>
         </div>
-        {form.custom_price_rupees !== '' && (
+        {form.custom_price_rupees !== '' && (() => {
+          const quota = Number(form.location_quota) || 0
+          return (
           <p className="mt-3 text-xs text-muted-foreground">
-            Preview at quota {o.location_quota ?? '—'}: {o.location_quota
-              ? `₹${(Number(form.custom_price_rupees) * o.location_quota).toLocaleString('en-IN')}/mo`
+            Preview at quota {quota || '—'}: {quota
+              ? `₹${(Number(form.custom_price_rupees) * quota).toLocaleString('en-IN')}/mo`
               : 'set a location quota to preview'}
-            {form.custom_credits_per_location !== '' && o.location_quota
-              ? ` · ${Number(form.custom_credits_per_location) * o.location_quota} credits/mo`
+            {form.custom_credits_per_location !== '' && quota
+              ? ` · ${Number(form.custom_credits_per_location) * quota} credits/mo`
               : ''}
           </p>
-        )}
+          )
+        })()}
       </section>
 
       {/* Users */}

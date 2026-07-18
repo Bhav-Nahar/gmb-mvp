@@ -1,4 +1,4 @@
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { timingSafeEqual } from 'crypto';
 
 // Constant-time compare so the secret can't be recovered via response timing.
@@ -25,15 +25,36 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { slug } = body;
+    const { slug, paths, pseoSlug } = body;
 
-    if (!slug) {
-      return Response.json({ error: "Missing slug" }, { status: 400 });
+    // Three callers:
+    //  - microsites send { slug } -> revalidate the single-level /{slug} route
+    //  - pSEO publish/import sends { paths: [...] } -> global 'pseo' tag + each path
+    //  - pSEO per-page flush sends { pseoSlug, paths } -> ONLY that page's tag +
+    //    path, leaving every other pSEO page's cache (HTML + data) intact.
+    if (typeof pseoSlug === 'string' && pseoSlug) {
+      revalidateTag(`pseo:${pseoSlug}`);
+      for (const p of Array.isArray(paths) ? paths : []) {
+        if (typeof p === 'string' && p.startsWith('/')) revalidatePath(p);
+      }
+      return Response.json({ revalidated: true, scope: pseoSlug });
     }
 
-    // Revalidate the single-level microsite page route
+    if (Array.isArray(paths) && paths.length > 0) {
+      // The 'pseo' tag on the lib/pseo.ts fetches busts all pSEO data at once;
+      // revalidatePath then purges the ISR HTML for the affected leaf + hubs.
+      revalidateTag('pseo');
+      for (const p of paths) {
+        if (typeof p === 'string' && p.startsWith('/')) revalidatePath(p);
+      }
+      return Response.json({ revalidated: true, count: paths.length });
+    }
+
+    if (!slug) {
+      return Response.json({ error: "Missing slug or paths" }, { status: 400 });
+    }
+
     revalidatePath(`/${slug}`);
-    
     return Response.json({ revalidated: true });
   } catch (err) {
     console.error("Error in revalidation route:", err);

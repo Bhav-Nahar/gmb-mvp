@@ -529,3 +529,44 @@ def test_razorpay_mode_isolation(db):
         with patch.object(settings, "RAZORPAY_KEY_ID", "rzp_test_key"):
             plan_id_test2 = SubscriptionService._get_or_create_plan(db, 1, "monthly")
             assert plan_id_test2 == "plan_mock_295000"
+
+
+def test_cancel_active_subscriptions_cancels_both_and_swallows_errors():
+    """Cancels the main sub and any pending re-mandate; a Razorpay error must not raise
+    (it would otherwise block the delete)."""
+    org = Organization(name="X", razorpay_subscription_id="sub_main",
+                        pending_remandate_subscription_id="sub_pending")
+    org.id = 42
+    fake_client = MagicMock()
+    fake_client.subscription.cancel.side_effect = [Exception("razorpay down"), None]
+    with patch.object(SubscriptionService, "get_razorpay_client", return_value=fake_client):
+        SubscriptionService.cancel_active_subscriptions(org)  # must not raise
+    calls = [c.args[0] for c in fake_client.subscription.cancel.call_args_list]
+    assert calls == ["sub_main", "sub_pending"]  # tried both despite the first failing
+
+
+def test_webhook_ignores_soft_deleted_org(db):
+    """A renewal charge arriving for a soft-deleted org must NOT mutate its billing."""
+    from datetime import datetime, timezone
+    org = Organization(name="Gone", subscription_status="trial",
+                       monthly_ai_credits_balance=200, topup_ai_credits_balance=0,
+                       deleted_at=datetime.now(timezone.utc))
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    payload = {
+        "event": "subscription.charged",
+        "contains": ["subscription", "payment"],
+        "payload": {
+            "subscription": {"entity": {"id": "sub_x", "current_end": 1774880000,
+                "notes": {"organization_id": str(org.id), "location_count": "2"}}},
+            "payment": {"entity": {"id": "pay_x", "amount": 100000, "currency": "INR",
+                "order_id": "order_x"}},
+        },
+    }
+    WebhookService.process_webhook(db, "evt_deleted", "subscription.charged", payload)
+
+    db.refresh(org)
+    assert org.subscription_status == "trial"  # untouched, not flipped to active
+    assert db.query(BillingTransaction).filter_by(organization_id=org.id).first() is None

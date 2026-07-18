@@ -34,6 +34,23 @@ class SubscriptionService:
         return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
     @staticmethod
+    def cancel_active_subscriptions(org: Organization) -> None:
+        """Best-effort cancel of an org's live Razorpay mandate(s). Used when an account
+        is deleted so the customer stops being charged. Never raises — a Razorpay failure
+        must not block the delete; it's logged loudly so a stuck mandate can be chased."""
+        for sub_id in (org.razorpay_subscription_id, org.pending_remandate_subscription_id):
+            if not sub_id:
+                continue
+            try:
+                SubscriptionService.get_razorpay_client().subscription.cancel(
+                    sub_id, {"cancel_at_cycle_end": 0}
+                )
+                logger.warning("Cancelled Razorpay sub %s for org %s.", sub_id, org.id)
+            except Exception as e:
+                logger.error("Failed to cancel Razorpay sub %s for org %s "
+                             "(customer may keep being charged): %s", sub_id, org.id, e)
+
+    @staticmethod
     def _current_mode() -> str:
         """'test' or 'live' for the configured keys. Cached Razorpay customer/plan ids
         are namespaced by this because a test id is invalid under live keys (and vice

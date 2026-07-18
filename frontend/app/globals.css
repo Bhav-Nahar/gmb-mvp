@@ -124,3 +124,17 @@ body {
     @apply font-sans;
   }
 }
+
+/* Print / "Download PDF" for AI Visibility reports: hide the app chrome and
+   everything marked .no-print, show only the .aeo-print report area. */
+@media print {
+  /* Force backgrounds/colours to render in the PDF (browsers strip them by default). */
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body * { visibility: hidden; }
+  .aeo-print, .aeo-print * { visibility: visible; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .aeo-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; }
+  .no-print { display: none !important; }
+  .aeo-print-only { display: block !important; }
+  @page { margin: 16mm; }
+}
+.aeo-print-only { display: none; }

@@ -2,7 +2,7 @@ import { api } from "./api"
 import { rememberCtaLocation, type CtaLocation } from "./analytics"
 
 // Single entry point for starting Google OAuth. Remembers where the user came
-// from (for sign_up_start, fired later on the success callback), fetches the
+// from (for sign_up, fired later on the success callback), fetches the
 // authorize URL, and redirects. Throws on failure; caller owns loading/error UI.
 export async function beginGoogleLogin(cta: CtaLocation): Promise<void> {
   rememberCtaLocation(cta)

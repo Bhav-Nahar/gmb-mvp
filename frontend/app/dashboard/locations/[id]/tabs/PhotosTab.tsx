@@ -79,6 +79,7 @@ export function PhotosTab({ locationId }: { locationId: number }) {
   useEffect(() => {
     let n = 0
     const t = setInterval(() => {
+      if (document.visibilityState === 'hidden') return // resume when visible
       n += 1
       fetchMedia()
       if (n >= 5) clearInterval(t)
@@ -89,7 +90,9 @@ export function PhotosTab({ locationId }: { locationId: number }) {
   // Keep polling while anything is still publishing.
   useEffect(() => {
     if (!items.some((i) => PENDING.has(i.publish_status))) return
-    const t = setInterval(fetchMedia, 5000)
+    const t = setInterval(() => {
+      if (document.visibilityState !== 'hidden') fetchMedia()
+    }, 5000)
     return () => clearInterval(t)
   }, [items, fetchMedia])
 

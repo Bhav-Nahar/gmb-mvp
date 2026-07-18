@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Check, X, MessageCircle, Sparkles, ArrowRight } from 'lucide-react';
 import { MarketingHeader } from '@/components/MarketingHeader';
@@ -17,16 +17,21 @@ const PLANS = [
   {
     key: 'basic', name: 'Basic', tagline: 'For growing multi-location brands',
     monthly: 2500, annualPerMo: 2000, credits: 30, highlight: false,
-    perks: ['Unlimited locations', 'Post scheduling + reply templates', 'Auto-reply + email alerts',
-            'Team members & roles', 'Full insights & search intelligence'],
+    perks: ['Unlimited locations', 'AI Search Visibility (Google AI)', 'Post scheduling + reply templates',
+            'Auto-reply + email alerts', 'Team members & roles', 'Full insights & search intelligence'],
   },
   {
     key: 'pro', name: 'Pro', tagline: 'To rank higher & convert more',
     monthly: 3000, annualPerMo: 2400, credits: 45, highlight: false,
-    perks: ['Everything in Basic', 'Local Rank geo-grid heatmaps', 'Lead-capture microsite',
-            'Most AI credits per location'],
+    perks: ['Everything in Basic', 'Full AI Search Visibility (ChatGPT, Gemini, Perplexity)',
+            'Local Rank geo-grid heatmaps', 'Lead-capture microsite', 'Most AI credits per location'],
   },
 ] as const;
+
+// Display-only FX. Razorpay still charges/settles in INR (international cards convert
+// at the card network's live rate); this just shows US visitors a familiar number.
+// ponytail: hardcoded rate, swap for a live FX fetch if the peg ever drifts materially.
+const USD_PER_INR = 1 / 100; // 1 USD = 100 INR
 
 const FEATURES: { label: string; lite: boolean | string; basic: boolean | string; pro: boolean | string }[] = [
   { label: 'Locations', lite: '1', basic: 'Unlimited', pro: 'Unlimited' },
@@ -42,6 +47,8 @@ const FEATURES: { label: string; lite: boolean | string; basic: boolean | string
   { label: 'Search intelligence', lite: 'Top 10', basic: 'Full', pro: 'Full' },
   { label: 'Insights history', lite: '7 days', basic: 'Full', pro: 'Full' },
   { label: 'Leaderboard & comparison', lite: false, basic: true, pro: true },
+  { label: 'AI Visibility — Google AI answers', lite: false, basic: true, pro: true },
+  { label: 'AI Visibility — ChatGPT / Gemini / Perplexity', lite: false, basic: false, pro: true },
   { label: 'Local Rank (geo-grid)', lite: false, basic: false, pro: true },
   { label: 'Lead-capture microsite', lite: false, basic: false, pro: true },
 ];
@@ -54,6 +61,18 @@ function Cell({ v }: { v: boolean | string }) {
 
 export default function PricingPage() {
   const [annual, setAnnual] = useState(false);
+  const [usd, setUsd] = useState(false);
+
+  const fmtPrice = (inr: number) =>
+    usd
+      ? '$' + Math.round(inr * USD_PER_INR).toLocaleString('en-US')
+      : '₹' + inr.toLocaleString('en-IN');
+
+  // Default non-India visitors to USD (timezone heuristic; user can still toggle).
+  useEffect(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (!/Kolkata|Calcutta/.test(tz)) setUsd(true);
+  }, []);
 
   return (
     <div className="relative min-h-screen bg-background text-foreground">
@@ -71,15 +90,27 @@ export default function PricingPage() {
             Per-location pricing with a 7-day free trial — no card required. Start small, grow to
             hundreds of locations. Enterprise? We&apos;ll tailor it.
           </p>
-          <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card p-1 text-sm">
-            <button onClick={() => setAnnual(false)}
-              className={`rounded-full px-5 py-1.5 font-semibold transition ${!annual ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
-              Monthly
-            </button>
-            <button onClick={() => setAnnual(true)}
-              className={`rounded-full px-5 py-1.5 font-semibold transition ${annual ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
-              Yearly <span className="text-xs text-emerald-500">· save 20%</span>
-            </button>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card p-1 text-sm">
+              <button onClick={() => setAnnual(false)}
+                className={`rounded-full px-5 py-1.5 font-semibold transition ${!annual ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
+                Monthly
+              </button>
+              <button onClick={() => setAnnual(true)}
+                className={`rounded-full px-5 py-1.5 font-semibold transition ${annual ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
+                Yearly <span className="text-xs text-emerald-500">· save 20%</span>
+              </button>
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card p-1 text-sm">
+              <button onClick={() => setUsd(false)}
+                className={`rounded-full px-5 py-1.5 font-semibold transition ${!usd ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
+                ₹ INR
+              </button>
+              <button onClick={() => setUsd(true)}
+                className={`rounded-full px-5 py-1.5 font-semibold transition ${usd ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
+                $ USD
+              </button>
+            </div>
           </div>
         </div>
 
@@ -98,10 +129,11 @@ export default function PricingPage() {
                 <h2 className="text-lg font-bold">{p.name}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">{p.tagline}</p>
                 <div className="mt-5">
-                  <span className="text-4xl font-extrabold">₹{price.toLocaleString('en-IN')}</span>
+                  <span className="text-4xl font-extrabold">{fmtPrice(price)}</span>
                   <span className="text-sm text-muted-foreground"> /location/mo</span>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {annual && p.key !== 'lite' ? 'billed yearly · ' : ''}+ 18% GST
+                    {annual && p.key !== 'lite' ? 'billed yearly · ' : ''}
+                    {usd ? 'charged in INR at checkout' : '+ 18% GST'}
                   </p>
                 </div>
                 <Link href="/login"
