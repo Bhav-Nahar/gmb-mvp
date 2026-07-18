@@ -7,7 +7,6 @@ Two routers:
 Content model: identity/meta live as columns; every template section lives in the
 `content` JSON blob (see CONTENT_LIST_COLS / CONTENT_PAIR_COLS for the import shape).
 """
-import asyncio
 import csv
 import io
 import json
@@ -23,9 +22,11 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.api.deps import superadmin_required
+from app.core.config import settings
 from app.core.redis_client import get_redis
 from app.models.pseo_page import PseoPage, PseoPageStatus
 from app.models.user import User
+from app.services import gsc_service
 from app.services.revalidation_service import trigger_bulk_pseo_revalidation, trigger_pseo_page_flush
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,30 @@ def admin_pseo_stats(db: Session = Depends(get_db), _: User = Depends(superadmin
     return {"total": total, "published": published, "draft": total - published, "noindex": noindex}
 
 
+@admin_router.get("/gsc-metrics")
+def admin_pseo_gsc_metrics(days: int = 28, _: User = Depends(superadmin_required)):
+    """Clicks/impressions/CTR/position for every pSEO page, keyed by slug.
+    Empty + configured=False until GSC_SERVICE_ACCOUNT_JSON/GSC_PROPERTY_URL are set."""
+    if not gsc_service.is_configured():
+        return {"configured": False, "metrics": {}}
+    raw = gsc_service.fetch_page_metrics("/gbp-management/", days=days)
+    by_slug = {url.rstrip("/").rsplit("/", 1)[-1]: m for url, m in raw.items()}
+    return {"configured": True, "metrics": by_slug}
+
+
+@admin_router.get("/{page_id:int}/gsc-queries")
+def admin_pseo_gsc_queries(page_id: int, days: int = 28, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    """Top search queries driving one page — used in the editor to show which
+    keywords are actually working."""
+    page = db.query(PseoPage).get(page_id)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    if not gsc_service.is_configured():
+        return {"configured": False, "queries": []}
+    url = f"{settings.FRONTEND_URL.rstrip('/')}/{_locale(page.country)}/gbp-management/{page.slug}"
+    return {"configured": True, "queries": gsc_service.fetch_top_queries(url, days=days)}
+
+
 def _filtered_query(db: Session, q: Optional[str], status: Optional[str]):
     query = db.query(PseoPage)
     if status in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
@@ -278,6 +303,9 @@ def admin_list_pages(
     status: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
+    sort_by: Optional[str] = None,  # None (default: updated_at desc) | "clicks" | "impressions"
+    sort_dir: str = "desc",
+    gsc_days: int = 28,
     db: Session = Depends(get_db),
     _: User = Depends(superadmin_required),
 ):
@@ -285,7 +313,19 @@ def admin_list_pages(
     total = query.count()
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
-    rows = query.order_by(PseoPage.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    if sort_by in ("clicks", "impressions"):
+        # GSC metrics live in Redis/Google, not Postgres, so this sort happens in Python
+        # against the (cached) metrics map rather than as a DB ORDER BY. Fine at pSEO's
+        # current scale (thousands of rows) — revisit if it grows into the tens of thousands.
+        raw = gsc_service.fetch_page_metrics("/gbp-management/", days=gsc_days)
+        by_slug = {url.rstrip("/").rsplit("/", 1)[-1]: m for url, m in raw.items()}
+        all_rows = query.all()
+        all_rows.sort(key=lambda p: by_slug.get(p.slug, {}).get(sort_by, 0), reverse=(sort_dir != "asc"))
+        rows = all_rows[(page - 1) * page_size: page * page_size]
+    else:
+        rows = query.order_by(PseoPage.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
     return {"pages": [_admin_row(p) for p in rows], "total": total, "page": page, "page_size": page_size}
 
 
@@ -585,12 +625,17 @@ def admin_import_columns(_: User = Depends(superadmin_required)):
 
 
 @admin_router.post("/import")
-async def admin_import_pages(
+def admin_import_pages(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _: User = Depends(superadmin_required),
 ):
-    blob = await file.read()
+    # Plain `def`, not `async def`: this loop makes thousands of synchronous DB
+    # calls with no `await` in sight. As an async route that runs directly on the
+    # event loop that serves every concurrent request — including login — freezing
+    # the whole app for the import's duration. A sync route makes FastAPI dispatch
+    # it to a threadpool instead, keeping the event loop free.
+    blob = file.file.read()
     if len(blob) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
     rows = _read_rows(file.filename or "import.csv", blob)
@@ -651,7 +696,5 @@ async def admin_import_pages(
 
     db.commit()
 
-    # This endpoint is async (multipart read), so it runs on the event loop —
-    # the revalidation helper spins up its own loop and must go to a thread.
-    await asyncio.to_thread(trigger_bulk_pseo_revalidation, touched_published_slugs)
+    trigger_bulk_pseo_revalidation(touched_published_slugs)
     return {"created": created, "updated": updated, "failed": failed, "results": results}

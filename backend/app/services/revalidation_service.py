@@ -17,6 +17,19 @@ logger = logging.getLogger(__name__)
 # spins up a fresh loop.
 _REVALIDATION_CONCURRENCY = 10
 
+
+def _revalidate_url() -> str:
+    """FRONTEND_URL is the public-facing URL (also used to build indexed page URLs
+    for GSC lookups elsewhere) — must stay untouched there. But a backend container
+    calling `localhost` reaches itself, not the frontend container, so only this
+    internal POST swaps to the docker-compose service name. Mirrors the frontend's
+    own localhost->backend swap for its SSR fetches."""
+    url = settings.FRONTEND_URL.rstrip('/')
+    if 'localhost' in url:
+        url = url.replace('localhost', 'frontend')
+    return f"{url}/api/revalidate"
+
+
 async def trigger_microsite_revalidation(location_slug: str) -> None:
     """
     Fire-and-forget POST to the frontend's /api/revalidate route.
@@ -30,8 +43,7 @@ async def trigger_microsite_revalidation(location_slug: str) -> None:
         logger.warning("REVALIDATE_SECRET is not set, skipping revalidation call.")
         return
 
-    frontend_url = settings.FRONTEND_URL.rstrip('/')
-    url = f"{frontend_url}/api/revalidate"
+    url = _revalidate_url()
 
     payload = {"slug": location_slug}
 
@@ -130,7 +142,7 @@ async def _post_revalidate(payload: dict) -> None:
     if not secret:
         logger.warning("REVALIDATE_SECRET is not set, skipping pSEO revalidation call.")
         return
-    url = f"{settings.FRONTEND_URL.rstrip('/')}/api/revalidate"
+    url = _revalidate_url()
     headers = {"x-revalidate-secret": secret, "Content-Type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:

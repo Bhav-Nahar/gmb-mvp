@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import {
   Plus, Upload, Download, Trash2, Loader2, Pencil, Globe, EyeOff, ExternalLink,
   Search, ArrowLeft, Save, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw,
-  ChevronLeft, ChevronRight, Eye, Ban,
+  ChevronLeft, ChevronRight, Eye, Ban, ArrowUp, ArrowDown, ArrowUpDown,
 } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -39,7 +39,38 @@ interface Stats {
   noindex: number
 }
 
+interface GscMetric {
+  clicks: number
+  impressions: number
+  ctr: number
+  position: number
+}
+
+interface GscQuery extends GscMetric {
+  query: string
+}
+
 const PAGE_SIZE = 20
+const GSC_DAYS = 28
+const CHUNK_ROWS = 300
+
+// Splits a CSV's data rows into batches of `chunkSize`, header repeated on each —
+// keeps every request well under any reverse-proxy timeout regardless of file size.
+// ponytail: assumes no literal newlines inside quoted cells (matches this app's own
+// export template, which uses `|`/`::` for multi-value cells instead). If a future
+// CSV needs embedded newlines, this naive line-split breaks — swap in a real CSV
+// parser then.
+function splitCsvIntoChunks(text: string, chunkSize: number): string[] {
+  const lines = text.split(/\r\n|\n|\r/)
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop()
+  if (lines.length <= 1) return []
+  const [header, ...dataLines] = lines
+  const chunks: string[] = []
+  for (let i = 0; i < dataLines.length; i += chunkSize) {
+    chunks.push([header, ...dataLines.slice(i, i + chunkSize)].join('\n'))
+  }
+  return chunks
+}
 
 // Content field groups — mirror backend CONTENT_*_COLS. Lists edit as one-item-per-line
 // textareas; pairs as "Title :: detail" per line.
@@ -136,18 +167,33 @@ export default function AdminPseoPage() {
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [stats, setStats] = useState<Stats | null>(null)
+  const [gscConfigured, setGscConfigured] = useState(true) // assume yes until we hear otherwise, avoids a flash of the "not connected" hint
+  const [gscMetrics, setGscMetrics] = useState<Record<string, GscMetric>>({})
+  const [gscDays, setGscDays] = useState(GSC_DAYS)
+  const [sortBy, setSortBy] = useState<'clicks' | 'impressions' | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [selectAllMatching, setSelectAllMatching] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Editor state: null = list view; {} draft object = editing/creating
   const [editing, setEditing] = useState<any | null>(null)
+  const [gscQueries, setGscQueries] = useState<GscQuery[]>([])
 
   const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(''), 6000) }
 
   const loadStats = async () => {
     try { setStats(await api.get<Stats>('/admin/pseo/stats')) } catch { /* non-critical */ }
+  }
+
+  const loadGsc = async () => {
+    try {
+      const d = await api.get<{ configured: boolean; metrics: Record<string, GscMetric> }>('/admin/pseo/gsc-metrics', { days: String(gscDays) })
+      setGscConfigured(d.configured)
+      setGscMetrics(d.metrics || {})
+    } catch { /* non-critical */ }
   }
 
   const load = async () => {
@@ -156,6 +202,7 @@ export default function AdminPseoPage() {
       const params: Record<string, string> = { page: String(page), page_size: String(PAGE_SIZE) }
       if (q.trim()) params.q = q.trim()
       if (statusFilter) params.status = statusFilter
+      if (sortBy) { params.sort_by = sortBy; params.sort_dir = sortDir; params.gsc_days = String(gscDays) }
       const d = await api.get<{ pages: PageRow[]; total: number }>('/admin/pseo', params)
       setPages(d.pages || [])
       setTotal(d.total || 0)
@@ -168,9 +215,20 @@ export default function AdminPseoPage() {
     }
   }
 
-  useEffect(() => { load(); loadStats() }, [page, statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); loadStats() }, [page, statusFilter, sortBy, sortDir]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadGsc(); if (sortBy) load() }, [gscDays]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const search = () => { setPage(1); load() }
+
+  const toggleSort = (col: 'clicks' | 'impressions') => {
+    setPage(1)
+    if (sortBy === col) {
+      setSortDir((d) => d === 'desc' ? 'asc' : 'desc')
+    } else {
+      setSortBy(col)
+      setSortDir('desc')
+    }
+  }
 
   const toggleSelected = (id: number) => {
     setSelectAllMatching(false)
@@ -201,14 +259,18 @@ export default function AdminPseoPage() {
     }
   }
 
-  const openNew = () => setEditing({
-    id: null, country: 'us', industry_label: '', city_label: '', slug: '', meta_title: '', meta_description: '', h1: '',
-    canonical_url: '', index_status: 'index', quality_score: '',
-    status: 'draft', draft: Object.fromEntries([...TEXT_FIELDS, ...LIST_FIELDS].map(([k]) => [k, ''])),
-  })
+  const openNew = () => {
+    setGscQueries([])
+    setEditing({
+      id: null, country: 'us', industry_label: '', city_label: '', slug: '', meta_title: '', meta_description: '', h1: '',
+      canonical_url: '', index_status: 'index', quality_score: '',
+      status: 'draft', draft: Object.fromEntries([...TEXT_FIELDS, ...LIST_FIELDS].map(([k]) => [k, ''])),
+    })
+  }
 
   const openEdit = async (row: PageRow) => {
     setBusy(true)
+    setGscQueries([])
     try {
       const p = await api.get<any>(`/admin/pseo/${row.id}`)
       setEditing({
@@ -217,6 +279,11 @@ export default function AdminPseoPage() {
         canonical_url: p.canonical_url || '', index_status: p.index_status || 'index',
         quality_score: p.quality_score ?? '', status: p.status, draft: contentToDraft(p.content),
       })
+      if (gscConfigured) {
+        api.get<{ queries: GscQuery[] }>(`/admin/pseo/${row.id}/gsc-queries`, { days: String(gscDays) })
+          .then((d) => setGscQueries(d.queries || []))
+          .catch(() => {})
+      }
     } catch (e: any) {
       setError(e.message || 'Failed to load page')
     } finally {
@@ -301,19 +368,33 @@ export default function AdminPseoPage() {
   }
 
   const importFile = async (file: File) => {
-    setBusy(true); setError(''); setImportResult(null)
+    setBusy(true); setError(''); setImportResult(null); setImportProgress(null)
+    // XLSX isn't chunked (no parser on the client) — uploads as one request. If that
+    // starts timing out too, convert to CSV first; the template download is CSV.
+    const isCsv = file.name.toLowerCase().endsWith('.csv')
+    const chunks: (string | null)[] = isCsv ? splitCsvIntoChunks(await file.text(), CHUNK_ROWS) : [null]
+    let created = 0, updated = 0, failed = 0
+    let results: ImportResult['results'] = []
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const r = await api.post<ImportResult>('/admin/pseo/import', fd)
-      setImportResult(r)
-      flash(`Import done: ${r.created} created, ${r.updated} updated, ${r.failed} failed.`)
-      await Promise.all([load(), loadStats()])
+      for (let i = 0; i < chunks.length; i++) {
+        if (chunks.length > 1) setImportProgress({ done: i, total: chunks.length })
+        const fd = new FormData()
+        const chunk = chunks[i]
+        fd.append('file', chunk === null ? file : new Blob([chunk], { type: 'text/csv' }), chunk === null ? file.name : `chunk-${i + 1}.csv`)
+        const r = await api.post<ImportResult>('/admin/pseo/import', fd)
+        created += r.created; updated += r.updated; failed += r.failed
+        results = results.concat(r.results)
+        setImportResult({ created, updated, failed, results }) // visible progress as batches land
+      }
+      flash(`Import done: ${created} created, ${updated} updated, ${failed} failed${chunks.length > 1 ? ` (${chunks.length} batches)` : ''}.`)
     } catch (e: any) {
-      setError(e.message || 'Import failed')
+      const savedSoFar = created + updated
+      setError((e.message || 'Import failed') + (savedSoFar ? ` — ${savedSoFar} row(s) from earlier batches are already saved.` : ''))
     } finally {
       setBusy(false)
+      setImportProgress(null)
       if (fileRef.current) fileRef.current.value = ''
+      await Promise.all([load(), loadStats()])
     }
   }
 
@@ -367,6 +448,38 @@ export default function AdminPseoPage() {
         </div>
 
         {error && <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs font-semibold text-red-500"><AlertTriangle className="h-4 w-4 shrink-0" />{error}</div>}
+
+        {editing.id && gscConfigured && (
+          <div className="space-y-3 rounded-2xl border border-border bg-card p-6">
+            <h2 className="text-sm font-bold text-foreground">Search Console — top queries ({gscDays}d)</h2>
+            {gscQueries.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No organic clicks/impressions yet for this page in the selected window.</p>
+            ) : (
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-border text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <th className="py-1.5 pr-3">Query</th>
+                    <th className="py-1.5 pr-3">Clicks</th>
+                    <th className="py-1.5 pr-3">Impressions</th>
+                    <th className="py-1.5 pr-3">CTR</th>
+                    <th className="py-1.5">Avg. position</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gscQueries.map((q) => (
+                    <tr key={q.query} className="border-b border-border/50 last:border-0">
+                      <td className="py-1.5 pr-3 text-foreground">{q.query}</td>
+                      <td className="py-1.5 pr-3">{q.clicks}</td>
+                      <td className="py-1.5 pr-3">{q.impressions}</td>
+                      <td className="py-1.5 pr-3">{(q.ctr * 100).toFixed(1)}%</td>
+                      <td className="py-1.5">{q.position.toFixed(1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
 
         <div className="space-y-4 rounded-2xl border border-border bg-card p-6">
           <h2 className="text-sm font-bold text-foreground">Identity & SEO meta</h2>
@@ -433,7 +546,8 @@ export default function AdminPseoPage() {
             <Download className="h-3.5 w-3.5" /> CSV template
           </button>
           <button onClick={() => fileRef.current?.click()} disabled={busy} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-bold text-muted-foreground hover:text-foreground disabled:opacity-50">
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Import CSV/XLSX
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            {importProgress ? `Importing batch ${importProgress.done + 1} of ${importProgress.total}…` : 'Import CSV/XLSX'}
           </button>
           <input ref={fileRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
           <button onClick={openNew} className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold uppercase tracking-wider text-primary-foreground">
@@ -460,6 +574,12 @@ export default function AdminPseoPage() {
 
       {notice && <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-4 w-4 shrink-0" />{notice}</div>}
       {error && <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs font-semibold text-red-500"><AlertTriangle className="h-4 w-4 shrink-0" />{error}</div>}
+      {!gscConfigured && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs font-semibold text-amber-600">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Search Console isn&apos;t connected yet — set GSC_SERVICE_ACCOUNT_JSON and GSC_PROPERTY_URL to see organic clicks/impressions here.
+        </div>
+      )}
 
       {importResult && importResult.results.some((r) => r.action === 'error') && (
         <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
@@ -492,6 +612,17 @@ export default function AdminPseoPage() {
           <option value="draft">Draft</option>
           <option value="published">Published</option>
         </select>
+        <select
+          value={gscDays}
+          onChange={(e) => setGscDays(Number(e.target.value))}
+          title="Search Console date range"
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+        >
+          <option value={7}>Last 7 days</option>
+          <option value={28}>Last 28 days</option>
+          <option value={90}>Last 90 days</option>
+          <option value={180}>Last 180 days</option>
+        </select>
         <button onClick={search} className="rounded-lg border border-border px-3 py-2 text-xs font-bold text-muted-foreground hover:text-foreground">Search</button>
         {selected.size > 0 && (
           <div className="ml-auto flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5">
@@ -519,15 +650,27 @@ export default function AdminPseoPage() {
               <th className="px-4 py-3">Page</th>
               <th className="px-4 py-3">Market</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3 text-right">
+                <button onClick={() => toggleSort('clicks')} className="inline-flex items-center gap-1 hover:text-foreground">
+                  Clicks ({gscDays}d)
+                  {sortBy === 'clicks' ? (sortDir === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
+                </button>
+              </th>
+              <th className="px-4 py-3 text-right">
+                <button onClick={() => toggleSort('impressions')} className="inline-flex items-center gap-1 hover:text-foreground">
+                  Impressions ({gscDays}d)
+                  {sortBy === 'impressions' ? (sortDir === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
+                </button>
+              </th>
               <th className="px-4 py-3">Updated</th>
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-xs text-muted-foreground">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-xs text-muted-foreground">Loading…</td></tr>
             ) : pages.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-xs text-muted-foreground">No pages yet. Import a CSV or create one.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-xs text-muted-foreground">No pages yet. Import a CSV or create one.</td></tr>
             ) : pages.map((p) => (
               <tr key={p.id} className="border-b border-border/50 last:border-0">
                 <td className="px-4 py-3">
@@ -544,6 +687,8 @@ export default function AdminPseoPage() {
                 <td className="px-4 py-3">
                   <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${p.status === 'published' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'}`}>{p.status}</span>
                 </td>
+                <td className="px-4 py-3 text-right text-xs text-foreground">{gscMetrics[p.slug]?.clicks ?? <span className="text-muted-foreground">—</span>}</td>
+                <td className="px-4 py-3 text-right text-xs text-foreground">{gscMetrics[p.slug]?.impressions ?? <span className="text-muted-foreground">—</span>}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">{p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '—'}</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-1.5">
