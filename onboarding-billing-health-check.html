@@ -1,0 +1,302 @@
+<title>Onboarding &amp; Billing — Plain-English Health Check</title>
+<style>
+  :root {
+    /* slate-biased neutrals + an indigo accent (trust/fintech), semantic status hues */
+    --paper: #f6f7f9;
+    --card: #ffffff;
+    --ink: #171d2b;
+    --ink-soft: #4a5468;
+    --ink-faint: #7b8698;
+    --line: #e4e7ec;
+    --line-soft: #eef0f4;
+    --accent: #3f4fbf;
+    --accent-soft: #eceefb;
+
+    --good: #157f43;
+    --good-bg: #e8f5ec;
+    --warn: #a85a05;
+    --warn-bg: #fbefdd;
+    --crit: #b3261e;
+    --crit-bg: #fbe6e4;
+
+    --shadow: 0 1px 2px rgba(16,22,38,.04), 0 6px 20px rgba(16,22,38,.05);
+    --radius: 14px;
+    --maxw: 760px;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0e1119;
+      --card: #161b26;
+      --ink: #eef1f6;
+      --ink-soft: #aeb7c6;
+      --ink-faint: #7c8698;
+      --line: #262d3b;
+      --line-soft: #1e2532;
+      --accent: #97a2f2;
+      --accent-soft: #1c2233;
+      --good: #59c68a;
+      --good-bg: #12251a;
+      --warn: #e0a250;
+      --warn-bg: #2a2011;
+      --crit: #ef8a82;
+      --crit-bg: #2a1614;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 26px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --paper:#f6f7f9; --card:#fff; --ink:#171d2b; --ink-soft:#4a5468; --ink-faint:#7b8698;
+    --line:#e4e7ec; --line-soft:#eef0f4; --accent:#3f4fbf; --accent-soft:#eceefb;
+    --good:#157f43; --good-bg:#e8f5ec; --warn:#a85a05; --warn-bg:#fbefdd; --crit:#b3261e; --crit-bg:#fbe6e4;
+    --shadow:0 1px 2px rgba(16,22,38,.04),0 6px 20px rgba(16,22,38,.05);
+  }
+  :root[data-theme="dark"] {
+    --paper:#0e1119; --card:#161b26; --ink:#eef1f6; --ink-soft:#aeb7c6; --ink-faint:#7c8698;
+    --line:#262d3b; --line-soft:#1e2532; --accent:#97a2f2; --accent-soft:#1c2233;
+    --good:#59c68a; --good-bg:#12251a; --warn:#e0a250; --warn-bg:#2a2011; --crit:#ef8a82; --crit-bg:#2a1614;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 26px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 48px 22px 80px; }
+
+  header.masthead { border-bottom: 1px solid var(--line); padding-bottom: 26px; margin-bottom: 30px; }
+  .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+  h1 {
+    font-family: var(--serif); font-weight: 600; font-size: clamp(30px, 5vw, 42px);
+    line-height: 1.1; letter-spacing: -.01em; margin: 12px 0 10px; text-wrap: balance;
+  }
+  .lede { color: var(--ink-soft); font-size: 17px; max-width: 60ch; margin: 0; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 22px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--ink-soft); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .dot.g { background: var(--good); } .dot.w { background: var(--warn); } .dot.c { background: var(--crit); }
+
+  .oneliner {
+    background: var(--accent-soft); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 18px; margin: 26px 0 8px; font-size: 15.5px; color: var(--ink);
+  }
+  .oneliner b { color: var(--accent); }
+
+  section { margin-top: 40px; }
+  .sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  h2 { font-size: 20px; font-weight: 750; letter-spacing: -.01em; margin: 0; }
+  .sec-sub { color: var(--ink-faint); font-size: 14px; margin: 0 0 16px; }
+
+  .stack { display: flex; flex-direction: column; gap: 12px; }
+
+  .item {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 16px 18px; display: grid; gap: 6px;
+    border-left: 4px solid var(--line);
+  }
+  .item.g { border-left-color: var(--good); }
+  .item.w { border-left-color: var(--warn); }
+  .item.c { border-left-color: var(--crit); }
+
+  .item-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .item h3 { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: -.005em; }
+  .item p { margin: 0; font-size: 14.5px; color: var(--ink-soft); }
+  .item p .lbl { color: var(--ink); font-weight: 650; }
+
+  .pill {
+    flex: none; font-size: 11.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+    padding: 4px 9px; border-radius: 999px; white-space: nowrap; line-height: 1.3;
+  }
+  .pill.g { background: var(--good-bg); color: var(--good); }
+  .pill.w { background: var(--warn-bg); color: var(--warn); }
+  .pill.c { background: var(--crit-bg); color: var(--crit); }
+  .pill.n { background: var(--line-soft); color: var(--ink-faint); }
+
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+  .tag { font-size: 12px; color: var(--ink-faint); background: var(--line-soft); border-radius: 6px; padding: 2px 8px; }
+
+  .group-label {
+    font-size: 12.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--ink-faint); margin: 22px 0 10px;
+  }
+  .group-label:first-of-type { margin-top: 4px; }
+
+  .decide {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px 22px; margin-top: 14px; box-shadow: var(--shadow);
+  }
+  .decide h2 { margin-bottom: 12px; }
+  ol.reco { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 9px; }
+  ol.reco li { font-size: 15px; color: var(--ink); }
+  ol.reco li b { font-weight: 700; }
+  ol.reco li span { color: var(--ink-soft); }
+
+  .askbox {
+    margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 14px;
+    font-size: 14.5px; color: var(--ink-soft);
+  }
+  .askbox b { color: var(--ink); }
+
+  footer { margin-top: 40px; color: var(--ink-faint); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="eyebrow">Health check · plain English</div>
+    <h1>What's working, what's broken, and what's your call</h1>
+    <p class="lede">Everything the security review found and everything still open — written in normal words, so you can read it and decide what to fix.</p>
+    <div class="legend">
+      <span><i class="dot g"></i> Already fixed</span>
+      <span><i class="dot w"></i> Your call to make</span>
+      <span><i class="dot c"></i> Do before launch</span>
+    </div>
+  </header>
+
+  <div class="oneliner">
+    <b>What this system does:</b> someone signs up with Google → we scan their Google Business Profile and show what's wrong → they add a card to start a 7-day free trial → after 7 days it charges automatically until they cancel.
+  </div>
+
+  <section>
+    <div class="sec-head"><h2>Already found and fixed</h2></div>
+    <p class="sec-sub">From the security review. These were real, and they're closed.</p>
+    <div class="stack">
+
+      <div class="item g">
+        <div class="item-top"><h3>Private data was leaking to people who hadn't paid</h3><span class="pill g">Fixed</span></div>
+        <p><span class="lbl">What it was:</span> a user who hadn't started their trial could still pull premium info (like health scores) if they poked at the app directly.</p>
+        <p><span class="lbl">Now:</span> locked down on the server, not just hidden on screen.</p>
+      </div>
+
+      <div class="item g">
+        <div class="item-top"><h3>People could get charged twice</h3><span class="pill g">Fixed</span></div>
+        <p><span class="lbl">What it was:</span> clicking "pay" twice, or in two tabs, could quietly set up two separate charges.</p>
+        <p><span class="lbl">Now:</span> only one can happen — the second attempt is blocked and any leftover is cancelled.</p>
+      </div>
+
+      <div class="item g">
+        <div class="item-top"><h3>The "one free trial per person" rule was easy to cheat</h3><span class="pill g">Fixed</span></div>
+        <p><span class="lbl">What it was:</span> typing the same phone number in a different format (spaces, dashes, +91) fooled the system into granting another free trial.</p>
+        <p><span class="lbl">Now:</span> every format is treated as the same number.</p>
+      </div>
+
+      <div class="item g">
+        <div class="item-top"><h3>A technical replay trick could refill free credits</h3><span class="pill g">Fixed</span></div>
+        <p><span class="lbl">What it was:</span> a loophole in how we confirm payments could be replayed to top up AI credits for free.</p>
+        <p><span class="lbl">Now:</span> the confirmation is tied to signed data that can't be replayed.</p>
+      </div>
+
+      <div class="item g">
+        <div class="item-top"><h3>Team members hit a dead button</h3><span class="pill g">Fixed</span></div>
+        <p><span class="lbl">What it was:</span> a non-owner teammate saw "Start Free Trial" but it wouldn't work for them.</p>
+        <p><span class="lbl">Now:</span> they see "ask your admin to start the trial" instead.</p>
+      </div>
+
+      <div class="item g">
+        <div class="item-top"><h3>A background job could lock a paying customer</h3><span class="pill g">Fixed</span></div>
+        <p><span class="lbl">What it was:</span> a rare timing bug could push a customer who just paid into a "past due" state.</p>
+        <p><span class="lbl">Now:</span> it double-checks before ever downgrading anyone.</p>
+      </div>
+
+      <div class="item g">
+        <div class="item-top"><h3>Two things you asked for</h3><span class="pill g">Done</span></div>
+        <p><span class="lbl">Fewer steps:</span> phone number and payment are now one screen, one click to Razorpay.</p>
+        <p><span class="lbl">The ₹5 charge:</span> Razorpay fixes this at ₹5 for subscriptions (can't be made ₹1 or ₹0), and it's auto-refunded. The on-screen text now correctly says ₹5.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Still open — your call</h2></div>
+    <p class="sec-sub">Grouped by what they affect. Nothing here is broken today; these are choices and improvements.</p>
+
+    <div class="group-label">Legal &amp; money</div>
+    <div class="stack">
+      <div class="item c">
+        <div class="item-top"><h3>GST invoices</h3><span class="pill c">Before launch</span></div>
+        <p><span class="lbl">What it is:</span> your customers are Indian businesses. They need a proper GST invoice (with their GST number) to claim the tax back. Right now some payments don't produce one.</p>
+        <p><span class="lbl">Why it matters:</span> without it you look unprofessional and lose deals with serious buyers.</p>
+        <div class="tags"><span class="tag">Effort: medium</span><span class="tag">Needs a decision from you</span></div>
+      </div>
+      <div class="item g">
+        <div class="item-top"><h3>RBI "you're about to be charged" reminder</h3><span class="pill g">Already handled</span></div>
+        <p><span class="lbl">Good news:</span> I checked Razorpay's docs — they and the banks send the legally-required pre-charge notice automatically. Nothing for us to build. (I'd earlier thought this was a blocker; it isn't.)</p>
+      </div>
+    </div>
+
+    <div class="group-label">Money you're leaving on the table</div>
+    <div class="stack">
+      <div class="item w">
+        <div class="item-top"><h3>Big businesses get sticker shock</h3><span class="pill w">Your call</span></div>
+        <p><span class="lbl">What it is:</span> a 40-location business sees "then ₹80,000/month" and there's no way to try just a few locations first.</p>
+        <p><span class="lbl">Why it matters:</span> your biggest, most valuable customers are the ones most likely to bounce.</p>
+        <div class="tags"><span class="tag">Effort: medium–large</span><span class="tag">Revenue</span></div>
+      </div>
+      <div class="item w">
+        <div class="item-top"><h3>Can't upgrade to Pro during the trial</h3><span class="pill w">Your call</span></div>
+        <p><span class="lbl">What it is:</span> trial users are on Basic and can't safely move up to Pro until after they're paying.</p>
+        <p><span class="lbl">Why it matters:</span> you miss the moment they're most excited. Needs one small new piece so it doesn't cause a double charge.</p>
+        <div class="tags"><span class="tag">Effort: medium</span><span class="tag">Revenue</span></div>
+      </div>
+      <div class="item w">
+        <div class="item-top"><h3>Weak pitch when a business is already doing well</h3><span class="pill w">Your call</span></div>
+        <p><span class="lbl">What it is:</span> if we find no problems, the "start trial" screen falls a bit flat (no urgency).</p>
+        <p><span class="lbl">Why it matters:</span> healthy businesses still need a reason to buy — "stay ahead of competitors" instead of "fix these problems."</p>
+        <div class="tags"><span class="tag">Effort: small</span><span class="tag">Conversion</span></div>
+      </div>
+    </div>
+
+    <div class="group-label">Cost &amp; abuse</div>
+    <div class="stack">
+      <div class="item w">
+        <div class="item-top"><h3>Anyone can trigger a free scan</h3><span class="pill w">Watch first</span></div>
+        <p><span class="lbl">What it is:</span> someone making lots of fake Google accounts can make us run scans for free.</p>
+        <p><span class="lbl">Why it matters:</span> the <em>expensive</em> AI parts are already blocked, so the cost is small. The fix lives on the login page (risky to change), so my advice is to watch the numbers before adding limits.</p>
+        <div class="tags"><span class="tag">Effort: small but risky</span><span class="tag">Low urgency</span></div>
+      </div>
+    </div>
+
+    <div class="group-label">Reliability &amp; visibility</div>
+    <div class="stack">
+      <div class="item w">
+        <div class="item-top"><h3>We're flying a bit blind</h3><span class="pill w">Your call</span></div>
+        <p><span class="lbl">What it is:</span> there's no simple dashboard showing "signed up → started trial → paid," and no easy way to find a user who's stuck.</p>
+        <p><span class="lbl">Why it matters:</span> you can't improve what you can't see, and support gets harder as you grow.</p>
+        <div class="tags"><span class="tag">Effort: medium</span><span class="tag">Operations</span></div>
+      </div>
+      <div class="item g">
+        <div class="item-top"><h3>Dead-end if a scan fails</h3><span class="pill g">Fixed today</span></div>
+        <p><span class="lbl">What it was:</span> if the scan failed, the user was stuck. Now there's a real "Retry sync" button.</p>
+      </div>
+    </div>
+
+    <div class="group-label">Housekeeping</div>
+    <div class="stack">
+      <div class="item w">
+        <div class="item-top"><h3>The new system is behind an on/off switch</h3><span class="pill n">Later</span></div>
+        <p><span class="lbl">What it is:</span> the whole card-required flow is behind a flag, so your old flow is untouched. Eventually you flip it on for everyone and delete the old path.</p>
+        <p><span class="lbl">Why it matters:</span> a short cleanup checklist now saves a headache later.</p>
+        <div class="tags"><span class="tag">Effort: small</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="decide">
+    <h2>What I'd decide</h2>
+    <ol class="reco">
+      <li><b>Before launch:</b> <span>GST invoices — it's a legal/tax expectation and it costs you deals without it.</span></li>
+      <li><b>Biggest revenue unlock:</b> <span>plan flexibility for big businesses, plus safe Pro upgrade during the trial.</span></li>
+      <li><b>After launch, iterate:</b> <span>the visibility dashboard, the "already-healthy" pitch, and abuse limits once you see real numbers.</span></li>
+    </ol>
+    <div class="askbox">
+      <b>One thing I need from you to start GST:</b> do you want to require a GST number from <b>every</b> customer at checkout, or make it <b>optional</b> (only businesses that want the tax invoice fill it in)?
+    </div>
+  </div>
+
+  <footer>
+    Based on a five-part security &amp; quality review of the billing code. Everything marked “Fixed” is live and covered by tests. Your legacy flow was verified untouched.
+  </footer>
+</div>

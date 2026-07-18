@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.models.organization import Organization
+from app.core.config import settings
 from app.core.plan_config import PLATFORM_AI_ACTIONS
 
 
@@ -28,6 +29,10 @@ class CreditService:
             raise HTTPException(status_code=404, detail="Organization not found")
         if EntitlementService.is_org_locked(org):
             raise HTTPException(status_code=402, detail="Organization is locked. Please update your subscription.")
+        # Card-required onboarding: no AI spend before the trial is started, so a
+        # pre-payment org can't burn credits (rank scans, replies, posts, AEO).
+        if settings.CARD_REQUIRED_ONBOARDING and EntitlementService.is_onboarding(org):
+            raise HTTPException(status_code=402, detail="trial_required: start your free trial to use AI features.")
         if (org.monthly_ai_credits_balance + org.topup_ai_credits_balance) < credits_required:
             raise HTTPException(status_code=402, detail="Insufficient AI credits")
 
@@ -50,6 +55,10 @@ class CreditService:
             raise HTTPException(status_code=404, detail="Organization not found")
         if EntitlementService.is_org_locked(org):
             raise HTTPException(status_code=402, detail="Organization is locked. Please update your subscription.")
+        # Card-required onboarding: no AI spend before the trial is started, so a
+        # pre-payment org can't burn credits (rank scans, replies, posts, AEO).
+        if settings.CARD_REQUIRED_ONBOARDING and EntitlementService.is_onboarding(org):
+            raise HTTPException(status_code=402, detail="trial_required: start your free trial to use AI features.")
         if (org.monthly_ai_credits_balance + org.topup_ai_credits_balance) < credits_required:
             raise HTTPException(status_code=402, detail="Insufficient AI credits")
         from_monthly = min(org.monthly_ai_credits_balance, credits_required)

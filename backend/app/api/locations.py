@@ -4,8 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, update
 from app.db.session import get_db
-from app.api.deps import get_current_user, staff_required, admin_required, get_user_location_ids, require_location_access
+from app.api.deps import get_current_user, staff_required, admin_required, get_user_location_ids, require_location_access, require_premium
+from app.core.config import settings
+from app.services.billing.entitlement_service import EntitlementService
 from app.models.user import User
+from app.models.organization import Organization
 from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
 from app.core.roles import ADMIN_ROLES
@@ -62,14 +65,22 @@ def get_locations(
 
     results = query.all()
 
+    # A pre-payment onboarding org may see the locations list (name/rating/sync status)
+    # but NOT premium health scores / microsite status — those are gated with the rest of
+    # the premium surface. is_premium_unlocked is True for legacy trial/active orgs, so
+    # this only strips for the new onboarding state (flag-gated to keep legacy identical).
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    hide_premium = settings.CARD_REQUIRED_ONBOARDING and org is not None and not EntitlementService.is_premium_unlocked(org)
+
     out = []
     for location, latest_sync_status, latest_sync_error, health_score, health_score_label, microsite_status in results:
         loc_out = LocationOut.model_validate(location)
         loc_out.latest_sync_status = latest_sync_status
         loc_out.latest_sync_error = latest_sync_error
-        loc_out.health_score = health_score
-        loc_out.health_score_label = health_score_label
-        loc_out.microsite_status = microsite_status
+        if not hide_premium:
+            loc_out.health_score = health_score
+            loc_out.health_score_label = health_score_label
+            loc_out.microsite_status = microsite_status
         out.append(loc_out)
     return out
 
@@ -131,7 +142,7 @@ def get_org_sync_status(
         "ever_synced": bool(state and state.last_location_sync_at),
     }
 
-@router.get("/sla-summary", response_model=List[LocationSLASummary])
+@router.get("/sla-summary", response_model=List[LocationSLASummary], dependencies=[Depends(require_premium)])
 async def get_locations_sla_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
@@ -139,7 +150,7 @@ async def get_locations_sla_summary(
     """Fetch SLA summary for all locations in the organization."""
     return await get_organization_sla_summary(current_user.organization_id, db)
 
-@router.get("/{location_id}/sla", response_model=LocationSLAMetrics)
+@router.get("/{location_id}/sla", response_model=LocationSLAMetrics, dependencies=[Depends(require_premium)])
 async def get_location_sla(
     location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
@@ -178,7 +189,7 @@ def enable_location_sla(
 # NOTE: This static-path route MUST be declared before the dynamic
 # "/{location_id}" route below, otherwise FastAPI matches "/{location_id}"
 # first (location_id="health-score-summary") and returns a 422.
-@router.get("/health-score-summary", response_model=OrganizationHealthSummaryOut)
+@router.get("/health-score-summary", response_model=OrganizationHealthSummaryOut, dependencies=[Depends(require_premium)])
 def get_organization_health_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
@@ -382,7 +393,7 @@ def get_location_sync_status(
         run_type=latest_log.run_type
     )
 
-@router.get("/{location_id}/health-score", response_model=LocationHealthScoreOut)
+@router.get("/{location_id}/health-score", response_model=LocationHealthScoreOut, dependencies=[Depends(require_premium)])
 def get_location_health_score(
     location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),

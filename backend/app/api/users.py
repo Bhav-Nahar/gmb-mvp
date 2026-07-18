@@ -112,7 +112,10 @@ def save_my_phone(
     digits = re.sub(r"\D", "", raw)
     if not (10 <= len(digits) <= 15):
         raise HTTPException(status_code=400, detail="Enter a valid phone number.")
-    current_user.phone = raw
+    # Store the canonical +91XXXXXXXXXX form so trial-abuse dedup is not defeated by
+    # formatting (see subscription_service.normalize_phone).
+    from app.services.billing.subscription_service import normalize_phone
+    current_user.phone = normalize_phone(raw) or raw
     db.commit()
     db.refresh(current_user)
     current_user.is_superuser = settings.is_superadmin(current_user.email)

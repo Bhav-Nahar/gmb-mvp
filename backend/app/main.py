@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
 from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays, aeo, pseo
 from app.api.endpoints import comparison
-from app.api.deps import check_csrf, check_billing_lock, require_feature
+from app.api.deps import check_csrf, check_billing_lock, require_feature, require_premium
 from app.core import plan_config
 from fastapi.staticfiles import StaticFiles
 
@@ -116,22 +116,27 @@ app.mount("/static/uploads", StaticFiles(directory=static_uploads_path), name="s
 # Register routers under api/v1 prefix
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(locations.router, prefix="/api/v1/locations", tags=["Locations"])
-app.include_router(microsites.router, prefix="/api/v1/locations", tags=["Microsites"])
+app.include_router(microsites.router, prefix="/api/v1/locations", tags=["Microsites"],
+                   dependencies=[Depends(require_premium)])
 app.include_router(public_microsites.router, prefix="/api/v1/public/microsites", tags=["Public Microsites"])
 app.include_router(leads.router, prefix="/api/v1/locations", tags=["Leads"])
 app.include_router(push.router, prefix="/api/v1/push", tags=["Push"])
 app.include_router(dynamic_attributes.router, prefix="/api/v1/locations", tags=["Dynamic Attributes"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(reviews.router, prefix="/api/v1/reviews", tags=["Reviews"])
-app.include_router(posts.router, prefix="/api/v1/posts", tags=["Posts"])
+app.include_router(posts.router, prefix="/api/v1/posts", tags=["Posts"],
+                   dependencies=[Depends(require_premium)])
 app.include_router(holidays.router, prefix="/api/v1/holidays", tags=["Holidays"])
 app.include_router(media.router, prefix="/api/v1/media", tags=["Media"])
 app.include_router(listing_edits.router, prefix="/api/v1", tags=["Listing Edits"])
 app.include_router(descriptions.router, prefix="/api/v1", tags=["Descriptions"])
-app.include_router(local_rank.router, prefix="/api/v1", tags=["Local Rank"])
-app.include_router(aeo.router, prefix="/api/v1", tags=["AI Visibility"])
+app.include_router(local_rank.router, prefix="/api/v1", tags=["Local Rank"],
+                   dependencies=[Depends(require_premium)])
+app.include_router(aeo.router, prefix="/api/v1", tags=["AI Visibility"],
+                   dependencies=[Depends(require_premium)])
 app.include_router(location_media.router, prefix="/api/v1", tags=["Location Media"])
-app.include_router(insights.router, prefix="/api/v1/insights", tags=["Insights"])
+app.include_router(insights.router, prefix="/api/v1/insights", tags=["Insights"],
+                   dependencies=[Depends(require_premium)])
 app.include_router(billing.router, prefix="/api/v1/billing", tags=["Billing"])
 app.include_router(billing.webhook_router, prefix="/api/v1/webhooks", tags=["Webhooks"])
 app.include_router(reply_templates.router, prefix="/api/v1/reply-templates", tags=["Reply Templates"],

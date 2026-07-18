@@ -199,6 +199,14 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: str = ""
     RAZORPAY_WEBHOOK_SECRET: str = ""
 
+    # Card-required trial onboarding. OFF (default) = legacy frictionless trial:
+    # the 7-day trial starts on first sync, no payment method needed. ON = sync the
+    # audit first, then require a card / UPI Autopay mandate to START the trial;
+    # premium stays locked until then. Flagged so the new money path can be built and
+    # rolled out (or A/B'd) without disturbing the live frictionless flow — delete the
+    # flag and the legacy branches once fully cut over.
+    CARD_REQUIRED_ONBOARDING: bool = False
+
     # Server-side conversions (fired from the Razorpay webhook). All blank by default —
     # each integration stays inert until its credentials are provided.
     # Meta Conversions API

@@ -4,6 +4,9 @@ import { usePathname } from 'next/navigation';
 import { useBillingStatus } from '@/hooks/useBilling';
 import { useCountdown } from '@/hooks/useCountdown';
 import { AlertCircle, Lock } from 'lucide-react';
+import { CARD_REQUIRED_ONBOARDING } from '@/lib/onboarding';
+import { OnboardingGate } from '@/components/onboarding/OnboardingGate';
+import { OnboardingSyncing } from '@/components/onboarding/OnboardingSyncing';
 
 export function BillingBanners() {
   const pathname = usePathname();
@@ -39,13 +42,28 @@ export function BillingBanners() {
     );
   }
 
-  // Banners that show up at the top
-  // Pending trial: status is 'trial' but the clock hasn't started (no trial_ends_at).
+  // Pending/onboarding: status 'trial' but the clock hasn't started (no trial_ends_at).
   if (billing.subscription_status === 'trial' && !billing.trial_ends_at) {
+    const activeLocations = billing.active_location_count ?? 0;
+    const sync = billing.onboarding_sync_status ?? 'ready';
+    // Card-required flow. Order matters: show the "analyzing…" screen until the audit is
+    // actually READY, THEN the hard paywall gate — never a bare pay wall over a half-synced
+    // (empty-FOMO) audit. A 0-location org has nothing to bill, so it isn't gated.
+    if (CARD_REQUIRED_ONBOARDING && !isWhitelisted) {
+      // Phone is collected inline on the gate now (fewer steps), so we no longer wait on it.
+      if (sync === 'failed') return <OnboardingSyncing failed />;
+      if (sync === 'syncing' || sync === 'idle') return <OnboardingSyncing />;
+      // ready: the audit result + paywall (single "Start Free Trial" screen).
+      if (activeLocations > 0) return <OnboardingGate locations={activeLocations} />;
+    }
     return (
       <div className="bg-amber-100 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 px-4 py-3 flex items-center justify-center text-sm">
         <AlertCircle className="w-4 h-4 mr-2" />
-        <p>Sync your first location to activate your 7-day trial!</p>
+        <p>
+          {CARD_REQUIRED_ONBOARDING
+            ? 'Connect a Google Business location to see your free audit.'
+            : 'Sync your first location to activate your 7-day trial!'}
+        </p>
       </div>
     );
   }

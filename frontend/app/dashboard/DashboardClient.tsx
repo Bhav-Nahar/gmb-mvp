@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useBillingStatus } from '@/hooks/useBilling'
 import { api } from '@/lib/api'
 import { trackTrialStart } from '@/lib/analytics'
+import { CARD_REQUIRED_ONBOARDING } from '@/lib/onboarding'
 import {
   RefreshCw,
   AlertTriangle,
@@ -293,7 +294,9 @@ function DashboardContent() {
 
         // First GBP sync succeeded -> fire trial_start once, now that we have locations.
         // business_category = most common primary_category (blank if none came back).
-        if (terminalLog?.status === 'Success' && !trialStartFiredRef.current && user?.id) {
+        // In the card-required flow the trial hasn't started yet (starts at payment), so
+        // trial_start fires from the audit modal instead — not here.
+        if (!CARD_REQUIRED_ONBOARDING && terminalLog?.status === 'Success' && !trialStartFiredRef.current && user?.id) {
           trialStartFiredRef.current = true
           const counts = new Map<string, number>()
           for (const l of locationsData) {
@@ -313,7 +316,8 @@ function DashboardContent() {
 
           setTimeout(() => {
             setIsOnboarding(false)
-            // Clear URL parameter
+            // Clear URL parameter. In the card-required flow the app-wide OnboardingGate
+            // (BillingBanners) takes over from here until the trial is started.
             router.replace('/dashboard')
           }, 1500)
         }

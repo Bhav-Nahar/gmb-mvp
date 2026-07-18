@@ -1,11 +1,40 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.models.organization import Organization
 from app.core.config import settings
 from app.core.redis_client import get_redis
 
+logger = logging.getLogger(__name__)
+
+
 class EntitlementService:
     """Service to handle organization locks and trial/subscription lifecycle transitions."""
+
+    @staticmethod
+    def is_onboarding(org: Organization) -> bool:
+        """Pre-payment onboarding (card-required flow): Google is connected and the
+        cheap audit has synced, but no payment method exists yet, so the trial clock
+        has not started. Modelled as status 'trial' with trial_ends_at still NULL.
+
+        In this state the org is deliberately NOT org-locked — the audit sync must be
+        allowed to run so we can discover the location count and price the mandate —
+        but premium features stay locked (see is_premium_unlocked) until a mandate
+        starts the trial. NOTE: in the legacy frictionless flow the trial clock starts
+        on first sync, so an org only sits here briefly before its first sync; this
+        state only becomes user-visible when CARD_REQUIRED_ONBOARDING is on."""
+        return org.subscription_status == "trial" and org.trial_ends_at is None
+
+    @staticmethod
+    def is_premium_unlocked(org: Organization) -> bool:
+        """Whether the org may use premium / AI / analytics features.
+
+        Stricter than `not is_org_locked`: an onboarding org (pre-payment) is unlocked
+        for the audit sync yet must NOT see premium insights until it starts its trial.
+        True for a running trial, an active subscription, or a past-due org still inside
+        its grace window; False while onboarding or locked."""
+        return (not EntitlementService.is_org_locked(org)
+                and not EntitlementService.is_onboarding(org))
 
     @staticmethod
     def is_org_locked(org: Organization) -> bool:
@@ -49,16 +78,39 @@ class EntitlementService:
     def transition_expired_subscriptions(db: Session) -> None:
         """
         Scan and transition expired trials and subscriptions.
-        Uses a Redis lock to ensure only one worker executes this at a time.
+
+        A Redis lock keeps one worker on this at a time. NOTE: in the card-required flow
+        this sweep now makes one Razorpay API call per stuck/expiring card-trial, so a
+        large batch could outrun the lock lease; the per-org re-lock-and-re-verify before
+        any downgrade below is what actually keeps a concurrent run from mis-transitioning
+        a just-activated payer. The generous lease reduces the chance of overlap.
         """
         redis_client = get_redis()
-        lock = redis_client.lock("lock:transition_expired_subscriptions", timeout=300)
+        lock = redis_client.lock("lock:transition_expired_subscriptions", timeout=900)
         
         if not lock.acquire(blocking=False):
             return  # Another worker is already processing this
 
         try:
             now = datetime.now(timezone.utc)
+
+            # Step -1 (card-required flow): onboarding orgs whose mandate is authenticated
+            # but whose trial never started — BOTH the /confirm fast path and the
+            # subscription.authenticated webhook were missed. Without this they'd sit
+            # blurred until the day-7 charge activated (and billed) them with no trial.
+            # activate_trial_from_subscription is idempotent and no-ops if not yet approved.
+            if settings.CARD_REQUIRED_ONBOARDING:
+                from app.services.billing.subscription_service import SubscriptionService
+                stuck = db.query(Organization).filter(
+                    Organization.subscription_status == "trial",
+                    Organization.trial_ends_at.is_(None),
+                    Organization.razorpay_subscription_id.isnot(None),
+                ).all()
+                for org in stuck:
+                    try:
+                        SubscriptionService.activate_trial_from_subscription(db, org.id)
+                    except Exception:
+                        logger.exception("Failed to activate stuck onboarding trial for org %s", org.id)
 
             # Step 0: Stale PENDING trials (clock never started because the org never
             # completed a first sync) past the signup cap -> locked, so an abandoned
@@ -81,8 +133,45 @@ class EntitlementService:
             ).all()
 
             for org in trials_to_past_due:
-                org.subscription_status = "past_due"
-                org.grace_period_ends_at = now + timedelta(days=3)
+                # SAFEGUARD (card-required flow): a card-backed trial's day-7 first charge
+                # may have SUCCEEDED while its subscription.charged webhook was missed. If
+                # the org still carries a mandate, reconcile from Razorpay before locking —
+                # so a missed webhook can never push a paying customer into past_due. A
+                # halted/cancelled mandate reconciles to False and falls through to lock.
+                # ponytail: one Razorpay fetch per expiring trial; fine at nightly volume,
+                # revisit if trial expiries ever batch into the thousands.
+                if settings.CARD_REQUIRED_ONBOARDING and org.razorpay_subscription_id:
+                    from app.services.billing.subscription_service import SubscriptionService
+                    try:
+                        if SubscriptionService.reconcile_subscription(db, org.id):
+                            continue  # first charge landed — org is now active
+                    except Exception:
+                        # A Razorpay outage must not abort the whole sweep. Skip locking
+                        # THIS org this run (fail-open — a payer isn't wrongly locked);
+                        # the next sweep retries.
+                        logger.exception("Reconcile failed for expiring trial org %s; deferring.", org.id)
+                        continue
+                # Re-lock and re-verify before transitioning. `org` was read without a lock,
+                # and reconcile / a concurrent sweep / a subscription.charged webhook may have
+                # activated it since. Re-select with the SAME expired-trial predicate under a
+                # row lock: if it's no longer an expired trial (e.g. just activated), the row
+                # won't match and we skip it — this is what prevents a concurrent run from
+                # clobbering a just-activated payer to past_due. (Predicate in SQL, not Python,
+                # so the timestamp comparison is DB-consistent.)
+                locked = (
+                    db.query(Organization)
+                    .filter(
+                        Organization.id == org.id,
+                        Organization.subscription_status == "trial",
+                        Organization.trial_ends_at.isnot(None),
+                        Organization.trial_ends_at < now,
+                    )
+                    .with_for_update()
+                    .first()
+                )
+                if locked:
+                    locked.subscription_status = "past_due"
+                    locked.grace_period_ends_at = now + timedelta(days=3)
 
             # Step 2: Past Due -> Locked
             past_due_to_locked = db.query(Organization).filter(
