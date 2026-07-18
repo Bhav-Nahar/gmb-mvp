@@ -250,13 +250,15 @@ def _admin_row(p: PseoPage) -> dict:
     }
 
 
-@admin_router.get("")
-def admin_list_pages(
-    q: Optional[str] = None,
-    status: Optional[str] = None,
-    db: Session = Depends(get_db),
-    _: User = Depends(superadmin_required),
-):
+@admin_router.get("/stats")
+def admin_pseo_stats(db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    total = db.query(PseoPage).count()
+    published = db.query(PseoPage).filter(PseoPage.status == PseoPageStatus.PUBLISHED.value).count()
+    noindex = db.query(PseoPage).filter(PseoPage.index_status == "noindex").count()
+    return {"total": total, "published": published, "draft": total - published, "noindex": noindex}
+
+
+def _filtered_query(db: Session, q: Optional[str], status: Optional[str]):
     query = db.query(PseoPage)
     if status in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
         query = query.filter(PseoPage.status == status)
@@ -267,8 +269,69 @@ def admin_list_pages(
             | (PseoPage.industry_label.ilike(like))
             | (PseoPage.city_label.ilike(like))
         )
-    rows = query.order_by(PseoPage.updated_at.desc()).limit(500).all()
-    return {"pages": [_admin_row(p) for p in rows]}
+    return query
+
+
+@admin_router.get("")
+def admin_list_pages(
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+    _: User = Depends(superadmin_required),
+):
+    query = _filtered_query(db, q, status)
+    total = query.count()
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+    rows = query.order_by(PseoPage.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"pages": [_admin_row(p) for p in rows], "total": total, "page": page, "page_size": page_size}
+
+
+class BulkStatusIn(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+    # When set, applies to every page matching this filter instead of `ids`
+    # (same q/status semantics as the list endpoint) — powers "select all N matching".
+    select_all: bool = False
+    q: Optional[str] = None
+    filter_status: Optional[str] = None
+    status: Optional[str] = None  # draft | published — target status to set
+    index_status: Optional[str] = None  # index | noindex — target index_status to set
+
+
+@admin_router.post("/bulk-status")
+def admin_bulk_status(body: BulkStatusIn, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    if body.status is not None and body.status not in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
+        raise HTTPException(status_code=400, detail=f"invalid status: {body.status}")
+    if body.index_status is not None and body.index_status not in ("index", "noindex"):
+        raise HTTPException(status_code=400, detail=f"invalid index_status: {body.index_status}")
+    if body.status is None and body.index_status is None:
+        return {"updated": 0}
+    if body.select_all:
+        pages = _filtered_query(db, body.q, body.filter_status).limit(5000).all()  # ponytail: hard cap, raise if a real run ever needs more
+    else:
+        if not body.ids:
+            return {"updated": 0}
+        pages = db.query(PseoPage).filter(PseoPage.id.in_(body.ids)).all()
+    touched = []
+    for page in pages:
+        if body.status is not None:
+            page.status = body.status
+            if body.status == PseoPageStatus.PUBLISHED.value:
+                page.published_at = datetime.now(timezone.utc)
+        if body.index_status is not None:
+            page.index_status = body.index_status
+        touched.append({"slug": page.slug, "country": page.country, "industry_slug": page.industry_slug})
+    db.commit()
+    r = get_redis()
+    for t in touched:
+        try:
+            r.delete(_cache_key(t["slug"]))
+        except Exception:
+            pass
+    trigger_bulk_pseo_revalidation(touched)
+    return {"updated": len(pages)}
 
 
 # :int converter so GET /import/columns below isn't swallowed by this route.
