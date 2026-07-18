@@ -602,47 +602,54 @@ async def admin_import_pages(
         if not any((v or "").strip() for v in row.values()):
             continue
         try:
-            data = _apply_defaults(_row_to_page_in(row))
-            if not data.industry_label or not data.city_label:
-                raise ValueError("industry_label and city_label are required")
-            if data.status and data.status not in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
-                raise ValueError(f"invalid status: {data.status}")
-            page = db.query(PseoPage).filter(PseoPage.slug == data.slug).first()
-            if page:
-                page.country = data.country
-                page.industry_label, page.industry_slug = data.industry_label, data.industry_slug
-                page.city_label, page.city_slug = data.city_label, data.city_slug
-                page.meta_title, page.meta_description, page.h1 = data.meta_title, data.meta_description, data.h1
-                page.canonical_url = data.canonical_url or None
-                page.index_status = data.index_status
-                page.quality_score = data.quality_score
-                page.content = data.content
-                if data.status:
-                    if data.status == PseoPageStatus.PUBLISHED.value and page.status != PseoPageStatus.PUBLISHED.value:
-                        page.published_at = datetime.now(timezone.utc)
-                    page.status = data.status
-                action = "updated"
-                updated += 1
-            else:
-                page = PseoPage(
-                    slug=data.slug, country=data.country, industry_label=data.industry_label, industry_slug=data.industry_slug,
-                    city_label=data.city_label, city_slug=data.city_slug,
-                    meta_title=data.meta_title, meta_description=data.meta_description, h1=data.h1,
-                    canonical_url=data.canonical_url or None, index_status=data.index_status, quality_score=data.quality_score,
-                    content=data.content, status=data.status or PseoPageStatus.DRAFT.value,
-                    published_at=datetime.now(timezone.utc) if data.status == PseoPageStatus.PUBLISHED.value else None,
-                )
-                db.add(page)
-                action = "created"
-                created += 1
-            db.commit()
+            # SAVEPOINT per row instead of a full commit: a bad row only rolls back
+            # itself, but the whole file needs just one round-trip to Postgres at the
+            # end instead of one per row — at 4000+ rows, committing every row was slow
+            # enough on the live (higher-latency) DB to blow past the proxy's request
+            # timeout and fail the upload client-side with "Failed to fetch".
+            with db.begin_nested():
+                data = _apply_defaults(_row_to_page_in(row))
+                if not data.industry_label or not data.city_label:
+                    raise ValueError("industry_label and city_label are required")
+                if data.status and data.status not in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
+                    raise ValueError(f"invalid status: {data.status}")
+                page = db.query(PseoPage).filter(PseoPage.slug == data.slug).first()
+                if page:
+                    page.country = data.country
+                    page.industry_label, page.industry_slug = data.industry_label, data.industry_slug
+                    page.city_label, page.city_slug = data.city_label, data.city_slug
+                    page.meta_title, page.meta_description, page.h1 = data.meta_title, data.meta_description, data.h1
+                    page.canonical_url = data.canonical_url or None
+                    page.index_status = data.index_status
+                    page.quality_score = data.quality_score
+                    page.content = data.content
+                    if data.status:
+                        if data.status == PseoPageStatus.PUBLISHED.value and page.status != PseoPageStatus.PUBLISHED.value:
+                            page.published_at = datetime.now(timezone.utc)
+                        page.status = data.status
+                    action = "updated"
+                    updated += 1
+                else:
+                    page = PseoPage(
+                        slug=data.slug, country=data.country, industry_label=data.industry_label, industry_slug=data.industry_slug,
+                        city_label=data.city_label, city_slug=data.city_slug,
+                        meta_title=data.meta_title, meta_description=data.meta_description, h1=data.h1,
+                        canonical_url=data.canonical_url or None, index_status=data.index_status, quality_score=data.quality_score,
+                        content=data.content, status=data.status or PseoPageStatus.DRAFT.value,
+                        published_at=datetime.now(timezone.utc) if data.status == PseoPageStatus.PUBLISHED.value else None,
+                    )
+                    db.add(page)
+                    action = "created"
+                    created += 1
+                db.flush()  # assign PK / hit unique-slug constraint now, still inside the savepoint
             if page.status == PseoPageStatus.PUBLISHED.value and page.index_status == "index":
                 touched_published_slugs.append({"slug": page.slug, "country": page.country, "industry_slug": page.industry_slug})
             results.append({"row": idx, "slug": page.slug, "action": action, "status": page.status})
         except Exception as e:
-            db.rollback()
             failed += 1
             results.append({"row": idx, "slug": (row.get("slug") or "").strip() or None, "action": "error", "error": str(e)})
+
+    db.commit()
 
     # This endpoint is async (multipart read), so it runs on the event loop —
     # the revalidation helper spins up its own loop and must go to a thread.
