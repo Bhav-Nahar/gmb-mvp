@@ -73,6 +73,8 @@ services:
       - DATAFORSEO_BASE_URL=${DATAFORSEO_BASE_URL}
       - AEO_PROVIDER=${AEO_PROVIDER:-mock}
       - AEO_LOCATION_CODE=${AEO_LOCATION_CODE:-2356}
+      - GSC_SERVICE_ACCOUNT_JSON=${GSC_SERVICE_ACCOUNT_JSON:-}
+      - GSC_PROPERTY_URL=${GSC_PROPERTY_URL:-}
     depends_on:
       db:
         condition: service_healthy

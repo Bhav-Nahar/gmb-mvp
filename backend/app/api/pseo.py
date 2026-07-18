@@ -7,7 +7,6 @@ Two routers:
 Content model: identity/meta live as columns; every template section lives in the
 `content` JSON blob (see CONTENT_LIST_COLS / CONTENT_PAIR_COLS for the import shape).
 """
-import asyncio
 import csv
 import io
 import json
@@ -23,9 +22,11 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.api.deps import superadmin_required
+from app.core.config import settings
 from app.core.redis_client import get_redis
 from app.models.pseo_page import PseoPage, PseoPageStatus
 from app.models.user import User
+from app.services import gsc_service
 from app.services.revalidation_service import trigger_bulk_pseo_revalidation, trigger_pseo_page_flush
 
 logger = logging.getLogger(__name__)
@@ -250,13 +251,39 @@ def _admin_row(p: PseoPage) -> dict:
     }
 
 
-@admin_router.get("")
-def admin_list_pages(
-    q: Optional[str] = None,
-    status: Optional[str] = None,
-    db: Session = Depends(get_db),
-    _: User = Depends(superadmin_required),
-):
+@admin_router.get("/stats")
+def admin_pseo_stats(db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    total = db.query(PseoPage).count()
+    published = db.query(PseoPage).filter(PseoPage.status == PseoPageStatus.PUBLISHED.value).count()
+    noindex = db.query(PseoPage).filter(PseoPage.index_status == "noindex").count()
+    return {"total": total, "published": published, "draft": total - published, "noindex": noindex}
+
+
+@admin_router.get("/gsc-metrics")
+def admin_pseo_gsc_metrics(days: int = 28, _: User = Depends(superadmin_required)):
+    """Clicks/impressions/CTR/position for every pSEO page, keyed by slug.
+    Empty + configured=False until GSC_SERVICE_ACCOUNT_JSON/GSC_PROPERTY_URL are set."""
+    if not gsc_service.is_configured():
+        return {"configured": False, "metrics": {}}
+    raw = gsc_service.fetch_page_metrics("/gbp-management/", days=days)
+    by_slug = {url.rstrip("/").rsplit("/", 1)[-1]: m for url, m in raw.items()}
+    return {"configured": True, "metrics": by_slug}
+
+
+@admin_router.get("/{page_id:int}/gsc-queries")
+def admin_pseo_gsc_queries(page_id: int, days: int = 28, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    """Top search queries driving one page — used in the editor to show which
+    keywords are actually working."""
+    page = db.query(PseoPage).get(page_id)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    if not gsc_service.is_configured():
+        return {"configured": False, "queries": []}
+    url = f"{settings.FRONTEND_URL.rstrip('/')}/{_locale(page.country)}/gbp-management/{page.slug}"
+    return {"configured": True, "queries": gsc_service.fetch_top_queries(url, days=days)}
+
+
+def _filtered_query(db: Session, q: Optional[str], status: Optional[str]):
     query = db.query(PseoPage)
     if status in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
         query = query.filter(PseoPage.status == status)
@@ -267,8 +294,84 @@ def admin_list_pages(
             | (PseoPage.industry_label.ilike(like))
             | (PseoPage.city_label.ilike(like))
         )
-    rows = query.order_by(PseoPage.updated_at.desc()).limit(500).all()
-    return {"pages": [_admin_row(p) for p in rows]}
+    return query
+
+
+@admin_router.get("")
+def admin_list_pages(
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: Optional[str] = None,  # None (default: updated_at desc) | "clicks" | "impressions"
+    sort_dir: str = "desc",
+    gsc_days: int = 28,
+    db: Session = Depends(get_db),
+    _: User = Depends(superadmin_required),
+):
+    query = _filtered_query(db, q, status)
+    total = query.count()
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+
+    if sort_by in ("clicks", "impressions"):
+        # GSC metrics live in Redis/Google, not Postgres, so this sort happens in Python
+        # against the (cached) metrics map rather than as a DB ORDER BY. Fine at pSEO's
+        # current scale (thousands of rows) — revisit if it grows into the tens of thousands.
+        raw = gsc_service.fetch_page_metrics("/gbp-management/", days=gsc_days)
+        by_slug = {url.rstrip("/").rsplit("/", 1)[-1]: m for url, m in raw.items()}
+        all_rows = query.all()
+        all_rows.sort(key=lambda p: by_slug.get(p.slug, {}).get(sort_by, 0), reverse=(sort_dir != "asc"))
+        rows = all_rows[(page - 1) * page_size: page * page_size]
+    else:
+        rows = query.order_by(PseoPage.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    return {"pages": [_admin_row(p) for p in rows], "total": total, "page": page, "page_size": page_size}
+
+
+class BulkStatusIn(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+    # When set, applies to every page matching this filter instead of `ids`
+    # (same q/status semantics as the list endpoint) — powers "select all N matching".
+    select_all: bool = False
+    q: Optional[str] = None
+    filter_status: Optional[str] = None
+    status: Optional[str] = None  # draft | published — target status to set
+    index_status: Optional[str] = None  # index | noindex — target index_status to set
+
+
+@admin_router.post("/bulk-status")
+def admin_bulk_status(body: BulkStatusIn, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    if body.status is not None and body.status not in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
+        raise HTTPException(status_code=400, detail=f"invalid status: {body.status}")
+    if body.index_status is not None and body.index_status not in ("index", "noindex"):
+        raise HTTPException(status_code=400, detail=f"invalid index_status: {body.index_status}")
+    if body.status is None and body.index_status is None:
+        return {"updated": 0}
+    if body.select_all:
+        pages = _filtered_query(db, body.q, body.filter_status).limit(5000).all()  # ponytail: hard cap, raise if a real run ever needs more
+    else:
+        if not body.ids:
+            return {"updated": 0}
+        pages = db.query(PseoPage).filter(PseoPage.id.in_(body.ids)).all()
+    touched = []
+    for page in pages:
+        if body.status is not None:
+            page.status = body.status
+            if body.status == PseoPageStatus.PUBLISHED.value:
+                page.published_at = datetime.now(timezone.utc)
+        if body.index_status is not None:
+            page.index_status = body.index_status
+        touched.append({"slug": page.slug, "country": page.country, "industry_slug": page.industry_slug})
+    db.commit()
+    r = get_redis()
+    for t in touched:
+        try:
+            r.delete(_cache_key(t["slug"]))
+        except Exception:
+            pass
+    trigger_bulk_pseo_revalidation(touched)
+    return {"updated": len(pages)}
 
 
 # :int converter so GET /import/columns below isn't swallowed by this route.
@@ -522,12 +625,17 @@ def admin_import_columns(_: User = Depends(superadmin_required)):
 
 
 @admin_router.post("/import")
-async def admin_import_pages(
+def admin_import_pages(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _: User = Depends(superadmin_required),
 ):
-    blob = await file.read()
+    # Plain `def`, not `async def`: this loop makes thousands of synchronous DB
+    # calls with no `await` in sight. As an async route that runs directly on the
+    # event loop that serves every concurrent request — including login — freezing
+    # the whole app for the import's duration. A sync route makes FastAPI dispatch
+    # it to a threadpool instead, keeping the event loop free.
+    blob = file.file.read()
     if len(blob) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
     rows = _read_rows(file.filename or "import.csv", blob)
@@ -539,49 +647,54 @@ async def admin_import_pages(
         if not any((v or "").strip() for v in row.values()):
             continue
         try:
-            data = _apply_defaults(_row_to_page_in(row))
-            if not data.industry_label or not data.city_label:
-                raise ValueError("industry_label and city_label are required")
-            if data.status and data.status not in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
-                raise ValueError(f"invalid status: {data.status}")
-            page = db.query(PseoPage).filter(PseoPage.slug == data.slug).first()
-            if page:
-                page.country = data.country
-                page.industry_label, page.industry_slug = data.industry_label, data.industry_slug
-                page.city_label, page.city_slug = data.city_label, data.city_slug
-                page.meta_title, page.meta_description, page.h1 = data.meta_title, data.meta_description, data.h1
-                page.canonical_url = data.canonical_url or None
-                page.index_status = data.index_status
-                page.quality_score = data.quality_score
-                page.content = data.content
-                if data.status:
-                    if data.status == PseoPageStatus.PUBLISHED.value and page.status != PseoPageStatus.PUBLISHED.value:
-                        page.published_at = datetime.now(timezone.utc)
-                    page.status = data.status
-                action = "updated"
-                updated += 1
-            else:
-                page = PseoPage(
-                    slug=data.slug, country=data.country, industry_label=data.industry_label, industry_slug=data.industry_slug,
-                    city_label=data.city_label, city_slug=data.city_slug,
-                    meta_title=data.meta_title, meta_description=data.meta_description, h1=data.h1,
-                    canonical_url=data.canonical_url or None, index_status=data.index_status, quality_score=data.quality_score,
-                    content=data.content, status=data.status or PseoPageStatus.DRAFT.value,
-                    published_at=datetime.now(timezone.utc) if data.status == PseoPageStatus.PUBLISHED.value else None,
-                )
-                db.add(page)
-                action = "created"
-                created += 1
-            db.commit()
+            # SAVEPOINT per row instead of a full commit: a bad row only rolls back
+            # itself, but the whole file needs just one round-trip to Postgres at the
+            # end instead of one per row — at 4000+ rows, committing every row was slow
+            # enough on the live (higher-latency) DB to blow past the proxy's request
+            # timeout and fail the upload client-side with "Failed to fetch".
+            with db.begin_nested():
+                data = _apply_defaults(_row_to_page_in(row))
+                if not data.industry_label or not data.city_label:
+                    raise ValueError("industry_label and city_label are required")
+                if data.status and data.status not in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
+                    raise ValueError(f"invalid status: {data.status}")
+                page = db.query(PseoPage).filter(PseoPage.slug == data.slug).first()
+                if page:
+                    page.country = data.country
+                    page.industry_label, page.industry_slug = data.industry_label, data.industry_slug
+                    page.city_label, page.city_slug = data.city_label, data.city_slug
+                    page.meta_title, page.meta_description, page.h1 = data.meta_title, data.meta_description, data.h1
+                    page.canonical_url = data.canonical_url or None
+                    page.index_status = data.index_status
+                    page.quality_score = data.quality_score
+                    page.content = data.content
+                    if data.status:
+                        if data.status == PseoPageStatus.PUBLISHED.value and page.status != PseoPageStatus.PUBLISHED.value:
+                            page.published_at = datetime.now(timezone.utc)
+                        page.status = data.status
+                    action = "updated"
+                    updated += 1
+                else:
+                    page = PseoPage(
+                        slug=data.slug, country=data.country, industry_label=data.industry_label, industry_slug=data.industry_slug,
+                        city_label=data.city_label, city_slug=data.city_slug,
+                        meta_title=data.meta_title, meta_description=data.meta_description, h1=data.h1,
+                        canonical_url=data.canonical_url or None, index_status=data.index_status, quality_score=data.quality_score,
+                        content=data.content, status=data.status or PseoPageStatus.DRAFT.value,
+                        published_at=datetime.now(timezone.utc) if data.status == PseoPageStatus.PUBLISHED.value else None,
+                    )
+                    db.add(page)
+                    action = "created"
+                    created += 1
+                db.flush()  # assign PK / hit unique-slug constraint now, still inside the savepoint
             if page.status == PseoPageStatus.PUBLISHED.value and page.index_status == "index":
                 touched_published_slugs.append({"slug": page.slug, "country": page.country, "industry_slug": page.industry_slug})
             results.append({"row": idx, "slug": page.slug, "action": action, "status": page.status})
         except Exception as e:
-            db.rollback()
             failed += 1
             results.append({"row": idx, "slug": (row.get("slug") or "").strip() or None, "action": "error", "error": str(e)})
 
-    # This endpoint is async (multipart read), so it runs on the event loop —
-    # the revalidation helper spins up its own loop and must go to a thread.
-    await asyncio.to_thread(trigger_bulk_pseo_revalidation, touched_published_slugs)
+    db.commit()
+
+    trigger_bulk_pseo_revalidation(touched_published_slugs)
     return {"created": created, "updated": updated, "failed": failed, "results": results}
