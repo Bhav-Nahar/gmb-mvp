@@ -5,6 +5,7 @@ import { CheckCircle2, Loader2, AlertTriangle } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { beginGoogleLogin } from '@/lib/oauth'
 
 const STEPS = [
   'Importing your locations',
@@ -53,7 +54,7 @@ export function OnboardingSyncing({ failed = false }: { failed?: boolean }) {
 
   if (failed) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/60 p-4 backdrop-blur-md">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md space-y-4 rounded-2xl border bg-card p-8 text-center shadow-2xl">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
             <AlertTriangle className="h-6 w-6 text-destructive" />
@@ -63,14 +64,27 @@ export function OnboardingSyncing({ failed = false }: { failed?: boolean }) {
             Something went wrong while syncing your Google Business Profile. Please reconnect
             your Google account and try again.
           </p>
-          <button
-            type="button"
-            onClick={retry}
-            disabled={retrying}
-            className="inline-block rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-          >
-            {retrying ? 'Restarting...' : 'Retry sync'}
-          </button>
+          <div className="flex flex-col justify-center gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={retry}
+              disabled={retrying}
+              className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+            >
+              {retrying ? 'Restarting...' : 'Retry sync'}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                beginGoogleLogin('sync_failed').catch(() =>
+                  toast.error('Could not open Google sign-in. Please try again.')
+                )
+              }
+              className="rounded-xl border px-4 py-2.5 text-sm font-semibold hover:bg-muted"
+            >
+              Reconnect Google
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -79,7 +93,7 @@ export function OnboardingSyncing({ failed = false }: { failed?: boolean }) {
   const progress = Math.round(((done + 0.5) / STEPS.length) * 100)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/60 p-4 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-6 rounded-2xl border bg-card p-8 shadow-2xl">
         <div className="space-y-1 text-center">
           <h2 className="text-xl font-bold">Building your audit</h2>

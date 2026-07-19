@@ -5,6 +5,7 @@ import { Phone, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { CARD_REQUIRED_ONBOARDING } from '@/lib/onboarding';
+import { COUNTRY_CODES, parsePhoneState } from '@/lib/phone';
 
 /**
  * Required onboarding gate: a signed-in user with no phone on file sees a blocking
@@ -12,12 +13,16 @@ import { CARD_REQUIRED_ONBOARDING } from '@/lib/onboarding';
  * super-admin panel). Mounted in the dashboard layout so it catches every entry until
  * the number is provided, which is what makes it "required".
  *
- * No OTP: we enforce a well-formed Indian number (fixed +91, exactly 10 digits,
- * digits-only) rather than verifying ownership. Stored E.164 as "+91XXXXXXXXXX".
+ * No OTP: we enforce a well-formed international number (selectable country code,
+ * 7–15 local digits) rather than verifying ownership. Stored in E.164 format (e.g. "+91XXXXXXXXXX").
  */
 export function PhoneGate() {
   const { user, refresh } = useAuth();
-  const [digits, setDigits] = useState('');
+  
+  // Initialize from user.phone if they have one, else detect from timezone
+  const [countryCode, setCountryCode] = useState(() => parsePhoneState(user?.phone).code);
+  const [digits, setDigits] = useState(() => parsePhoneState(user?.phone).digits);
+  
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,17 +33,17 @@ export function PhoneGate() {
   // Nothing to gate until we know who they are and that a number is missing.
   if (!user || user.phone) return null;
 
-  const valid = digits.length === 10;
+  const valid = digits.length >= 7 && digits.length <= 15;
 
   const submit = async () => {
     setError(null);
     if (!valid) {
-      setError('Please enter a valid 10-digit mobile number.');
+      setError('Please enter a valid mobile number.');
       return;
     }
     setSubmitting(true);
     try {
-      await api.post('/users/me/phone', { phone: `+91${digits}` });
+      await api.post('/users/me/phone', { phone: `${countryCode}${digits}` });
       await refresh(); // re-fetch /users/me, user.phone set, gate disappears
     } catch (e: any) {
       setError(e?.message || 'We could not save your number. Please try again.');
@@ -47,7 +52,7 @@ export function PhoneGate() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/60 p-4 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-5 rounded-2xl border bg-card p-8 shadow-2xl">
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
           <Phone className="h-6 w-6 text-primary" />
@@ -63,16 +68,22 @@ export function PhoneGate() {
 
         <div>
           <div className="flex items-stretch overflow-hidden rounded-xl border focus-within:ring-2 focus-within:ring-ring">
-            <span className="flex select-none items-center bg-muted px-3 text-sm font-semibold text-muted-foreground">
-              +91
-            </span>
+            <select
+              value={countryCode}
+              onChange={(e) => setCountryCode(e.target.value)}
+              className="bg-muted px-2 py-2.5 text-sm font-semibold text-muted-foreground outline-none border-r border-border hover:bg-muted/80 cursor-pointer"
+            >
+              {COUNTRY_CODES.map(c => (
+                <option key={c.code} value={c.code}>{c.label}</option>
+              ))}
+            </select>
             <input
               type="tel"
               inputMode="numeric"
               autoFocus
               value={digits}
-              // Strip anything that isn't a digit and cap at 10, so the length is guaranteed.
-              onChange={(e) => setDigits(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              // Strip anything that isn't a digit and cap at 15 for max international length
+              onChange={(e) => setDigits(e.target.value.replace(/\D/g, '').slice(0, 15))}
               onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
               placeholder="98765 43210"
               className="flex-1 bg-background px-4 py-2.5 text-sm focus:outline-none"

@@ -318,6 +318,21 @@ export default function BillingPage() {
                 ? ` · ${billing.pending_location_count} location(s) pending payment`
                 : ''}
             </p>
+            {/* ponytail: cancel = WhatsApp handoff (retention conversation), no cancel endpoint yet */}
+            {['trial', 'active', 'past_due'].includes(billing.subscription_status || '') &&
+              !billing.subscription_ends_at &&
+              !(billing.subscription_status === 'trial' && !billing.trial_ends_at) && (
+                <a
+                  href={`https://wa.me/917021052482?text=${encodeURIComponent(
+                    `Hi, I want to cancel my Pinzo subscription. Account: ${user?.email || ''}`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                >
+                  Cancel subscription
+                </a>
+              )}
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button variant="outline" className="w-full h-11 sm:w-auto sm:h-8" onClick={() => setShowTopUpModal(true)}>

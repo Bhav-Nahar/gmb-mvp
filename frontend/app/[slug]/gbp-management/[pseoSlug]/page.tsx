@@ -12,10 +12,10 @@ import {
 // dynamic names at the same level). The pseoSlug is either a leaf page
 // ({industry}-in-{city}) or an industry hub ({industry}).
 //
-// True ISR: HTML is cached 24h per page and served from the CDN. The admin
+// True ISR: HTML is cached up to 1 year per page and served from the CDN. The admin
 // publish flow and per-page flush bust it early via revalidateTag/revalidatePath
-// (see app/api/revalidate/route.ts) — so 24h is only the *fallback* staleness.
-export const revalidate = 86400
+// (see app/api/revalidate/route.ts) — so 1 year is only the *fallback* staleness.
+export const revalidate = 31536000
 
 // Empty list = nothing prerendered at image build (backend may be unreachable
 // there); REQUIRED even so — without generateStaticParams a dynamic segment is

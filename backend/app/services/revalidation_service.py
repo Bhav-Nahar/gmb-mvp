@@ -165,41 +165,66 @@ def _run_revalidate(payload: dict) -> None:
         logger.error(f"pSEO revalidation encountered an error: {str(e)}")
 
 
-def trigger_pseo_page_flush(slug: str, country: str) -> None:
-    """Flush ONE pSEO page's ISR cache (HTML + data) without touching the rest.
+# pSEO/lpSEO fetches are tagged PER PAGE ('{type}:{slug}') for the leaf and a
+# shared '{type}-list' tag for the hub/sitemap listing — there is deliberately NO
+# global '{type}' tag. So revalidating one page (or a batch) busts only those
+# pages' data plus the list, never every other page's cache. That precision is
+# what keeps a single admin edit from forcing all N pages to re-render on their
+# next crawl (Vercel invocations + backend hits + Redis reads).
 
-    Sends {pseoSlug, paths}: the frontend busts only the per-slug fetch tag
-    ('pseo:{slug}') and the public leaf path — hubs and every other page keep
-    their caches. Fire-and-forget like the bulk variant."""
-    locale = f"en-{(country or 'in')}"
-    _run_revalidate({
-        "pseoSlug": slug,
-        "paths": [f"/{locale}/gbp-management/{slug}"],
-    })
+def _seo_revalidation_payload(entries: List[dict], segment: str, tag_prefix: str) -> dict:
+    """Build a {tags, paths} payload for the frontend revalidate route.
+
+    Busts the shared '{tag_prefix}-list' tag (hubs + sitemap reflect the new
+    published set) plus, per entry, the per-slug data tag and the leaf/hub/root
+    paths. Callers pass country explicitly so deleted rows (already gone from the
+    DB) still resolve the right locale."""
+    tags = {f"{tag_prefix}-list"}
+    paths = set()
+    for e in entries:
+        slug = e.get("slug")
+        if not slug:
+            continue
+        locale = f"en-{(e.get('country') or 'in')}"
+        base = f"/{locale}/{segment}"
+        tags.add(f"{tag_prefix}:{slug}")
+        paths.add(base)                      # locale root hub
+        paths.add(f"{base}/{slug}")          # leaf
+        if e.get("industry_slug"):
+            paths.add(f"{base}/{e['industry_slug']}")  # industry hub
+    return {"tags": sorted(tags), "paths": sorted(paths)}
+
+
+def trigger_pseo_page_flush(slug: str, country: str) -> None:
+    """Flush ONE pSEO page's ISR cache (HTML + data) without touching the rest."""
+    _run_revalidate(_seo_revalidation_payload([{"slug": slug, "country": country}], "gbp-management", "pseo"))
 
 
 def trigger_bulk_pseo_revalidation(entries: List[dict]) -> None:
-    """Revalidate pSEO pages after admin edits, publishes, or bulk imports.
-
-    Each entry is {"slug", "country", "industry_slug"}. For every entry we
-    revalidate the locale-prefixed leaf (/{locale}/gbp-management/{slug}), its
-    industry hub (/{locale}/gbp-management/{industry_slug}) and that locale's root
-    hub (/{locale}/gbp-management) — so a newly published city appears in the hub
-    listings immediately, and deletes clear the card + serve a 404. Callers pass
-    country explicitly so deleted rows (already gone from the DB) still resolve the
-    right locale. Fire-and-forget: never raises, never blocks; a miss falls back to
-    the hourly ISR cycle."""
+    """Revalidate pSEO pages after admin edits, publishes, or bulk imports. Each
+    entry is {"slug", "country", "industry_slug"}. Fire-and-forget: never raises,
+    never blocks; a miss falls back to the daily ISR cycle. Callers batch large
+    sets (see the admin bulk-status flow) so one POST never carries thousands of
+    paths into a single Vercel invocation."""
     entries = [e for e in (entries or []) if e and e.get("slug")]
     if not entries:
         return
+    _run_revalidate(_seo_revalidation_payload(entries, "gbp-management", "pseo"))
 
-    paths = set()
-    for e in entries:
-        locale = f"en-{(e.get('country') or 'in')}"
-        base = f"/{locale}/gbp-management"
-        paths.add(base)
-        paths.add(f"{base}/{e['slug']}")
-        if e.get("industry_slug"):
-            paths.add(f"{base}/{e['industry_slug']}")
 
-    _run_revalidate({"paths": sorted(paths)})
+# ── lpSEO (local-SEO managed pages, /local-seo-services) ─────────────────────
+# Identical contract; the only difference is the URL segment and tag prefix.
+
+def trigger_lpseo_page_flush(slug: str, country: str) -> None:
+    """Flush ONE local-SEO page's ISR cache (HTML + data) without touching others."""
+    _run_revalidate(_seo_revalidation_payload([{"slug": slug, "country": country}], "local-seo-services", "lpseo"))
+
+
+def trigger_bulk_lpseo_revalidation(entries: List[dict]) -> None:
+    """Revalidate local-SEO pages after admin edits/publishes/imports. Each entry is
+    {"slug", "country", "industry_slug"}; revalidates the leaf, its industry hub and
+    the locale root hub, plus the shared 'lpseo-list' tag."""
+    entries = [e for e in (entries or []) if e and e.get("slug")]
+    if not entries:
+        return
+    _run_revalidate(_seo_revalidation_payload(entries, "local-seo-services", "lpseo"))

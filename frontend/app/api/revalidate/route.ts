@@ -25,33 +25,24 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { slug, paths, pseoSlug } = body;
+    const { slug, paths, tags } = body;
 
-    // Three callers:
+    // Callers:
     //  - microsites send { slug } -> revalidate the single-level /{slug} route
-    //  - pSEO publish/import sends { paths: [...] } -> global 'pseo' tag + each path
-    //  - pSEO per-page flush sends { pseoSlug, paths } -> ONLY that page's tag +
-    //    path, leaving every other pSEO page's cache (HTML + data) intact.
-    if (typeof pseoSlug === 'string' && pseoSlug) {
-      revalidateTag(`pseo:${pseoSlug}`);
+    //  - pSEO/lpSEO send { tags: [...], paths: [...] } -> bust exactly those cache
+    //    tags (per-slug '{type}:{slug}' + the shared '{type}-list') and each path.
+    //    There is no global '{type}' tag, so a batch only ever touches the pages
+    //    it names — never every other page's cache.
+    if (Array.isArray(tags) && tags.length > 0) {
+      for (const t of tags) if (typeof t === 'string' && t) revalidateTag(t);
       for (const p of Array.isArray(paths) ? paths : []) {
         if (typeof p === 'string' && p.startsWith('/')) revalidatePath(p);
       }
-      return Response.json({ revalidated: true, scope: pseoSlug });
-    }
-
-    if (Array.isArray(paths) && paths.length > 0) {
-      // The 'pseo' tag on the lib/pseo.ts fetches busts all pSEO data at once;
-      // revalidatePath then purges the ISR HTML for the affected leaf + hubs.
-      revalidateTag('pseo');
-      for (const p of paths) {
-        if (typeof p === 'string' && p.startsWith('/')) revalidatePath(p);
-      }
-      return Response.json({ revalidated: true, count: paths.length });
+      return Response.json({ revalidated: true, tags: tags.length });
     }
 
     if (!slug) {
-      return Response.json({ error: "Missing slug or paths" }, { status: 400 });
+      return Response.json({ error: "Missing slug or tags" }, { status: 400 });
     }
 
     revalidatePath(`/${slug}`);

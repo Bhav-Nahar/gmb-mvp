@@ -91,7 +91,7 @@ export default function PricingPage() {
           </div>
           <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">Pricing that scales with you</h1>
           <p className="mx-auto max-w-2xl text-muted-foreground">
-            Per-location pricing with a 7-day free trial — no card required. Start small, grow to
+            Per-location pricing. Free audit with no card, then a 7-day free trial — no charge today. Start small, grow to
             hundreds of locations. Enterprise? We&apos;ll tailor it.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
@@ -198,7 +198,7 @@ export default function PricingPage() {
         </div>
 
         <p className="mt-8 text-center text-xs text-muted-foreground">
-          All plans include a 7-day free trial (3 locations, 10 AI credits). Prices exclude 18% GST.
+          All plans include a 7-day free trial for all your locations, with 10 AI credits included. Prices exclude 18% GST.
         </p>
       </main>
 

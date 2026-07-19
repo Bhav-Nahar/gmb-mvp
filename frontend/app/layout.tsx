@@ -15,7 +15,7 @@ import { BillingProvider } from "@/components/billing/BillingProvider";
 
 export const metadata: Metadata = {
   title: 'Pinzo | Manage every Google Business Profile from one dashboard',
-  description: 'Centralize reviews, AI-assisted replies, multi-location Google Posts, analytics, audits, and team roles for all your Google Business Profile locations. Secure Google OAuth. 7-day free trial, no card required.',
+  description: 'Centralize reviews, AI-assisted replies, multi-location Google Posts, analytics, audits, and team roles for all your Google Business Profile locations. Secure Google OAuth. Free audit with no card, then a 7-day free trial — no charge today.',
   applicationName: 'Pinzo',
   keywords: ['Google Business Profile', 'GBP management', 'local SEO', 'review management', 'multi-location', 'Google Posts'],
   icons: {

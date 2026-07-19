@@ -53,6 +53,7 @@ interface GscQuery extends GscMetric {
 const PAGE_SIZE = 20
 const GSC_DAYS = 28
 const CHUNK_ROWS = 300
+const BULK_BATCH = 100 // ids per bulk-status call — small enough that no single request freezes the UI or Vercel
 
 // Splits a CSV's data rows into batches of `chunkSize`, header repeated on each —
 // keeps every request well under any reverse-proxy timeout regardless of file size.
@@ -174,6 +175,7 @@ export default function AdminPseoPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [selectAllMatching, setSelectAllMatching] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -246,16 +248,33 @@ export default function AdminPseoPage() {
   const bulkUpdate = async (body: { status?: string; index_status?: string }, label: string) => {
     setBusy(true); setError('')
     try {
-      const payload = selectAllMatching
-        ? { select_all: true, q: q.trim() || undefined, filter_status: statusFilter || undefined, ...body }
-        : { ids: Array.from(selected), ...body }
-      const r = await api.post<{ updated: number }>('/admin/pseo/bulk-status', payload)
-      flash(`${r.updated} page(s) ${label}.`)
+      // Resolve the full target id set (fetch matching ids when "select all N"),
+      // then apply in small batches so no single request freezes the UI or Vercel.
+      let ids: number[]
+      if (selectAllMatching) {
+        const params: Record<string, string> = {}
+        if (q.trim()) params.q = q.trim()
+        if (statusFilter) params.status = statusFilter
+        ids = (await api.get<{ ids: number[] }>('/admin/pseo/ids', params)).ids || []
+      } else {
+        ids = Array.from(selected)
+      }
+      if (!ids.length) { flash('No pages selected.'); return }
+      let done = 0
+      setBulkProgress({ done: 0, total: ids.length })
+      for (let i = 0; i < ids.length; i += BULK_BATCH) {
+        const batch = ids.slice(i, i + BULK_BATCH)
+        await api.post<{ updated: number }>('/admin/pseo/bulk-status', { ids: batch, ...body })
+        done += batch.length
+        setBulkProgress({ done, total: ids.length })
+      }
+      flash(`${ids.length} page(s) ${label}.`)
       await Promise.all([load(), loadStats()])
     } catch (e: any) {
       setError(e.message || 'Bulk update failed')
     } finally {
       setBusy(false)
+      setBulkProgress(null)
     }
   }
 
@@ -630,6 +649,7 @@ export default function AdminPseoPage() {
             {!selectAllMatching && selected.size === pages.length && pages.length < total && (
               <button onClick={() => setSelectAllMatching(true)} className="text-[11px] font-bold text-primary underline underline-offset-2">Select all {total} matching</button>
             )}
+            {bulkProgress && (<span className="flex items-center gap-1.5 text-[11px] font-bold text-primary"><Loader2 className="h-3 w-3 animate-spin" />Updating {bulkProgress.done}/{bulkProgress.total}…</span>)}
             <button onClick={() => bulkUpdate({ status: 'published' }, 'published')} disabled={busy} className="flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50"><Globe className="h-3 w-3" /> Publish</button>
             <button onClick={() => bulkUpdate({ status: 'draft' }, 'unpublished')} disabled={busy} className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-[11px] font-bold text-muted-foreground hover:text-foreground disabled:opacity-50"><EyeOff className="h-3 w-3" /> Unpublish</button>
             <span className="mx-1 h-4 w-px bg-border" />

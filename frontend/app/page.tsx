@@ -41,7 +41,7 @@ const JSON_LD = {
   operatingSystem: 'Web',
   description:
     'AI Visibility (AEO) and Google Business Profile management platform. Pinzo helps multi-location businesses get found on Google Search, Google Maps, ChatGPT, Gemini and Perplexity with local SEO, review management, Google Posts and AI recommendations.',
-  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: '7-day free trial, no credit card required' },
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: 'Free audit, no card required. 7-day free trial — no charge today.' },
   featureList: [
     'AI Visibility Score (AEO)',
     'Google Business Profile management',

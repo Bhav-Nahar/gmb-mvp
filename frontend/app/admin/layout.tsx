@@ -18,6 +18,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const onAudit = !!pathname?.startsWith('/admin/audit')
   const onHolidays = !!pathname?.startsWith('/admin/holidays')
   const onPseo = !!pathname?.startsWith('/admin/pseo')
+  const onLpseo = !!pathname?.startsWith('/admin/lpseo')
 
   useEffect(() => {
     if (loading) return
@@ -48,10 +49,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <span className="text-sm font-bold uppercase tracking-wider">Super Admin</span>
           </div>
           <nav className="hidden sm:flex items-center gap-1">
-            <Link href="/admin" className={navCls(!onAudit && !onHolidays && !onPseo)}>Accounts</Link>
+            <Link href="/admin" className={navCls(!onAudit && !onHolidays && !onPseo && !onLpseo)}>Accounts</Link>
             <Link href="/admin/audit" className={navCls(onAudit)}>Audit log</Link>
             <Link href="/admin/holidays" className={navCls(onHolidays)}>Holidays</Link>
             <Link href="/admin/pseo" className={navCls(onPseo)}>pSEO pages</Link>
+            <Link href="/admin/lpseo" className={navCls(onLpseo)}>Local SEO pages</Link>
           </nav>
         </div>
         <div className="flex items-center gap-4">
