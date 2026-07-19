@@ -751,7 +751,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           {error && <div className="mx-auto max-w-md rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs font-semibold text-red-500 lg:mx-0">{error}</div>}
           <Reveal delay={320}>
             <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2.5 pt-2 text-[11px] font-semibold text-muted-foreground lg:justify-start">
-              {[[KeyRound, 'Secure Google OAuth'], [ShieldCheck, 'Tokens encrypted at rest'], [CreditCard, 'No card for trial'], [XCircle, 'Cancel anytime']].map(([Icon, label]: any, i) => (
+              {[[KeyRound, 'Secure Google OAuth'], [ShieldCheck, 'Free audit — no card'], [CreditCard, 'No charge today'], [XCircle, 'Cancel anytime']].map(([Icon, label]: any, i) => (
                 <span key={i} className="inline-flex items-center gap-1.5"><Icon className="h-3.5 w-3.5 shrink-0 text-emerald-500" />{label}</span>
               ))}
             </div>
@@ -1198,7 +1198,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
       <section id="pricing" className="mx-auto max-w-7xl scroll-mt-16 space-y-12 px-4 py-20 sm:px-6 lg:px-8">
         <Reveal className="mx-auto max-w-3xl space-y-4 text-center">
           <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Simple pricing that scales with you</h2>
-          <p className="text-muted-foreground">Pay only for the locations you manage. Every location includes AI credits. Start with a 7-day free trial, no credit card required.</p>
+          <p className="text-muted-foreground">Pay only for the locations you manage. Every location includes AI credits. Start with a free audit — no card needed — then a 7-day free trial with no charge today.</p>
           <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 pt-2 text-xs font-semibold text-muted-foreground">
             <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />Cancel anytime</span>
             <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />No lock-in contracts</span>
@@ -1312,7 +1312,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           </div>
         </div>
 
-        <p className="text-center text-[11px] text-muted-foreground">7-day free trial · 3 locations · 10 AI credits included. No credit card required.</p>
+        <p className="text-center text-[11px] text-muted-foreground">Free audit, no card. 7-day free trial for all your locations · 10 AI credits included · no charge today.</p>
 
         <div className="flex justify-center">
           <a href="/pricing" className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
@@ -1340,7 +1340,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               { q: 'How does the AI review responder work?', a: 'Our engine reads the review sentiment, matches it with your storefront details, and prepares a draft in your brand tone. Nothing is published automatically. You review and approve each reply before it goes live.' },
               { q: 'How is my data kept secure?', a: 'We connect through Google official OAuth and receive a revocable access token, never your password. Tokens are encrypted at rest, and access is scoped by role so team members only see what they should.' },
               { q: 'Can I cancel anytime?', a: 'Yes. There are no lock-in contracts on self-serve plans. Cancel from billing settings any time and you will not be charged again. You can also revoke our access from your Google account whenever you like.' },
-              { q: 'What does the free trial include?', a: 'The 7-day free trial includes up to 3 locations and 10 AI credits, no credit card required. You get full access to reviews, AI replies, posts, analytics, rank, and audits to evaluate end-to-end.' },
+              { q: 'What does the free trial include?', a: 'The 7-day free trial covers every location you connect and includes 10 AI credits to try AI replies. Your free audit needs no card; to start the trial you add a card or UPI AutoPay, but nothing is charged until the trial ends — cancel anytime before then. You get full access to reviews, AI replies, posts, analytics, rank, and audits to evaluate end-to-end.' },
             ].map((faq, i) => (
               <div key={i} className="overflow-hidden rounded-xl border border-border bg-card transition-colors hover:bg-muted/20" onClick={() => setOpenFaq(openFaq === i ? null : i)} role="button">
                 <div className="flex select-none items-center justify-between p-5 text-sm font-bold text-foreground">
@@ -1360,7 +1360,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           <div className="relative overflow-hidden rounded-3xl border border-primary/20 bg-primary/5 p-8 text-center sm:p-12 lg:p-16">
             <div className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-3xl" />
             <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{paid ? 'Find weak branches. Fix profile gaps. Grow local visibility.' : 'Ready to be the business AI recommends?'}</h2>
-            <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">{paid ? 'Connect Google and get your free Health Score audit across every location in under a minute. No card required to start.' : 'Connect your Google Business Profiles in minutes and start growing your visibility across Google Search, Maps, ChatGPT, Gemini and Perplexity. Free 7-day trial, no card required.'}</p>
+            <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">{paid ? 'Connect Google and get your free Health Score audit across every location in under a minute. No card required to start.' : 'Connect your Google Business Profiles in minutes and start growing your visibility across Google Search, Maps, ChatGPT, Gemini and Perplexity. Free audit with no card, then a 7-day free trial — no charge today.'}</p>
             <div className="flex justify-center pt-6">
               <button onClick={() => handleContinueWithGoogle('footer')} disabled={loading} className="flex items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50">
                 {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> {paid ? 'Get My Free GMB Audit' : 'Continue with Google'}</>}

@@ -50,7 +50,7 @@ export default function FeaturesIndexPage() {
             Start Free Trial
           </Link>
           <p className="mt-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] font-semibold text-muted-foreground">
-            {['Free 7-day trial', 'No credit card required', 'Secure Google OAuth'].map((t) => (
+            {['Free audit — no card', '7-day trial — no charge today', 'Secure Google OAuth'].map((t) => (
               <span key={t} className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-500" />{t}</span>
             ))}
           </p>

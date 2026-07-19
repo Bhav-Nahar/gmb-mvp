@@ -276,7 +276,7 @@ export function buildFeatureJsonLd(f: Feature) {
     {
       '@type': 'SoftwareApplication', '@id': `${SITE_URL}/#software`, name: 'Pinzo', url: SITE_URL,
       applicationCategory: 'BusinessApplication', operatingSystem: 'Web', publisher: { '@id': orgId },
-      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: '7-day free trial, no credit card required' },
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: 'Free audit, no card required. 7-day free trial — no charge today.' },
     },
     {
       '@type': 'WebPage', '@id': `${url}#webpage`, url, name: f.metaTitle, description: f.metaDescription,

@@ -54,7 +54,9 @@ export default function TermsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-foreground">Billing &amp; trials</h2>
             <p>
-              Paid plans are billed per location on a monthly or annual basis. The free trial requires no credit card. You
+              Paid plans are billed per location on a monthly or annual basis. The free audit requires no credit card.
+              Starting the free trial requires adding a payment method (card or UPI AutoPay); nothing is charged until
+              the trial ends. You
               may cancel at any time from your billing settings; cancellation stops future charges and takes effect at the
               end of the current billing period. Fees already paid are non-refundable except where required by law.
             </p>

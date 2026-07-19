@@ -1,5 +1,9 @@
 import type { MetadataRoute } from 'next'
 import { listPseoPages, pseoPath, industryHubPath, rootHubPath } from '@/lib/pseo'
+import {
+  listLpseoPages, lpseoPath,
+  industryHubPath as lpseoIndustryHubPath, rootHubPath as lpseoRootHubPath,
+} from '@/lib/lpseo'
 import { FEATURES } from '@/lib/features'
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
@@ -49,5 +53,36 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.7,
   }))
 
-  return [...staticRoutes, ...hubRoutes, ...leafRoutes]
+  // Local-SEO pages (/local-seo-services) — same hub + leaf shape as pSEO.
+  const lpseo = await listLpseoPages() // published + indexable only
+  const lpRootHubs = new Set<string>()
+  const lpIndustryHubs = new Set<string>()
+  for (const p of lpseo) {
+    lpRootHubs.add(p.locale)
+    lpIndustryHubs.add(`${p.locale}|${p.industry_slug}`)
+  }
+  const lpseoHubRoutes: MetadataRoute.Sitemap = [
+    ...Array.from(lpRootHubs).map((locale) => ({
+      url: `${SITE_URL}${lpseoRootHubPath(locale)}`, changeFrequency: 'weekly' as const, priority: 0.6,
+    })),
+    ...Array.from(lpIndustryHubs).map((key) => {
+      const [locale, industry] = key.split('|')
+      return { url: `${SITE_URL}${lpseoIndustryHubPath(locale, industry)}`, changeFrequency: 'weekly' as const, priority: 0.6 }
+    }),
+  ]
+  const lpseoLeafRoutes: MetadataRoute.Sitemap = lpseo.map((p) => ({
+    url: `${SITE_URL}${lpseoPath(p.locale, p.slug)}`,
+    lastModified: p.updated_at ? new Date(p.updated_at) : undefined,
+    changeFrequency: 'monthly',
+    priority: 0.7,
+  }))
+
+  // Bare global market indexes (/gbp-management, /local-seo-services) — only listed
+  // once the respective type has published pages, so an empty hub never enters the map.
+  const globalIndexRoutes: MetadataRoute.Sitemap = [
+    ...(pseo.length > 0 ? [{ url: `${SITE_URL}/gbp-management`, changeFrequency: 'weekly' as const, priority: 0.6 }] : []),
+    ...(lpseo.length > 0 ? [{ url: `${SITE_URL}/local-seo-services`, changeFrequency: 'weekly' as const, priority: 0.6 }] : []),
+  ]
+
+  return [...staticRoutes, ...globalIndexRoutes, ...hubRoutes, ...leafRoutes, ...lpseoHubRoutes, ...lpseoLeafRoutes]
 }

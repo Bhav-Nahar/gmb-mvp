@@ -99,9 +99,10 @@ function apiBase(): string {
 
 export async function getPseoPage(slug: string): Promise<PseoPageData | null> {
   try {
-    // 24h ISR. Tagged twice: 'pseo' lets admin publishes bust everything at once;
-    // 'pseo:{slug}' lets the per-page flush button bust just this page.
-    const res = await fetch(`${apiBase()}/public/pseo/${slug}`, { next: { revalidate: 86400, tags: ['pseo', `pseo:${slug}`] } })
+    // 1-year ISR (on-demand tag busting is the real refresh). Tagged per-page only
+    // ('pseo:{slug}') so a single-page or batched flush busts just this page, never
+    // every other pSEO page. Hubs/sitemap use the separate 'pseo-list' tag.
+    const res = await fetch(`${apiBase()}/public/pseo/${slug}`, { next: { revalidate: 31536000, tags: [`pseo:${slug}`] } })
     if (!res.ok) return null
     return res.json()
   } catch (err) {
@@ -128,8 +129,8 @@ export async function listPseoPages(opts?: { industry?: string; country?: string
     if (opts?.industry) params.set('industry', opts.industry)
     if (opts?.country) params.set('country', opts.country)
     const qs = params.toString() ? `?${params}` : ''
-    // 24h ISR; 'pseo' tag so publishes/deletes refresh hubs + sitemap data immediately.
-    const res = await fetch(`${apiBase()}/public/pseo${qs}`, { next: { revalidate: 86400, tags: ['pseo'] } })
+    // 1-year ISR; 'pseo-list' tag so publishes/deletes refresh hubs + sitemap data immediately.
+    const res = await fetch(`${apiBase()}/public/pseo${qs}`, { next: { revalidate: 31536000, tags: ['pseo-list'] } })
     if (!res.ok) return []
     const data = await res.json()
     return data.pages || []
@@ -163,7 +164,7 @@ export function buildPseoJsonLd(page: PseoPageData) {
       applicationCategory: 'BusinessApplication',
       operatingSystem: 'Web',
       publisher: { '@id': orgId },
-      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: '7-day free trial, no credit card required' },
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: 'Free audit, no card required. 7-day free trial — no charge today.' },
     },
     {
       '@type': 'Service',

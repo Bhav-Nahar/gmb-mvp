@@ -5,8 +5,9 @@ import { listPseoPages, rootHubPath, countryName, PSEO_SEGMENT } from '@/lib/pse
 // Global market index at bare /gbp-management: every market, each linking to its
 // localized hub. Locale-prefixed URLs (/{locale}/gbp-management/...) are handled
 // by app/[slug]/gbp-management — this static segment wins only for the exact
-// bare path. ISR 24h; publishes bust it via the 'pseo' tag on listPseoPages.
-export const revalidate = 86400
+// bare path. Cached up to 1 year; publishes bust it on demand via the
+// 'pseo-list' tag on listPseoPages.
+export const revalidate = 31536000
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
 

@@ -179,13 +179,6 @@ class Settings(BaseSettings):
     STORAGE_PROVIDER: str = "local"  # "local", "r2"
     LOCAL_STORAGE_DIR: str = "static/uploads"
 
-    # AWS S3 Configuration
-    AWS_ACCESS_KEY_ID: str = ""
-    AWS_SECRET_ACCESS_KEY: str = ""
-    AWS_REGION: str = "us-east-1"
-    S3_BUCKET_NAME: str = ""
-    S3_ENDPOINT_URL: str = ""
-
     # Cloudflare R2 Configuration
     R2_ACCOUNT_ID: str = ""
     R2_ACCESS_KEY_ID: str = ""

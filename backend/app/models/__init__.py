@@ -47,6 +47,7 @@ from app.models.lead import Lead
 from app.models.push_subscription import PushSubscription
 from app.models.holiday import Holiday
 from app.models.pseo_page import PseoPage
+from app.models.lpseo_page import LpseoPage
 __all__ = [
     "Base", "Organization", "User", "OAuthAccount", "Location",
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
@@ -58,6 +59,6 @@ __all__ = [
     "LocationMedia", "ReplyTemplate", "DescriptionGeneration", "LocalRankScan", "AEOScan", "LeaderboardSnapshot",
     "IneligibilityReason", "Region", "RegionLocation", "CustomGroup", "CustomGroupLocation",
     "GroupDailyInsight", "SavedComparisonView", "Microsite", "Lead", "PushSubscription",
-    "Holiday", "PseoPage"
+    "Holiday", "PseoPage", "LpseoPage"
 ]
 

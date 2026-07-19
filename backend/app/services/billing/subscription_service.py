@@ -26,14 +26,26 @@ _MIN_ORDER_PAISE = 100
 
 
 def normalize_phone(raw: str | None) -> str | None:
-    """Canonicalize an Indian phone to '+91XXXXXXXXXX' so the trial-abuse dedup can't be
-    defeated by formatting (spaces, dashes, +91, leading 0). Strips non-digits and keeps
-    the last 10 digits. Returns None if there aren't at least 10 digits. Storing and
-    comparing this canonical form is what makes the phone a reliable one-trial identity."""
-    digits = re.sub(r"\D", "", raw or "")
-    if len(digits) < 10:
+    """Canonicalize a phone number to standard E.164 format for trial-abuse dedup.
+    If the string starts with '+', it preserves the international code while stripping
+    other non-digit characters. If no '+' is present, it falls back to +91 and strips
+    leading zeroes."""
+    if not raw:
         return None
-    return "+91" + digits[-10:]
+    
+    # Strip everything except + and digits
+    clean = re.sub(r"[^\d+]", "", raw.strip())
+    
+    # If no leading +, assume +91
+    if not clean.startswith("+"):
+        clean = "+91" + clean.lstrip("0")
+        
+    # Ensure there's only one + and it's at the start
+    clean = "+" + clean.replace("+", "")
+    
+    if len(clean) < 8:  # Arbitrary minimum length for E.164
+        return None
+    return clean
 
 
 class SubscriptionService:

@@ -3064,39 +3064,6 @@ def sync_insights_task(location_id: int, start_date_str: str, end_date_str: str,
     finally:
         db.close()
 
-@shared_task(name="app.tasks.evaluate_attention_flags_task")
-def evaluate_attention_flags_task(organization_id: int) -> dict:
-    """
-    Celery task to evaluate reputation and performance attention flags for an organization.
-    """
-    import redis
-    from app.core.config import settings
-    from app.services.insight_sync_service import InsightSyncService
-
-    db: Session = SessionLocal()
-    try:
-        r = _get_redis()
-        lock_key = f"lock:attention_eval:{organization_id}"
-        lock = r.lock(lock_key, timeout=300)
-
-        if not lock.acquire(blocking=False):
-            return {"status": "skipped", "reason": "attention evaluation already in progress"}
-
-        try:
-            InsightSyncService.evaluate_attention_flags(db, organization_id)
-            return {"status": "success"}
-        finally:
-            try:
-                lock.release()
-            except Exception:
-                pass
-    except Exception as e:
-        import logging
-        logging.error(f"Failed evaluate_attention_flags_task for org {organization_id}: {str(e)}")
-        return {"status": "failed", "reason": str(e)}
-    finally:
-        db.close()
-
 @shared_task(name="app.tasks.sync_organization_insights_task")
 def sync_organization_insights_task(organization_id: int, start_date_str: str, end_date_str: str, run_type: str = "Scheduled", force: bool = False, scope: str = "all") -> dict:
     """
@@ -3308,35 +3275,6 @@ def sync_gbp_attributes_metadata_task(category_id: str, region_code: str, langua
     finally:
         db.close()
 
-@shared_task(name="app.tasks.sync_all_active_categories_metadata_task")
-def sync_all_active_categories_metadata_task() -> dict:
-    from app.db.session import SessionLocal
-    from app.models.location import Location
-    import logging
-    db = SessionLocal()
-    try:
-        locations = db.query(Location.google_category_resource_name, Location.organization_id).filter(
-            Location.google_category_resource_name != None
-        ).distinct().all()
-        
-        region_code = "IN"
-        language_code = "en"
-        enqueued_count = 0
-        
-        for category_resource_name, org_id in locations:
-            if not category_resource_name:
-                continue
-            category_id = category_resource_name.replace("categories/", "")
-            sync_gbp_attributes_metadata_task.delay(category_id, region_code, language_code, org_id)
-            enqueued_count += 1
-            
-        return {"status": "success", "enqueued_count": enqueued_count}
-    except Exception as e:
-        logging.error(f"sync_all_active_categories_metadata_task failed: {e}")
-        raise e
-    finally:
-        db.close()
-
 @shared_task(name="app.tasks.sync_location_attributes_task")
 def sync_location_attributes_task(location_id: int) -> dict:
     from app.db.session import SessionLocal
@@ -3477,42 +3415,6 @@ def sync_location_media_task(location_id: int) -> dict:
     finally:
         db.close()
 
-
-@shared_task(name="app.tasks.backfill_google_category_resource_names_task")
-def backfill_google_category_resource_names_task() -> dict:
-    from app.db.session import SessionLocal
-    from app.models.location import Location
-    from app.providers.factory import ProviderFactory
-    import asyncio
-    import logging
-    
-    db = SessionLocal()
-    try:
-        locations = db.query(Location).filter(
-            Location.google_category_resource_name.is_(None),
-            Location.google_location_id.is_not(None)
-        ).all()
-        
-        updated = 0
-        for loc in locations:
-            try:
-                provider = ProviderFactory.get_provider("gbp", loc.organization_id, db)
-                data = run_async(provider.get_location(loc.google_location_id))
-                
-                categories = data.get("categories", {})
-                primary = categories.get("primaryCategory", {})
-                resource_name = primary.get("name")
-                
-                if resource_name:
-                    loc.google_category_resource_name = resource_name
-                    db.commit()
-                    updated += 1
-            except Exception as e:
-                logging.error(f"Backfill failed for location {loc.id}: {e}")
-                
-        return {"status": "success", "updated_count": updated}
-    finally:
-        db.close()
 
 @shared_task(name="app.tasks.publish_location_attributes_task", max_retries=3)
 def publish_location_attributes_task(location_id: int) -> dict:

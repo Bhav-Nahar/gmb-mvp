@@ -8,13 +8,14 @@ import { useCheckoutSubscription, useConfirmPayment, useQuote, useAuditSummary }
 import { useRazorpay } from '@/hooks/useRazorpay'
 import { useAuth } from '@/hooks/useAuth'
 import { isPaymentVerificationError, PAYMENT_VERIFICATION_FAILED_MSG } from '@/lib/payment'
-import { trackBeginCheckout, trackAddPaymentInfo, trackTrialStart } from '@/lib/analytics'
+import { track, trackBeginCheckout, trackAddPaymentInfo, trackTrialStart } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import { COUNTRY_CODES, parsePhoneState } from '@/lib/phone'
 
 // What the trial unlocks (Basic tier). Shown as the value stack under the findings.
 const UNLOCKS = [
   'Full profile health score',
-  'AI insights and review replies',
+  '10 free AI credits for review replies',
   'Competitor benchmarks',
   'Review and ranking analytics',
 ]
@@ -35,9 +36,9 @@ export function OnboardingGate({ locations }: { locations: number }) {
   const queryClient = useQueryClient()
   const [submitting, setSubmitting] = useState(false)
   // Phone is collected inline here (one screen, one click) instead of a separate step.
-  const [phone, setPhone] = useState(user?.phone ? user.phone.replace(/^\+91/, '') : '')
-  const phoneDigits = phone.replace(/\D/g, '').slice(0, 10)
-  const phoneOk = phoneDigits.length === 10
+  const [countryCode, setCountryCode] = useState(() => parsePhoneState(user?.phone).code)
+  const [phoneDigits, setPhoneDigits] = useState(() => parsePhoneState(user?.phone).digits)
+  const phoneOk = phoneDigits.length >= 7 && phoneDigits.length <= 15
 
   const count = Math.max(1, locations || 1)
   const { data: quote } = useQuote(count, 'monthly', 'basic', true)
@@ -50,22 +51,26 @@ export function OnboardingGate({ locations }: { locations: number }) {
   const isAdmin = user?.role === 'Owner' || user?.role === 'Admin'
 
   useEffect(() => {
-    trackBeginCheckout({ user_id: user?.id, email: user?.email })
+    // Once per session, not per mount — this is the top of the payment funnel.
+    if (!sessionStorage.getItem('pz_gate_viewed')) {
+      sessionStorage.setItem('pz_gate_viewed', '1')
+      track('gate_viewed', { email: user?.email, locations_included: count })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Best-effort lead capture: persist the number as they finish typing, so a bounce at
   // the wall still leaves a contact. Silent on failure — checkout re-sends it anyway.
   const savePhoneLead = () => {
-    if (phoneOk && phoneDigits !== (user?.phone || '').replace(/^\+91/, '')) {
-      api.post('/users/me/phone', { phone: `+91${phoneDigits}` }).catch(() => {})
+    if (phoneOk && `${countryCode}${phoneDigits}` !== user?.phone) {
+      api.post('/users/me/phone', { phone: `${countryCode}${phoneDigits}` }).catch(() => {})
     }
   }
 
   const startTrial = async () => {
     if (submitting) return
     if (!phoneOk) {
-      toast.error('Please enter your 10-digit mobile number to start your trial.')
+      toast.error('Please enter a valid mobile number to start your trial.')
       return
     }
     const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY
@@ -74,13 +79,10 @@ export function OnboardingGate({ locations }: { locations: number }) {
       return
     }
     setSubmitting(true)
-    trackAddPaymentInfo({
-      plan_name: 'Trial', paymentTerm: 'monthly', value: 0,
-      locations_included: count, user_id: user?.id, email: user?.email,
-    })
+    trackBeginCheckout({ user_id: user?.id, email: user?.email })
     try {
       const response = await checkoutSubscription({
-        location_count: count, interval: 'monthly', plan_tier: 'basic', phone: `+91${phoneDigits}`,
+        location_count: count, interval: 'monthly', plan_tier: 'basic', phone: `${countryCode}${phoneDigits}`,
       })
       await openRazorpay({
         key: razorpayKey,
@@ -88,6 +90,11 @@ export function OnboardingGate({ locations }: { locations: number }) {
         name: 'Pinzo',
         description: `7-day free trial for ${count} location${count > 1 ? 's' : ''}`,
         handler: async (res: any) => {
+          // Payment info exists only now — the mandate was approved in Razorpay.
+          trackAddPaymentInfo({
+            plan_name: 'Trial', paymentTerm: 'monthly', value: 0,
+            locations_included: count, user_id: user?.id, email: user?.email,
+          })
           try {
             const result = await confirmPayment({
               razorpay_payment_id: res.razorpay_payment_id,
@@ -113,7 +120,12 @@ export function OnboardingGate({ locations }: { locations: number }) {
           setSubmitting(false)
           toast.error(err?.description || 'We could not verify your payment method. Trial not started.')
         },
-        modal: { ondismiss: () => setSubmitting(false) },
+        modal: {
+          ondismiss: () => {
+            track('checkout_dismissed', { email: user?.email, locations_included: count })
+            setSubmitting(false)
+          },
+        },
       } as any)
     } catch (error: any) {
       setSubmitting(false)
@@ -122,7 +134,7 @@ export function OnboardingGate({ locations }: { locations: number }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-neutral-950/60 p-4 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4">
       <div className="my-auto w-full max-w-md overflow-hidden rounded-2xl border bg-card shadow-2xl">
         {/* Header: audit-complete confirmation */}
         <div className="border-b bg-muted/40 px-6 py-4">
@@ -181,14 +193,20 @@ export function OnboardingGate({ locations }: { locations: number }) {
                   Mobile number
                 </span>
                 <div className="flex items-stretch overflow-hidden rounded-xl border focus-within:ring-2 focus-within:ring-ring">
-                  <span className="flex select-none items-center bg-muted px-3 text-sm font-semibold text-muted-foreground">
-                    +91
-                  </span>
+                  <select
+                    value={countryCode}
+                    onChange={(e) => setCountryCode(e.target.value)}
+                    className="bg-muted px-2 py-2.5 text-sm font-semibold text-muted-foreground outline-none border-r border-border hover:bg-muted/80 cursor-pointer"
+                  >
+                    {COUNTRY_CODES.map(c => (
+                      <option key={c.code} value={c.code}>{c.label}</option>
+                    ))}
+                  </select>
                   <input
                     type="tel"
                     inputMode="numeric"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    value={phoneDigits}
+                    onChange={(e) => setPhoneDigits(e.target.value.replace(/\D/g, '').slice(0, 15))}
                     onBlur={savePhoneLead}
                     placeholder="98765 43210"
                     className="flex-1 bg-background px-4 py-2.5 text-sm focus:outline-none"

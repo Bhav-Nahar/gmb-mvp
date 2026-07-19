@@ -59,7 +59,7 @@ export default function FeatureLanding({ feature }: { feature: Feature }) {
         <p className="mx-auto max-w-2xl text-base text-muted-foreground sm:text-lg">{f.heroSub}</p>
         <CtaButtons location="hero" />
         <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2.5 text-[11px] font-semibold text-muted-foreground">
-          {['Free 7-day trial', 'No credit card required', 'Secure Google OAuth', 'Cancel anytime'].map((t) => (
+          {['Free audit — no card', '7-day trial — no charge today', 'Secure Google OAuth', 'Cancel anytime'].map((t) => (
             <span key={t} className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />{t}</span>
           ))}
         </div>
@@ -139,7 +139,7 @@ export default function FeatureLanding({ feature }: { feature: Feature }) {
         <div className="relative overflow-hidden rounded-3xl border border-primary/20 bg-primary/5 p-8 text-center sm:p-12">
           <div className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-3xl" />
           <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">Try {f.name} with Pinzo</h2>
-          <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">Connect your Google Business Profile and get started in minutes. Free 7-day trial, no card required.</p>
+          <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">Connect your Google Business Profile and get started in minutes. Free audit with no card, then a 7-day free trial — no charge today.</p>
           <div className="pt-6"><CtaButtons location="footer" /></div>
         </div>
 

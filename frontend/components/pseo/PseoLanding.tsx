@@ -128,7 +128,7 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
         {c.hero_sub && <p className="mx-auto max-w-2xl text-base text-muted-foreground sm:text-lg">{c.hero_sub}</p>}
         <CtaButtons location="hero" />
         <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2.5 text-[11px] font-semibold text-muted-foreground">
-          {['Free 7-day trial', 'No credit card required', 'Secure Google OAuth', 'Cancel anytime'].map((t) => (
+          {['Free audit — no card', '7-day trial — no charge today', 'Secure Google OAuth', 'Cancel anytime'].map((t) => (
             <span key={t} className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />{t}</span>
           ))}
         </div>
@@ -476,7 +476,7 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
             {c.final_heading || `Grow your ${industry.toLowerCase()} visibility in ${city}`}
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">
-            {c.final_sub || `Connect your Google Business Profile and see your health score, review gaps and local visibility in minutes. Free 7-day trial, no card required.`}
+            {c.final_sub || `Connect your Google Business Profile and see your health score, review gaps and local visibility in minutes. Free audit with no card, then a 7-day free trial — no charge today.`}
           </p>
           <div className="pt-6"><CtaButtons location="footer" /></div>
         </div>
