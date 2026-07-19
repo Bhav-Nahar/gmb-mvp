@@ -46,10 +46,13 @@ export function useBillingStatus(enabled = true) {
     queryFn: () => api.get<BillingStatus>('/billing/status'),
     enabled: !!user && enabled,
     retry: false,
-    // While the onboarding audit is still syncing, poll so the gate flips to 'ready'
-    // (and reveals the FOMO) the moment the sync completes — no manual refresh.
-    refetchInterval: (query) =>
-      query.state.data?.onboarding_sync_status === 'syncing' ? 3000 : false,
+    // Poll while the onboarding sync is in flight (syncing or idle = not yet started).
+    // This covers new users who land on /dashboard/insights?onboarding=true — the gate
+    // flips to 'ready' the moment the Celery task finishes, no manual refresh needed.
+    refetchInterval: (query) => {
+      const status = query.state.data?.onboarding_sync_status;
+      return (status === 'syncing' || status === 'idle') ? 3000 : false;
+    },
   });
 }
 

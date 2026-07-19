@@ -134,7 +134,7 @@ export function OnboardingGate({ locations }: { locations: number }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-neutral-950/20 p-4">
       <div className="my-auto w-full max-w-md overflow-hidden rounded-2xl border bg-card shadow-2xl">
         {/* Header: audit-complete confirmation */}
         <div className="border-b bg-muted/40 px-6 py-4">
@@ -240,10 +240,15 @@ export function OnboardingGate({ locations }: { locations: number }) {
               </button>
 
               {/* Trust */}
-              <p className="flex items-center justify-center gap-1.5 text-center text-xs text-muted-foreground">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Secure checkout via Razorpay. A ₹5 verification may appear and is refunded automatically.
-              </p>
+              <div className="space-y-2 text-center text-xs text-muted-foreground">
+                <p className="flex items-center justify-center gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  Secure checkout via Razorpay. A ₹5 verification may appear and is refunded automatically.
+                </p>
+                <p className="text-[10px] leading-relaxed px-4">
+                  By starting your trial, you agree to receive onboarding support, audit reports, and critical alerts via WhatsApp & SMS.
+                </p>
+              </div>
             </>
           ) : (
             <div className="rounded-xl border bg-muted/30 p-4 text-center text-sm text-muted-foreground">
