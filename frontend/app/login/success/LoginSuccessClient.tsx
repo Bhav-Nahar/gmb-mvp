@@ -55,7 +55,7 @@ function LoginSuccessContent() {
         setStatusMessage(isOnboarding ? 'Onboarding workspace...' : 'Loading your dashboard...')
         // Brief delay only for new-user onboarding; existing users redirect immediately
         setTimeout(() => {
-          router.replace(isOnboarding ? '/dashboard?onboarding=true' : '/dashboard')
+          router.replace(isOnboarding ? '/dashboard/insights?onboarding=true' : '/dashboard')
         }, isOnboarding ? 1000 : 0)
       } catch (e: any) {
         console.error('LoginSuccessClient error during fetchAndRedirect:', e)

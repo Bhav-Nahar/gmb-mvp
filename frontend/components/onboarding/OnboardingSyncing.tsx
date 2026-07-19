@@ -54,7 +54,7 @@ export function OnboardingSyncing({ failed = false }: { failed?: boolean }) {
 
   if (failed) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/20 p-4">
         <div className="w-full max-w-md space-y-4 rounded-2xl border bg-card p-8 text-center shadow-2xl">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
             <AlertTriangle className="h-6 w-6 text-destructive" />
@@ -93,7 +93,7 @@ export function OnboardingSyncing({ failed = false }: { failed?: boolean }) {
   const progress = Math.round(((done + 0.5) / STEPS.length) * 100)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/20 p-4">
       <div className="w-full max-w-md space-y-6 rounded-2xl border bg-card p-8 shadow-2xl">
         <div className="space-y-1 text-center">
           <h2 className="text-xl font-bold">Building your audit</h2>

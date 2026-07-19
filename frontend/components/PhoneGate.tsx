@@ -52,7 +52,7 @@ export function PhoneGate() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/20 p-4">
       <div className="w-full max-w-md space-y-5 rounded-2xl border bg-card p-8 shadow-2xl">
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
           <Phone className="h-6 w-6 text-primary" />
@@ -100,10 +100,15 @@ export function PhoneGate() {
           {submitting ? 'Saving...' : 'Continue to my audit'}
         </button>
 
-        <p className="flex items-center justify-center gap-1.5 text-center text-xs text-muted-foreground">
-          <ShieldCheck className="h-3.5 w-3.5" />
-          We never share your number. No spam.
-        </p>
+        <div className="space-y-2 text-center text-xs text-muted-foreground">
+          <p className="flex items-center justify-center gap-1.5">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            We never share your number. No spam.
+          </p>
+          <p className="text-[10px] leading-relaxed px-4">
+            By continuing, you agree to receive automated audit reports, recommendations, and setup assistance via WhatsApp & SMS.
+          </p>
+        </div>
       </div>
     </div>
   );

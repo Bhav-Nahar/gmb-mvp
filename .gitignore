@@ -22,6 +22,7 @@ coverage.xml
 # Databases
 *.db
 *.sqlite3
+testdb
 
 # Node
 node_modules/

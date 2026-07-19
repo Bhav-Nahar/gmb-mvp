@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { api } from '@/lib/api'
 import {
   TrendingUp,
@@ -26,6 +26,8 @@ import {
   Zap
 } from 'lucide-react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import { generateMockInsightsData } from '@/lib/mock-insights'
 import { PlatformDeviceImpressions, KpiCard as SharedKpiCard, type PlatformDeviceBreakdown, type ReputationVelocity } from '@/components/insights/InsightsShared'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -386,7 +388,10 @@ function ReputationGrid({
   )
 }
 
-export default function InsightsPage() {
+function InsightsContent() {
+  const searchParams = useSearchParams()
+  const isOnboarding = searchParams?.get('onboarding') === 'true'
+  
   const [range, setRange] = useState('30') // '7', '30', '90', 'custom'
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
@@ -512,10 +517,15 @@ export default function InsightsPage() {
     try {
 
       if (selectedLocation === 'all') {
-        const res = await api.get<InsightsOverviewData>(
-          `/insights/overview?start_date=${startStr}&end_date=${endStr}`
-        )
-        setData(res)
+        let resData: InsightsOverviewData;
+        if (isOnboarding) {
+          resData = generateMockInsightsData();
+        } else {
+          resData = await api.get<InsightsOverviewData>(
+            `/insights/overview?start_date=${startStr}&end_date=${endStr}`
+          );
+        }
+        setData(resData)
         setLocationData(null)
       } else {
         const res = await api.get<any>(
@@ -1195,5 +1205,13 @@ export default function InsightsPage() {
           )}
         </main>
       </div>
+  )
+}
+
+export default function InsightsPage() {
+  return (
+    <Suspense fallback={null}>
+      <InsightsContent />
+    </Suspense>
   )
 }
