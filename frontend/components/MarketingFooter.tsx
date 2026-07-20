@@ -4,7 +4,7 @@ import Link from 'next/link';
 export function MarketingFooter() {
   return (
     <footer className="border-t border-border/80 py-12">
-      <div className="mx-auto grid max-w-7xl grid-cols-2 gap-8 px-4 sm:px-6 md:grid-cols-4 lg:px-8">
+      <div className="mx-auto grid max-w-7xl grid-cols-2 gap-8 px-4 sm:px-6 md:grid-cols-5 lg:px-8">
         <div className="col-span-2 space-y-4 md:col-span-1">
           <img src="/logo-horizontal-3.png" alt="Pinzo" className="h-8 shrink-0 object-contain" />
           <p className="max-w-xs text-[11px] leading-relaxed text-muted-foreground">
@@ -18,6 +18,15 @@ export function MarketingFooter() {
             <li><Link href="/#features" className="transition-colors hover:text-foreground">Features</Link></li>
             <li><Link href="/#rank" className="transition-colors hover:text-foreground">Local Rank</Link></li>
             <li><Link href="/pricing" className="transition-colors hover:text-foreground">Pricing</Link></li>
+          </ul>
+        </div>
+        <div className="space-y-3">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">Guides</span>
+          <ul className="space-y-1.5 text-xs font-semibold text-muted-foreground">
+            {/* Entry links into the pSEO/lpSEO silos — global index → market → industry → city. */}
+            <li><Link href="/gbp-management" className="transition-colors hover:text-foreground">GBP Management by Industry &amp; City</Link></li>
+            <li><Link href="/local-seo-services" className="transition-colors hover:text-foreground">Local SEO Services by Industry &amp; City</Link></li>
+            <li><Link href="/google-business-profile-management" className="transition-colors hover:text-foreground">What is GBP Management?</Link></li>
           </ul>
         </div>
         <div className="space-y-3">
