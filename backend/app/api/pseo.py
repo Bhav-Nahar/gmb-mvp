@@ -375,7 +375,11 @@ def admin_bulk_status(body: BulkStatusIn, db: Session = Depends(get_db), _: User
             return {"updated": 0}
         pages = db.query(PseoPage).options(defer(PseoPage.content)).filter(PseoPage.id.in_(body.ids)).all()
     touched = []
+    skipped_unscored = 0
     for page in pages:
+        if body.status == PseoPageStatus.PUBLISHED.value and page.quality_score is None:
+            skipped_unscored += 1  # same publish gate as _set_status
+            continue
         if body.status is not None:
             page.status = body.status
             if body.status == PseoPageStatus.PUBLISHED.value:
@@ -390,7 +394,7 @@ def admin_bulk_status(body: BulkStatusIn, db: Session = Depends(get_db), _: User
         except Exception:
             pass
     trigger_bulk_pseo_revalidation(touched)
-    return {"updated": len(pages)}
+    return {"updated": len(pages) - skipped_unscored, "skipped_unscored": skipped_unscored}
 
 
 # :int converter so GET /import/columns below isn't swallowed by this route.
@@ -476,6 +480,11 @@ def _set_status(page_id: int, new_status: str, db: Session) -> dict:
     page = db.query(PseoPage).get(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
+    # Unscored pages must not publish: null quality_score bypasses the >=80 index
+    # gate (_effective_index_status treats null as index), so an unscored thin page
+    # would go straight to Google. Score it first, then publish.
+    if new_status == PseoPageStatus.PUBLISHED.value and page.quality_score is None:
+        raise HTTPException(status_code=422, detail="quality_score is required before publishing (>=80 to be indexable)")
     page.status = new_status
     if new_status == PseoPageStatus.PUBLISHED.value:
         page.published_at = datetime.now(timezone.utc)
@@ -730,6 +739,11 @@ def admin_import_pages(
                     updated += 1
                 else:
                     was_published = False
+                    # New pages can't import straight to published without a score —
+                    # same gate as _set_status. Existing pages are left alone so
+                    # re-imports of the current catalog keep working.
+                    if (data.status or "") == PseoPageStatus.PUBLISHED.value and data.quality_score is None:
+                        raise ValueError("new page needs quality_score to import as published — import as draft, score it, then publish")
                     page = PseoPage(
                         slug=data.slug, country=data.country, industry_label=data.industry_label, industry_slug=data.industry_slug,
                         city_label=data.city_label, city_slug=data.city_slug,
@@ -754,5 +768,12 @@ def admin_import_pages(
 
     db.commit()
 
+    # Import was the one mutation path that skipped the backend cache, leaving
+    # unpublished/edited pages served from Redis for up to _CACHE_TTL.
+    if touched:
+        try:
+            get_redis().delete(*[_cache_key(t["slug"]) for t in touched])  # one Redis command, not one per page
+        except Exception:
+            pass
     trigger_bulk_pseo_revalidation(touched)
     return {"created": created, "updated": updated, "failed": failed, "results": results}

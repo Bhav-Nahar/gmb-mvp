@@ -90,7 +90,7 @@ export interface LpseoPageData {
   updated_at: string | null
 }
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 export const LPSEO_SEGMENT = 'local-seo-services'
 export const lpseoPath = (locale: string, slug: string) => `/${locale}/${LPSEO_SEGMENT}/${slug}`

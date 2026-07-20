@@ -10,6 +10,7 @@ Three routers:
 Reuses the pure parse helpers from pseo.py (slugify, country, list/pair/tuple splits,
 CSV reader) so only the content-column shape and the template differ.
 """
+import html as html_mod
 import json
 import logging
 from datetime import datetime, timezone
@@ -185,7 +186,7 @@ def create_lead(payload: LpseoLeadIn):
     super-admins via Resend. Never blocks — a missing key just logs and returns ok."""
     recipients = sorted(settings.superadmin_email_set)
     if recipients:
-        esc = lambda s: (s or "-")
+        esc = lambda s: html_mod.escape(s) if s else "-"  # lead input goes into email HTML
         html = f"""
         <h2>New Local SEO lead</h2>
         <p><strong>Name:</strong> {esc(payload.name)}</p>
@@ -380,7 +381,11 @@ def admin_bulk_status(body: BulkStatusIn, db: Session = Depends(get_db), _: User
             return {"updated": 0}
         pages = db.query(LpseoPage).options(defer(LpseoPage.content)).filter(LpseoPage.id.in_(body.ids)).all()
     touched = []
+    skipped_unscored = 0
     for page in pages:
+        if body.status == LpseoPageStatus.PUBLISHED.value and page.quality_score is None:
+            skipped_unscored += 1  # same publish gate as _set_status
+            continue
         if body.status is not None:
             page.status = body.status
             if body.status == LpseoPageStatus.PUBLISHED.value:
@@ -395,7 +400,7 @@ def admin_bulk_status(body: BulkStatusIn, db: Session = Depends(get_db), _: User
         except Exception:
             pass
     trigger_bulk_lpseo_revalidation(touched)
-    return {"updated": len(pages)}
+    return {"updated": len(pages) - skipped_unscored, "skipped_unscored": skipped_unscored}
 
 
 @admin_router.get("/{page_id:int}")
@@ -480,6 +485,9 @@ def _set_status(page_id: int, new_status: str, db: Session) -> dict:
     page = db.query(LpseoPage).get(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
+    # Same publish gate as pSEO: null quality_score bypasses the >=80 index gate.
+    if new_status == LpseoPageStatus.PUBLISHED.value and page.quality_score is None:
+        raise HTTPException(status_code=422, detail="quality_score is required before publishing (>=80 to be indexable)")
     page.status = new_status
     if new_status == LpseoPageStatus.PUBLISHED.value:
         page.published_at = datetime.now(timezone.utc)
@@ -707,6 +715,10 @@ def admin_import_pages(
                     updated += 1
                 else:
                     was_published = False
+                    # New pages can't import straight to published without a score (same
+                    # gate as _set_status); existing pages are left alone.
+                    if (data.status or "") == LpseoPageStatus.PUBLISHED.value and data.quality_score is None:
+                        raise ValueError("new page needs quality_score to import as published — import as draft, score it, then publish")
                     page = LpseoPage(
                         slug=data.slug, country=data.country, industry_label=data.industry_label, industry_slug=data.industry_slug,
                         city_label=data.city_label, city_slug=data.city_slug,
@@ -730,5 +742,12 @@ def admin_import_pages(
             results.append({"row": idx, "slug": data.slug, "action": "error", "error": str(e)})
 
     db.commit()
+    # Import was the one mutation path that skipped the backend cache, leaving
+    # unpublished/edited pages served from Redis for up to _CACHE_TTL.
+    if touched:
+        try:
+            get_redis().delete(*[_cache_key(t["slug"]) for t in touched])  # one Redis command, not one per page
+        except Exception:
+            pass
     trigger_bulk_lpseo_revalidation(touched)
     return {"created": created, "updated": updated, "failed": failed, "results": results}

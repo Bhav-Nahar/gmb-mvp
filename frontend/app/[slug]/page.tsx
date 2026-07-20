@@ -99,7 +99,7 @@ export async function generateMetadata({ params }: { params: { slug: string } })
       images: ogImage ? [ogImage] : [],
     },
     alternates: {
-      canonical: `${process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'}/${params.slug}`
+      canonical: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'}/${params.slug}`
     }
   }
 }
