@@ -281,7 +281,7 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
                 {reviewExamples.map((ex, i) => (
                   <div key={i} className="flex h-full flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-lg">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-foreground">Customer review</span>
+                      <span className="text-xs font-bold text-foreground">Example review</span>
                       <div className="flex gap-0.5 text-amber-400">{[...Array(5)].map((_, j) => <Star key={j} className="h-3 w-3 fill-current" />)}</div>
                     </div>
                     <p className="text-xs italic leading-relaxed text-muted-foreground">&quot;{ex.review}&quot;</p>
@@ -294,6 +294,11 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
                   </div>
                 ))}
               </div>
+            )}
+            {reviewExamples.length > 0 && (
+              <p className="text-center text-[11px] text-muted-foreground">
+                Illustrative examples showing how customer reviews and AI-drafted replies appear inside Pinzo for {industry.toLowerCase()} businesses — not real customer reviews.
+              </p>
             )}
             <RelatedLinks section="reviews" />
           </div>

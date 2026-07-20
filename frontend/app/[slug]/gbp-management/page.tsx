@@ -15,7 +15,7 @@ export function generateStaticParams(): Params[] {
   return []
 }
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 const LOCALE_RE = /^en-[a-z]{2}$/
 

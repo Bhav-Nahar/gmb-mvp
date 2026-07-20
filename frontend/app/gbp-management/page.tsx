@@ -9,7 +9,7 @@ import { listPseoPages, rootHubPath, countryName, PSEO_SEGMENT } from '@/lib/pse
 // 'pseo-list' tag on listPseoPages.
 export const revalidate = 31536000
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 export async function generateMetadata(): Promise<Metadata> {
   return {

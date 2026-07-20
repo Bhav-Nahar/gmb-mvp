@@ -69,7 +69,7 @@ export interface PseoPageData {
   updated_at: string | null
 }
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 // pSEO pages live under /{locale}/gbp-management/, separate from the microsite root
 // namespace. A path-scoped middleware rewrites the locale prefix to the internal
@@ -166,7 +166,11 @@ export function buildPseoJsonLd(page: PseoPageData) {
       applicationCategory: 'BusinessApplication',
       operatingSystem: 'Web',
       publisher: { '@id': orgId },
-      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: 'Free audit, no card required. 7-day free trial — no charge today.' },
+      // Must match the visible "Plans from" price (Lite plan; same 1 USD = ₹100 peg
+      // as the page) — structured data contradicting on-page pricing is a Google flag.
+      offers: page.country === 'in'
+        ? { '@type': 'Offer', price: '999', priceCurrency: 'INR', description: 'Plans from ₹999/month + GST after a 7-day free trial. Free audit, no card required.' }
+        : { '@type': 'Offer', price: '10', priceCurrency: 'USD', description: 'Plans from $10/month after a 7-day free trial. Free audit, no card required.' },
     },
     {
       '@type': 'Service',

@@ -24,7 +24,7 @@ export interface Feature {
   related: string[] // slugs of related features
 }
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 // Claims stay safe/factual (no "rank #1 guaranteed", no "AI engines recommend you"):
 // describe what the product does and the customer benefit, not ranking promises.

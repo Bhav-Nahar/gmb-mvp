@@ -15,12 +15,12 @@ export const metadata: Metadata = {
     'multi-location management',
     'local rank tracking',
   ],
-  alternates: { canonical: 'https://pinzo.io' },
+  alternates: { canonical: 'https://www.pinzo.io' },
   openGraph: {
     title: 'Pinzo | Be the Business AI Recommends',
     description:
       'Manage Google Business Profiles, reviews, posts and local SEO — and get recommended by ChatGPT, Gemini, Perplexity and Google AI. One platform for local visibility in the AI era.',
-    url: 'https://pinzo.io',
+    url: 'https://www.pinzo.io',
     siteName: 'Pinzo',
     type: 'website',
   },
@@ -36,7 +36,7 @@ const JSON_LD = {
   '@context': 'https://schema.org',
   '@type': 'SoftwareApplication',
   name: 'Pinzo',
-  url: 'https://pinzo.io',
+  url: 'https://www.pinzo.io',
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Web',
   description:

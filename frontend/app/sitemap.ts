@@ -6,7 +6,7 @@ import {
 } from '@/lib/lpseo'
 import { FEATURES } from '@/lib/features'
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 // Rendered per request: must include every published pSEO page, and the backend
 // isn't reachable at image-build time (a static prerender would bake in an empty

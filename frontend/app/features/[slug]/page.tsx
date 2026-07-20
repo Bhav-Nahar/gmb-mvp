@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import FeatureLanding from '@/components/features/FeatureLanding'
 import { FEATURES, getFeature } from '@/lib/features'
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 // Static, hand-written pages — one per feature, prerendered from the content map.
 // dynamicParams=false -> any slug not in the map returns 404 (no dynamic render).

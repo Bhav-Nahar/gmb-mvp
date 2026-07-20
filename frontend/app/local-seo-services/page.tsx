@@ -9,7 +9,7 @@ import { listLpseoPages, rootHubPath, countryName, LPSEO_SEGMENT } from '@/lib/l
 // 'lpseo-list' tag on listLpseoPages.
 export const revalidate = 31536000
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 export async function generateMetadata(): Promise<Metadata> {
   return {

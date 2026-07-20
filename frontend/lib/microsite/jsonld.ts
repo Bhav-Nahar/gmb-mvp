@@ -40,7 +40,7 @@ function getSubtype(category?: string | null): string {
 
 // BreadcrumbList structured data: Home > State > City > Business.
 export function buildBreadcrumbJsonLd(microsite: PublicMicrositeData, slug: string): object {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io';
   const items: any[] = [{ name: 'Home', url: baseUrl }]
   if (microsite.state) items.push({ name: microsite.state })
   if (microsite.city) items.push({ name: microsite.city })
@@ -59,7 +59,7 @@ export function buildBreadcrumbJsonLd(microsite: PublicMicrositeData, slug: stri
 }
 
 export function buildLocalBusinessJsonLd(microsite: PublicMicrositeData, slug: string): object {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io';
 
   const hasPhotos = microsite.photos && microsite.photos.length > 0;
   const hasReviews = microsite.reviews && microsite.reviews.length > 0;

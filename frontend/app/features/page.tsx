@@ -7,7 +7,7 @@ import { MarketingHeader } from '@/components/MarketingHeader'
 import { MarketingFooter } from '@/components/MarketingFooter'
 import { FEATURES } from '@/lib/features'
 
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pinzo.io'
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   MessageSquare, Sparkles, Map, Calendar, Building, LayoutDashboard, Globe, BarChart2,
