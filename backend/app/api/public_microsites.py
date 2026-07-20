@@ -107,9 +107,8 @@ def rate_limit(request: Request) -> None:
         # Never let a Redis hiccup take down the public page — fail open.
         logger.warning(f"Rate limit check failed, allowing request: {e}")
 
-@router.get("/{location_slug}", response_model=PublicMicrositeSchema,
-            dependencies=[Depends(rate_limit)])
-def get_public_microsite(location_slug: str, db: Session = Depends(get_db)):
+@router.get("/{location_slug}", response_model=PublicMicrositeSchema)
+def get_public_microsite(location_slug: str, request: Request, db: Session = Depends(get_db)):
     """
     Public endpoint to fetch all data necessary to render a microsite.
     Single-level URL: access control is purely via the globally-unique location_slug.
@@ -124,6 +123,11 @@ def get_public_microsite(location_slug: str, db: Session = Depends(get_db)):
             return json.loads(cached)
     except Exception:
         pass
+
+    # Rate-limit only cache misses: slug enumeration always misses (unknown slugs),
+    # so scraping protection is intact, while cached hits cost 1 Redis command
+    # instead of 2-3 (Upstash bills per command).
+    rate_limit(request)
 
     # 1. Look up Microsite (eager-load the location to avoid a second round-trip)
     microsite = db.query(Microsite).options(

@@ -2,9 +2,9 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
+# curl only (healthcheck). No compilers: every dependency installs from a
+# prebuilt wheel (psycopg2-binary bundles libpq).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
