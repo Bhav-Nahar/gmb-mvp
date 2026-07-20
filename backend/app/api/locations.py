@@ -1,7 +1,7 @@
 from typing import List
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer, load_only
 from sqlalchemy import select, func, update
 from app.db.session import get_db
 from app.api.deps import get_current_user, staff_required, admin_required, get_user_location_ids, require_location_access, require_premium
@@ -57,6 +57,14 @@ def get_locations(
         .outerjoin(LocationHealthScore, LocationHealthScore.location_id == Location.id)
         .outerjoin(Microsite, Microsite.location_id == Location.id)
         .filter(Location.organization_id == current_user.organization_id)
+        # These blobs (raw GBP payload + attribute sets) aren't in LocationOut; at
+        # 4k+ locations they made the response set big enough that the Supabase
+        # pooler dropped the connection ("SSL SYSCALL error: EOF detected").
+        .options(
+            defer(Location.gbp_raw),
+            defer(Location.google_attributes),
+            defer(Location.draft_attributes),
+        )
     )
 
     allowed_location_ids = get_user_location_ids(current_user, db)
@@ -209,6 +217,8 @@ def get_organization_health_summary(
 
     scores = (
         db.query(LocationHealthScore)
+        # summary only needs score+label, not the breakdown/recommendations JSONB
+        .options(load_only(LocationHealthScore.score, LocationHealthScore.label))
         .join(Location, Location.id == LocationHealthScore.location_id)
         .filter(*loc_filter)
         .all()

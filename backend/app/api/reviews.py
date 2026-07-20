@@ -41,7 +41,7 @@ def get_reviews(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
 ):
-    from sqlalchemy.orm import joinedload, load_only
+    from sqlalchemy.orm import joinedload, load_only, defer
     from app.models.location import Location
     from app.services.reply_template_service import ReplyTemplateService
     # Only `location_name` is serialized by ReviewResponse, so load just that
@@ -49,7 +49,9 @@ def get_reviews(
     # `gbp_raw` JSON blob). Keeps egress minimal. If you start exposing more
     # location fields in ReviewResponse, add them to load_only() below.
     query = db.query(Review).options(
-        joinedload(Review.location).load_only(Location.location_name)
+        joinedload(Review.location).load_only(Location.location_name),
+        # raw_payload is the verbatim multi-KB Google payload; never serialized here.
+        defer(Review.raw_payload),
     ).filter(
         Review.organization_id == current_user.organization_id,
         Review.is_deleted == False

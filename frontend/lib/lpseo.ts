@@ -118,7 +118,9 @@ export async function getLpseoPage(slug: string): Promise<LpseoPageData | null> 
     // 1-year ISR (on-demand tag busting is the real refresh). Tagged per-page only
     // ('lpseo:{slug}') so a single-page or batched flush busts just this page, never
     // every other lpSEO page. Hubs/sitemap use the separate 'lpseo-list' tag.
-    const res = await fetch(`${apiBase()}/public/lpseo/${slug}`, { next: { revalidate: 31536000, tags: [`lpseo:${slug}`] } })
+    // Abort after 10s: a hung backend must degrade this page, not kill the whole
+    // `next build` (60s static-gen timeout SIGTERMs the worker).
+    const res = await fetch(`${apiBase()}/public/lpseo/${slug}`, { next: { revalidate: 31536000, tags: [`lpseo:${slug}`] }, signal: AbortSignal.timeout(10000) })
     if (!res.ok) return null
     return res.json()
   } catch (err) {
@@ -144,7 +146,7 @@ export async function listLpseoPages(opts?: { industry?: string; country?: strin
     if (opts?.industry) params.set('industry', opts.industry)
     if (opts?.country) params.set('country', opts.country)
     const qs = params.toString() ? `?${params}` : ''
-    const res = await fetch(`${apiBase()}/public/lpseo${qs}`, { next: { revalidate: 31536000, tags: ['lpseo-list'] } })
+    const res = await fetch(`${apiBase()}/public/lpseo${qs}`, { next: { revalidate: 31536000, tags: ['lpseo-list'] }, signal: AbortSignal.timeout(10000) })
     if (!res.ok) return []
     const data = await res.json()
     return data.pages || []
