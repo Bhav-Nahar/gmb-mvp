@@ -301,15 +301,20 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
         "/api/v1/auth/google/login",
         "/api/v1/auth/refresh",
         "/api/v1/billing/checkout-subscription",
+        "/api/v1/billing/start-phone-trial",
         "/api/v1/billing/buy-credits",
         "/api/v1/billing/confirm",
         "/api/v1/webhooks/razorpay",
-        # Onboarding phone capture and a retry-sync both run BEFORE the trial starts, so
-        # they must not be blocked by the onboarding mutation gate below.
+    })
+    # Onboarding phone capture and a retry-sync run BEFORE the trial starts, so they
+    # bypass the ONBOARDING gate below — but NOT the lock gate: a locked (past-due)
+    # org must not trigger paid sync processing. (Whitelisting them fully was the bug
+    # test_check_billing_lock_enforces_402_only_on_mutations caught.)
+    _ONBOARDING_ALLOWED = frozenset({
         "/api/v1/users/me/phone",
         "/api/v1/locations/sync",
     })
-    
+
     if request.url.path in _WHITELIST:
         return
 
@@ -325,5 +330,6 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
     # Card-required onboarding: a pre-payment org can view its audit but must not perform
     # premium write actions (posts, manual replies, listing edits) before starting the
     # trial. Billing/auth mutations are whitelisted above, so Start-Trial still works.
-    if org and settings.CARD_REQUIRED_ONBOARDING and EntitlementService.is_onboarding(org):
+    if (org and settings.CARD_REQUIRED_ONBOARDING and EntitlementService.is_onboarding(org)
+            and request.url.path not in _ONBOARDING_ALLOWED):
         raise HTTPException(status_code=402, detail="trial_required: start your free trial to make changes.")
