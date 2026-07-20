@@ -3117,8 +3117,8 @@ def sync_organization_insights_task(organization_id: int, start_date_str: str, e
                 sync_state.last_insights_sync_error = None
             db.commit()
 
-            # Query all active locations
-            locations = db.query(Location).filter(
+            # Query all active locations (ids only — the loop just enqueues tasks)
+            locations = db.query(Location.id).filter(
                 Location.organization_id == organization_id,
                 Location.sync_status != "Failed",
                 Location.billing_status == "active"  # locked locations get no paid processing
@@ -3302,20 +3302,27 @@ def sync_location_extras_chunk_task(location_ids: list) -> dict:
     """
     import logging
     logger = logging.getLogger(__name__)
+    changed_loc_ids = []
     for loc_id in location_ids:
         try:
             sync_location_attributes_task(loc_id)
         except Exception as e:
             logger.error(f"attribute sync failed for location {loc_id}: {e}")
         try:
-            sync_location_media_task(loc_id)
+            res = sync_location_media_task(loc_id, revalidate=False)
+            if res.get("inserted") or res.get("updated") or res.get("removed"):
+                changed_loc_ids.append(loc_id)
         except Exception as e:
             logger.error(f"media sync failed for location {loc_id}: {e}")
+    # One revalidation for the whole chunk (mirrors the review-sync path).
+    if changed_loc_ids:
+        from app.services.revalidation_service import trigger_bulk_microsite_revalidation
+        trigger_bulk_microsite_revalidation(changed_loc_ids)
     return {"status": "success", "count": len(location_ids)}
 
 
 @shared_task(name="app.tasks.sync_location_media_task")
-def sync_location_media_task(location_id: int) -> dict:
+def sync_location_media_task(location_id: int, revalidate: bool = True) -> dict:
     """Reconcile the location's real Google photo gallery into location_media.
 
     Pulls every media item Google reports (including photos uploaded outside our
@@ -3408,8 +3415,12 @@ def sync_location_media_task(location_id: int) -> dict:
         except Exception as hs_err:
             logger.warning(f"Health score recalc failed after media sync {location_id}: {hs_err}")
 
-        from app.services.revalidation_service import trigger_bulk_microsite_revalidation
-        trigger_bulk_microsite_revalidation([location_id])
+        # revalidate=False lets batch callers (extras chunk) revalidate once for the
+        # whole chunk instead of once per location — 4k-location syncs were firing
+        # 4k revalidations and starving the DB pool. Skip entirely if nothing changed.
+        if revalidate and (inserted or updated or removed):
+            from app.services.revalidation_service import trigger_bulk_microsite_revalidation
+            trigger_bulk_microsite_revalidation([location_id])
 
         return {"status": "success", "inserted": inserted, "updated": updated, "removed": removed}
     finally:

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy import func, case, select, extract, literal_column
 from datetime import datetime
 
@@ -96,8 +96,10 @@ async def get_organization_sla_summary(
     response_hours_expr = func.extract('epoch', Review.reply_created_at - Review.review_created_at) / 3600.0
     age_hours_expr = func.extract('epoch', func.now() - Review.review_created_at) / 3600.0
 
-    # 1. Fetch all locations for org
-    locations = db.query(Location).filter(
+    # 1. Fetch all locations for org (only the three columns this summary reads)
+    locations = db.query(Location).options(
+        load_only(Location.id, Location.location_name, Location.sla_tracking_started_at)
+    ).filter(
         Location.organization_id == organization_id
     ).all()
 

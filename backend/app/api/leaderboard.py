@@ -7,7 +7,7 @@ import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, load_only
 
 from app.api import deps
 from app.db.session import SessionLocal
@@ -54,7 +54,7 @@ def get_scoped_snapshots(db: Session, org_id: int, period: str, allowed_ids: Opt
     query = db.query(LeaderboardSnapshot).join(
         Location, Location.id == LeaderboardSnapshot.location_id
     ).options(
-        joinedload(LeaderboardSnapshot.location)
+        joinedload(LeaderboardSnapshot.location).load_only(Location.location_name)
     ).filter(
         LeaderboardSnapshot.organization_id == org_id,
         LeaderboardSnapshot.period_label == period
@@ -434,7 +434,7 @@ def export_leaderboard(
     query = db.query(LeaderboardSnapshot).join(
         Location, Location.id == LeaderboardSnapshot.location_id
     ).options(
-        joinedload(LeaderboardSnapshot.location)
+        joinedload(LeaderboardSnapshot.location).load_only(Location.location_name)
     ).filter(
         LeaderboardSnapshot.organization_id == current_user.organization_id,
         LeaderboardSnapshot.period_label == period

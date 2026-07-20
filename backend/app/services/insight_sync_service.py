@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import func, text, case
 from app.models.location import Location
@@ -222,7 +222,10 @@ class InsightSyncService:
         Evaluate and update attention flags for all locations under an organization based on predefined thresholds.
         Uses a single batch aggregation query to eliminate N+1 database operations.
         """
-        locations = db.query(Location).filter(Location.organization_id == organization_id).all()
+        locations = db.query(Location).options(
+            # reads id, writes the attention_* trio — skip the heavy JSONB columns
+            load_only(Location.id, Location.attention_needed, Location.attention_reason, Location.attention_updated_at)
+        ).filter(Location.organization_id == organization_id).all()
         if not locations:
             return
 
