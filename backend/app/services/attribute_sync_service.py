@@ -341,6 +341,18 @@ class AttributeSyncService:
                 data = resp.json()
                 all_attributes = data.get("attributes", [])
 
+        # Attributes can be changed on the live listing by anyone with access, and they
+        # never pass through the location sync — so they get their own diff here.
+        # SAVEPOINT: a failed statement aborts the whole Postgres transaction, so a
+        # plain try/except would leave the session unusable and the commit below
+        # would blow up — losing the attribute sync over a cosmetic feature.
+        try:
+            from app.services import profile_change_service
+            with self.db.begin_nested():
+                profile_change_service.detect_attribute_changes(self.db, location, all_attributes)
+        except Exception:
+            logger.warning(f"attribute change detection failed for location {location.id}", exc_info=True)
+
         location.google_attributes = all_attributes
         location.last_google_sync = datetime.datetime.now(datetime.timezone.utc)
         location.google_attributes_stale = False

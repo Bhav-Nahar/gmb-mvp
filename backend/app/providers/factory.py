@@ -43,6 +43,7 @@ class ProviderFactory:
                 User.organization_id == organization_id,
                 User.role.in_(ADMIN_ROLES),
                 User.is_active == True,
+                User.deleted_at.is_(None),
                 OAuthAccount.provider.in_(provider_names)
             )
             .order_by(OAuthAccount.expires_at.desc(), User.id.asc())

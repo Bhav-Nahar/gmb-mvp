@@ -70,6 +70,13 @@ celery.conf.beat_schedule = {
                              # the original 6h. Lifecycle transitions are handled
                              # separately by transition-subscriptions below.
     },
+    "check-google-updates-weekly": {
+        "task": "app.tasks.check_all_google_updates_task",
+        "schedule": crontab(day_of_week=1, hour=5, minute=0), # Mondays 5AM UTC. Costs one
+                             # extra API call per active location, so it deliberately does
+                             # NOT ride the daily sync — Google's own edits are rare and
+                             # never urgent, and weekly is ~10x cheaper.
+    },
     "transition-subscriptions": {
         "task": "app.tasks.transition_subscriptions_task",
         "schedule": 21600.0, # Every 6 hours — preserves the lifecycle-sweep cadence

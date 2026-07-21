@@ -2,23 +2,7 @@ import { useState } from "react"
 import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
 import { SkeletonLoader } from "../components/SkeletonLoader"
 import { Badge } from "@/components/ui/badge"
-
-function formatDistanceToNow(date: Date, options?: { addSuffix?: boolean }): string {
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  
-  if (diffMins < 1) return 'just now'
-  if (diffMins < 60) return options?.addSuffix ? `${diffMins}m ago` : `${diffMins}m`
-  
-  const diffHours = Math.floor(diffMins / 60)
-  if (diffHours < 24) return options?.addSuffix ? `${diffHours}h ago` : `${diffHours}h`
-  
-  const diffDays = Math.floor(diffHours / 24)
-  if (diffDays < 30) return options?.addSuffix ? `${diffDays}d ago` : `${diffDays}d`
-  
-  return date.toLocaleDateString()
-}
+import { ChangeDiff, GoogleUpdateActions, formatDistanceToNow } from "@/components/changes/ChangeEntry"
 
 interface ActivityTabProps {
   locationId: number
@@ -45,7 +29,14 @@ export function ActivityTab({ locationId }: ActivityTabProps) {
         >
           All
         </Badge>
-        <Badge 
+        <Badge
+          variant={filter === "ProfileChange" ? "default" : "outline"}
+          className="cursor-pointer h-auto py-2 px-3 text-xs sm:h-5 sm:py-0.5 sm:px-2"
+          onClick={() => setFilter("ProfileChange")}
+        >
+          Changes on Google
+        </Badge>
+        <Badge
           variant={filter === "ListingEdit" ? "default" : "outline"}
           className="cursor-pointer h-auto py-2 px-3 text-xs sm:h-5 sm:py-0.5 sm:px-2"
           onClick={() => setFilter("ListingEdit")}
@@ -83,8 +74,13 @@ export function ActivityTab({ locationId }: ActivityTabProps) {
                 </span>
               </div>
               <div className="text-xs text-muted-foreground font-mono bg-muted p-3 rounded-md max-h-48 overflow-y-auto">
-                <pre>{JSON.stringify(log.details, null, 2)}</pre>
+                {log.entity_type === "ProfileChange"
+                  ? <ChangeDiff payload={log.payload} />
+                  : <pre>{JSON.stringify(log.payload, null, 2)}</pre>}
               </div>
+              {log.entity_type === "ProfileChange" && log.payload?.source === "google" && (
+                <GoogleUpdateActions locationId={locationId} activityId={log.id} payload={log.payload} />
+              )}
             </div>
           </div>
         ))}

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import {
   Check, ArrowRight, Sparkles, MessageSquare, Map, Calendar, Building,
-  LayoutDashboard, Globe, BarChart2, RefreshCw,
+  LayoutDashboard, Globe, BarChart2, RefreshCw, History,
 } from 'lucide-react'
 import { MarketingHeader } from '@/components/MarketingHeader'
 import { MarketingFooter } from '@/components/MarketingFooter'
@@ -9,7 +9,7 @@ import { buildFeatureJsonLd, getFeature, type Feature } from '@/lib/features'
 
 // Feature icons referenced by name in the content map.
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  MessageSquare, Sparkles, Map, Calendar, Building, LayoutDashboard, Globe, BarChart2,
+  MessageSquare, Sparkles, Map, Calendar, Building, LayoutDashboard, Globe, BarChart2, History,
 }
 
 /** Marketing landing page for a single Pinzo feature. Server component, no client JS. */

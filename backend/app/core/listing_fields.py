@@ -225,6 +225,17 @@ LISTING_FIELDS: list[ListingFieldConfig] = [
 
 # Convenience lookups — use these instead of filtering the list manually
 FIELD_MAP: dict[str, ListingFieldConfig] = {f.name: f for f in LISTING_FIELDS}
+
+# Reverse map: GBP field-mask root (as it appears in a getGoogleUpdated diffMask,
+# e.g. "phoneNumbers", "profile") -> our editable column. Used to turn "Google
+# changed X" into an accept/reject edit. Several columns can share one mask
+# ("phoneNumbers" covers phone + additional_phones); first declared wins, which is
+# the primary one in every case.
+GBP_MASK_TO_FIELD: dict[str, str] = {}
+for _f in LISTING_FIELDS:
+    _root = (_f.gbp_field_mask or "").split(".")[0]
+    if _root and not _f.is_read_only and _root not in GBP_MASK_TO_FIELD:
+        GBP_MASK_TO_FIELD[_root] = _f.name
 STAFF_EDITABLE_FIELDS: set[str] = {f.name for f in LISTING_FIELDS if f.is_staff_editable}
 ADMIN_EDITABLE_FIELDS: set[str] = {f.name for f in LISTING_FIELDS if f.is_admin_editable}
 CRITICAL_FIELDS: set[str] = {f.name for f in LISTING_FIELDS if f.is_critical}
