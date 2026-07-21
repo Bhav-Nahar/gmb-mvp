@@ -97,6 +97,18 @@ def checkout_subscription(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    # An active org must never mint a second subscription: the existing mandate keeps
+    # charging at Razorpay while the org row points at the new one — orphaned double
+    # billing. Adding locations has its own prorated add-on flow (unlock), and plan
+    # changes go through support. A cancelled org (subscription_ends_at set) may
+    # re-subscribe — its old mandate stops at period end.
+    if org.subscription_status == "active" and not org.subscription_ends_at:
+        raise HTTPException(
+            status_code=409,
+            detail="already_subscribed: your plan is already active. Add locations from "
+                   "the billing page, or contact support to change plans.",
+        )
+
     # Card-required onboarding: the FIRST subscription is a trial — register the mandate
     # now, charge nothing for TRIAL_DAYS. Bill for every audited location, counted
     # server-side (not from the client) so the mandate can't be under-priced.

@@ -287,6 +287,41 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
     );
   }
 
+  // Already on an active plan with nothing to unlock: re-subscribing would mint a
+  // second live mandate (the backend now 409s it) — show guidance instead of a form.
+  if (billing?.subscription_status === 'active' && !billing?.subscription_ends_at) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[450px] bg-background z-50">
+          <DialogHeader>
+            <DialogTitle>Your plan is active</DialogTitle>
+            <DialogDescription>
+              You already have an active subscription. To manage more locations, sync
+              them from Google and unlock them here — you pay a prorated add-on, not a
+              second subscription. To change your plan tier, message us and we&apos;ll
+              switch you without double-billing.
+            </DialogDescription>
+          </DialogHeader>
+          <a
+            href={`https://wa.me/917021052482?text=${encodeURIComponent(
+              `Hi, I want to change my Pinzo plan. Account: ${user?.email || ''}`
+            )}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm underline underline-offset-2 text-muted-foreground hover:text-foreground"
+          >
+            Chat with us about changing plans
+          </a>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  const inTrial = billing?.subscription_status === 'trial' && !!billing?.trial_ends_at;
+  const trialEndsLabel = inTrial
+    ? new Date(billing!.trial_ends_at!).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[450px] bg-background z-50">
@@ -296,6 +331,15 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             Select how many locations you manage to calculate your customized plan.
           </DialogDescription>
         </DialogHeader>
+
+        {inTrial && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+            You&apos;re on a free trial until <span className="font-semibold">{trialEndsLabel}</span>.
+            Buying now starts your paid plan immediately — you&apos;ll be charged
+            {totalRupees !== null ? <> <span className="font-semibold">₹{totalRupees.toLocaleString('en-IN')}</span></> : null} today
+            and the remaining trial days end. Your plan will cover the number of locations you pick below.
+          </div>
+        )}
 
         {/* Plan tier picker */}
         <div className="grid grid-cols-3 gap-2 mt-2">
@@ -389,7 +433,11 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
               onClick={handleUpgrade}
               disabled={isPending || submitting || quoteLoading || totalRupees === null}
             >
-              {isPending || submitting ? 'Starting…' : 'Checkout'}
+              {isPending || submitting
+                ? 'Starting…'
+                : inTrial && totalRupees !== null
+                  ? `Pay ₹${totalRupees.toLocaleString('en-IN')} now`
+                  : 'Checkout'}
             </Button>
           </div>
         </div>

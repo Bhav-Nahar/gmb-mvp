@@ -570,3 +570,50 @@ def test_webhook_ignores_soft_deleted_org(db):
     db.refresh(org)
     assert org.subscription_status == "trial"  # untouched, not flipped to active
     assert db.query(BillingTransaction).filter_by(organization_id=org.id).first() is None
+
+
+def test_active_org_cannot_mint_second_subscription(client, db):
+    """An active org re-running subscription checkout would create a second live
+    Razorpay mandate (orphaned double billing) — the endpoint must 409 instead."""
+    from app.core.security import create_access_token
+
+    org = Organization(name="Active Org", subscription_status="active", plan="active")
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+    user = User(email="owner@active.com", name="Owner", google_id="g-active-1",
+                role="Owner", is_active=True, organization_id=org.id)
+    db.add(user)
+    db.commit()
+    client.cookies.set("gmb_auth_token", create_access_token(user.email, token_version=user.token_version))
+
+    resp = client.post("/api/v1/billing/checkout-subscription",
+                       json={"location_count": 2, "interval": "monthly", "plan_tier": "pro"})
+    assert resp.status_code == 409
+    assert "already_subscribed" in resp.json()["detail"]
+
+
+def test_cancelled_active_org_may_resubscribe(client, db):
+    """A cancelled org (subscription_ends_at set) is allowed past the guard — its old
+    mandate stops at period end, so a new subscription is legitimate."""
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import patch
+    from app.core.security import create_access_token
+
+    org = Organization(name="Cancelled Org", subscription_status="active", plan="active",
+                       subscription_ends_at=datetime.now(timezone.utc) + timedelta(days=10))
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+    user = User(email="owner@cancelled.com", name="Owner", google_id="g-cancel-1",
+                role="Owner", is_active=True, organization_id=org.id)
+    db.add(user)
+    db.commit()
+    client.cookies.set("gmb_auth_token", create_access_token(user.email, token_version=user.token_version))
+
+    with patch.object(SubscriptionService, "create_subscription_checkout",
+                      return_value={"id": "sub_new", "status": "created"}) as mock_checkout:
+        resp = client.post("/api/v1/billing/checkout-subscription",
+                           json={"location_count": 2, "interval": "monthly", "plan_tier": "pro"})
+    assert resp.status_code == 200
+    assert mock_checkout.called
