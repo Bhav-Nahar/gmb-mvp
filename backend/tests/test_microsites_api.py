@@ -52,12 +52,15 @@ def _create_user(db: Session, org_id: int, role: Role, email: str) -> User:
 
 @pytest.fixture
 def auth_setup(client, db):
-    org = Organization(name="Test Org", plan_tier="pro")  # microsite is a Pro-tier feature
+    # active subscription: these tests exercise tenancy/publish logic, and must not
+    # trip the billing-lock/onboarding gates (which depend on CARD_REQUIRED_ONBOARDING
+    # being set in the environment the suite runs in).
+    org = Organization(name="Test Org", plan_tier="pro", subscription_status="active")  # microsite is a Pro-tier feature
     db.add(org)
     db.commit()
     db.refresh(org)
 
-    org2 = Organization(name="Other Org")
+    org2 = Organization(name="Other Org", subscription_status="active")
     db.add(org2)
     db.commit()
     db.refresh(org2)

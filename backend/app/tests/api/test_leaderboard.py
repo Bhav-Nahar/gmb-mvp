@@ -27,7 +27,9 @@ def client(fake_admin_user, db, monkeypatch):
         app.dependency_overrides.clear()
 
 def _setup_org_and_locations(db):
-    org = Organization(id=1, name="Test Org")
+    # active: these tests exercise leaderboard logic and must not trip the
+    # env-dependent onboarding/billing gates (CARD_REQUIRED_ONBOARDING).
+    org = Organization(id=1, name="Test Org", subscription_status="active")
     loc1 = Location(id=1, organization_id=1, google_location_id="loc_1", location_name="Loc 1", billing_status="active")
     loc2 = Location(id=2, organization_id=1, google_location_id="loc_2", location_name="Loc 2", billing_status="active")
     loc3 = Location(id=3, organization_id=1, google_location_id="loc_3", location_name="Loc 3", billing_status="active")

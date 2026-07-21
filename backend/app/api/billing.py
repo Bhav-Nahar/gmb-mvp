@@ -14,7 +14,7 @@ from app.models.billing_transaction import BillingTransaction
 from app.core import plan_config
 from app.core.config import settings
 from app.services.billing.pricing_service import PricingService
-from app.services.billing.subscription_service import SubscriptionService
+from app.services.billing.subscription_service import SubscriptionService, normalize_phone
 from app.services.billing.webhook_service import WebhookService
 from app.services.billing.entitlement_service import EntitlementService
 from app.core.rate_limit import rate_limiter
@@ -139,6 +139,35 @@ def checkout_subscription(
         contact=eff_phone,
     )
     return {"subscription": subscription}
+
+class StartPhoneTrialRequest(BaseModel):
+    phone: str | None = None  # falls back to the phone already on the user
+
+
+@router.post("/start-phone-trial", dependencies=[Depends(_billing_mutation_rate_limit)])
+def start_phone_trial(
+    request: StartPhoneTrialRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _: User = Depends(admin_required),
+):
+    """India-only: start the free trial with just a +91 phone number, no card/UPI
+    mandate. Rest of world uses /checkout-subscription. The country is re-derived
+    server-side from the number, so the client can't route around the card flow."""
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User does not belong to an organization")
+
+    eff_phone = ((request.phone or current_user.phone or "").strip()) or None
+    # Lead capture before the guards (mirrors the gate's on-blur save): even a
+    # failed start leaves a contact for sales follow-up.
+    canon = normalize_phone(eff_phone)
+    if canon and current_user.phone != canon:
+        current_user.phone = canon
+        db.commit()
+
+    trial_ends_at = SubscriptionService.start_phone_trial(db, current_user.organization_id, eff_phone)
+    return {"activated": True, "trial_ends_at": trial_ends_at.isoformat()}
+
 
 @router.post("/buy-credits", dependencies=[Depends(_billing_mutation_rate_limit)])
 def buy_credits(
@@ -297,8 +326,14 @@ def get_billing_status(
     else:
         onboarding_sync_status = "syncing"  # pending / not yet completed
 
+    from app.services.app_settings import india_phone_trial_enabled, row_phone_trial_enabled
+
     return {
         "onboarding_sync_status": onboarding_sync_status,
+        # Effective runtime flags (super-admin override or env default): tell the
+        # onboarding gate which regions get the no-card phone trial UI.
+        "india_phone_trial": india_phone_trial_enabled(db),
+        "row_phone_trial": row_phone_trial_enabled(db),
         "plan": org.plan,
         "plan_tier": org.plan_tier,
         "features": plan_config.get_plan(org.plan_tier).get("features", []),

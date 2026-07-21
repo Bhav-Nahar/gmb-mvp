@@ -11,6 +11,17 @@ def _compile_jsonb_sqlite(element, compiler, **kw):
     return "TEXT"
 
 
+@pytest.fixture(autouse=True)
+def _fresh_flag_cache(monkeypatch):
+    """Runtime feature flags are TTL-cached per process; tests insert AppSetting
+    rows directly (sometimes mid-test) and must always read fresh — disable the TTL."""
+    from app.services import app_settings
+    app_settings.clear_flag_cache()
+    monkeypatch.setattr(app_settings, "_FLAG_TTL_SECONDS", 0.0)
+    yield
+    app_settings.clear_flag_cache()
+
+
 @pytest.fixture
 def db():
     """A SQLAlchemy session backed by a fresh in-memory SQLite database with all

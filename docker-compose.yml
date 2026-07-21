@@ -47,6 +47,8 @@ services:
     environment:
       - APP_ENV=${APP_ENV:-development}
       - CARD_REQUIRED_ONBOARDING=${CARD_REQUIRED_ONBOARDING:-false}
+      - INDIA_PHONE_TRIAL=${INDIA_PHONE_TRIAL:-true}
+      - ROW_PHONE_TRIAL=${ROW_PHONE_TRIAL:-false}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}
@@ -99,6 +101,8 @@ services:
     environment:
       - APP_ENV=${APP_ENV:-development}
       - CARD_REQUIRED_ONBOARDING=${CARD_REQUIRED_ONBOARDING:-false}
+      - INDIA_PHONE_TRIAL=${INDIA_PHONE_TRIAL:-true}
+      - ROW_PHONE_TRIAL=${ROW_PHONE_TRIAL:-false}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}
@@ -151,6 +155,8 @@ services:
     environment:
       - APP_ENV=${APP_ENV:-development}
       - CARD_REQUIRED_ONBOARDING=${CARD_REQUIRED_ONBOARDING:-false}
+      - INDIA_PHONE_TRIAL=${INDIA_PHONE_TRIAL:-true}
+      - ROW_PHONE_TRIAL=${ROW_PHONE_TRIAL:-false}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET=${JWT_SECRET}

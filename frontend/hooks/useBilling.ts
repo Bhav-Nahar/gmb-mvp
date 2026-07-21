@@ -25,6 +25,9 @@ export interface BillingStatus {
   location_reassign_available_at?: string | null;
   // Onboarding audit sync: 'syncing' | 'ready' | 'failed' | 'idle'. Gates the paywall.
   onboarding_sync_status?: 'syncing' | 'ready' | 'failed' | 'idle';
+  // Runtime flags (super-admin toggles): which regions get the no-card phone trial UI.
+  india_phone_trial?: boolean;
+  row_phone_trial?: boolean;
 }
 
 export interface Quote {
@@ -123,6 +126,15 @@ export function useCheckoutSubscription() {
         // Card-required onboarding sends the owner phone; ignored by the legacy flow.
         ...(data.phone ? { phone: data.phone } : {}),
       })
+  });
+}
+
+export function useStartPhoneTrial() {
+  return useMutation({
+    // India-only: a +91 phone starts the trial with no card/UPI. The server
+    // re-checks the country code, so non-India numbers get a 400 (card_required).
+    mutationFn: (data: { phone: string }) =>
+      api.post<{ activated: boolean; trial_ends_at: string }>('/billing/start-phone-trial', data)
   });
 }
 

@@ -26,7 +26,8 @@ from app.models.audit_log import AuditLog
 from app.models.sync_log import SyncLog
 from app.models.organization_sync_state import OrganizationSyncState
 from app.models.billing_transaction import BillingTransaction
-from app.schemas.admin import OrgUpdate, AdminUserUpdate, LocationUpdate, AdminActionBody
+from app.schemas.admin import OrgUpdate, AdminUserUpdate, LocationUpdate, AdminActionBody, FlagsUpdate
+from app.services.app_settings import india_phone_trial_enabled, row_phone_trial_enabled, set_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,6 +78,42 @@ def _org_row(org, user_count, location_count):
         "created_at": org.created_at,
         "deleted_at": org.deleted_at,
     }
+
+
+def _effective_flags(db: Session) -> dict:
+    return {
+        "india_phone_trial": india_phone_trial_enabled(db),
+        "row_phone_trial": row_phone_trial_enabled(db),
+    }
+
+
+@router.get("/flags")
+def get_flags(db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    """Global runtime feature flags (effective value: DB override or env default)."""
+    return _effective_flags(db)
+
+
+@router.patch("/flags")
+def update_flags(
+    body: FlagsUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Flip global feature flags live. Phone-trial flags: ON = that region starts the
+    trial with a phone number only; OFF = it goes through the Razorpay checkout."""
+    changes = {k: v for k, v in body.model_dump(exclude={"reason"}).items() if v is not None}
+    if not changes:
+        raise HTTPException(status_code=400, detail="no_flags: provide at least one flag to update.")
+    for key, value in changes.items():
+        set_flag(db, key, value)
+    # Global flags, but AuditLog.organization_id is NOT NULL — log against the actor's
+    # own org so the override is still never silent.
+    if admin.organization_id:
+        _audit(db, actor=admin, organization_id=admin.organization_id,
+               action="flags.update", changes=changes,
+               reason=body.reason or "super-admin toggle")
+    db.commit()
+    return _effective_flags(db)
 
 
 @router.get("/metrics")

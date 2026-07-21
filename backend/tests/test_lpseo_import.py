@@ -50,15 +50,27 @@ def _seed(db, **kw):
 
 
 def test_import_creates_with_defaults_and_revalidates(db, monkeypatch):
+    # quality_score is required to import a NEW page as published (publish gate).
     result, touched = _run_import(
-        db, ["industry_label", "city_label", "country", "status"],
-        [["Plumbers", "Delhi", "in", "published"]], monkeypatch,
+        db, ["industry_label", "city_label", "country", "status", "quality_score"],
+        [["Plumbers", "Delhi", "in", "published", "85"]], monkeypatch,
     )
     assert result["created"] == 1 and result["updated"] == 0 and result["failed"] == 0
     page = db.query(LpseoPage).filter(LpseoPage.slug == "plumbers-in-delhi").one()
     assert page.country == "in" and page.status == LpseoPageStatus.PUBLISHED.value
     assert page.h1 and page.meta_title  # auto-filled defaults
     assert any(t["slug"] == "plumbers-in-delhi" for t in touched)  # published -> revalidated
+
+
+def test_import_new_published_page_requires_quality_score(db, monkeypatch):
+    # An unscored row can't create a page straight to published — null quality_score
+    # would bypass the >=80 index gate and put a thin page in front of Google.
+    result, touched = _run_import(
+        db, ["industry_label", "city_label", "country", "status"],
+        [["Plumbers", "Delhi", "in", "published"]], monkeypatch,
+    )
+    assert result["failed"] == 1 and result["created"] == 0
+    assert touched == []
 
 
 def test_import_rejects_cross_country_slug(db, monkeypatch):

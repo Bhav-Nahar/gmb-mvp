@@ -40,6 +40,30 @@ interface Metrics {
   credits_in_circulation: number
 }
 
+interface Flags {
+  india_phone_trial: boolean
+  row_phone_trial: boolean
+}
+
+// Phone-trial flags. `whenOn` / `whenOff` describe the actual behaviour in each state,
+// so the panel can show a live "Right now: …" line instead of an abstract ON/OFF label.
+const FLAG_META: { key: keyof Flags; title: string; region: string; whenOn: string; whenOff: string }[] = [
+  {
+    key: 'india_phone_trial',
+    title: 'India trial sign-up',
+    region: 'Customers with a +91 phone number',
+    whenOn: 'start the trial with just their phone number — no card or UPI needed.',
+    whenOff: 'must add a card or UPI mandate before the trial starts.',
+  },
+  {
+    key: 'row_phone_trial',
+    title: 'Rest-of-world trial sign-up',
+    region: 'Customers outside India (non-+91 number)',
+    whenOn: 'start the trial with just their phone number — no card needed.',
+    whenOff: 'must add a card before the trial starts.',
+  },
+]
+
 const STATUS_STYLES: Record<string, string> = {
   active: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
   trial: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
@@ -65,6 +89,23 @@ export default function AdminOrgsPage() {
   const [showDeleted, setShowDeleted] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // Global runtime flags: which regions start the trial with a phone number only
+  // (no card/UPI mandate). Null until loaded.
+  const [flags, setFlags] = useState<Flags | null>(null)
+  const [flagSaving, setFlagSaving] = useState<keyof Flags | null>(null)
+
+  const toggleFlag = async (key: keyof Flags) => {
+    if (!flags || flagSaving) return
+    setFlagSaving(key)
+    try {
+      const r = await api.patch<Flags>('/admin/flags', { [key]: !flags[key] })
+      setFlags(r)
+    } catch (e: any) {
+      setError(e.message || 'Failed to update flag')
+    } finally {
+      setFlagSaving(null)
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -74,13 +115,15 @@ export default function AdminOrgsPage() {
       if (q.trim()) params.q = q.trim()
       if (statusFilter) params.subscription_status = statusFilter
       if (showDeleted) params.deleted = 'only'
-      const [m, list] = await Promise.all([
+      const [m, list, flags] = await Promise.all([
         api.get<Metrics>('/admin/metrics'),
         api.get<{ total: number; items: OrgRow[] }>('/admin/organizations', params),
+        api.get<Flags>('/admin/flags'),
       ])
       setMetrics(m)
       setOrgs(list.items)
       setTotal(list.total)
+      setFlags(flags)
     } catch (e: any) {
       setError(e.message || 'Failed to load')
     } finally {
@@ -121,6 +164,40 @@ export default function AdminOrgsPage() {
               <div className={`text-xl font-bold mt-1 ${c.alert && c.value > 0 ? 'text-red-600' : ''}`}>{c.value}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {flags && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {FLAG_META.map((f) => {
+            const on = flags[f.key]
+            return (
+              <div key={f.key} className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                <div className="space-y-1.5">
+                  <div className="text-sm font-semibold">{f.title}</div>
+                  {/* Live description of what is happening right now, not an abstract ON/OFF rule. */}
+                  <p className="text-xs text-muted-foreground">
+                    Right now: <span className="font-medium text-foreground">{f.region} {on ? f.whenOn : f.whenOff}</span>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground/80">
+                    Turning this {on ? 'OFF' : 'ON'} will instead mean they {on ? f.whenOff : f.whenOn}
+                  </p>
+                </div>
+                <button
+                  onClick={() => toggleFlag(f.key)}
+                  disabled={flagSaving !== null}
+                  title={on ? 'Click to require a card' : 'Click to allow phone-only sign-up'}
+                  className={`shrink-0 rounded-full border px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition disabled:opacity-50 ${
+                    on
+                      ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                      : 'bg-red-500/10 text-red-600 border-red-500/20'
+                  }`}
+                >
+                  {flagSaving === f.key ? '…' : on ? 'Phone only' : 'Card required'}
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 

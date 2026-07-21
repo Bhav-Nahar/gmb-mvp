@@ -62,3 +62,4 @@ __all__ = [
     "Holiday", "PseoPage", "LpseoPage"
 ]
 
+from app.models.app_setting import AppSetting

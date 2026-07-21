@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.db.session import get_db
-from app.api.deps import staff_required, get_current_user, require_location_access
+from app.api.deps import staff_required, get_current_user, require_location_access, require_premium
 import app.api.deps as deps_module
 
 
@@ -57,6 +57,9 @@ def client(fake_admin_user, monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: fake_admin_user
     # The endpoint reads location.id from the require_location_access dependency.
     app.dependency_overrides[require_location_access] = lambda: SimpleNamespace(id=42)
+    # Billing gate is env-dependent (CARD_REQUIRED_ONBOARDING) and the MagicMock db
+    # would feed it the health-score stub as an "org" — not what this test exercises.
+    app.dependency_overrides[require_premium] = lambda: None
     try:
         yield TestClient(app)
     finally:

@@ -38,7 +38,10 @@ def normalize_phone(raw: str | None) -> str | None:
     
     # If no leading +, assume +91
     if not clean.startswith("+"):
-        clean = "+91" + clean.lstrip("0")
+        clean = clean.lstrip("0")
+        if len(clean) == 12 and clean.startswith("91"):
+            clean = clean[2:]  # country code typed without '+' (e.g. "0919876543210")
+        clean = "+91" + clean
         
     # Ensure there's only one + and it's at the start
     clean = "+" + clean.replace("+", "")
@@ -438,6 +441,80 @@ class SubscriptionService:
             if dup:
                 raise HTTPException(status_code=409,
                                     detail="trial_already_used: this phone number has already used a free trial.")
+
+    @staticmethod
+    def start_phone_trial(db: Session, org_id: int, phone: str | None) -> datetime:
+        """Phone-only trial start: a phone number alone starts the 7-day clock with NO
+        card/UPI mandate, gated per region by the runtime flags (super-admin panel /
+        env defaults): india_phone_trial for +91 numbers (default on), row_phone_trial
+        for the rest of the world (default off = card required). Payment is collected
+        via the normal checkout once the trial expires — the expiry sweep already
+        handles a mandate-less trial (no razorpay_subscription_id means no reconcile
+        step: straight to past_due -> locked). Same abuse guard as the card path: one
+        trial per Google account / phone.
+
+        ponytail: the phone is format-checked, not OTP-verified — add OTP if
+        fake-number trial farming ever shows up in the funnel."""
+        canon = normalize_phone(phone)
+        if not canon:
+            raise HTTPException(status_code=400, detail="phone_required: add your mobile number to start the trial.")
+        from app.services.app_settings import india_phone_trial_enabled, row_phone_trial_enabled
+        enabled = india_phone_trial_enabled(db) if canon.startswith("+91") else row_phone_trial_enabled(db)
+        if not enabled:
+            raise HTTPException(status_code=400, detail="card_required: a payment method is needed to start the trial.")
+
+        SubscriptionService.assert_trial_not_abused(db, org_id, canon)
+
+        # Same per-org lock as checkout so a phone trial and a card checkout can't race
+        # each other into a trial WITH a live mandate (or two trials).
+        redis_client = get_redis()
+        lock = redis_client.lock(f"lock:checkout:org_{org_id}", timeout=30)
+        if not lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=409,
+                detail="A checkout is already in progress. Please wait a moment and try again.",
+            )
+        try:
+            stmt = select(Organization).where(Organization.id == org_id).with_for_update()
+            org = db.scalars(stmt).first()
+            if not org:
+                raise HTTPException(status_code=404, detail="Organization not found")
+            if not (settings.CARD_REQUIRED_ONBOARDING
+                    and org.subscription_status == "trial"
+                    and org.trial_ends_at is None):
+                raise HTTPException(status_code=400, detail="not_onboarding: the trial has already started or a subscription exists.")
+            active_locations = db.query(Location).filter(
+                Location.organization_id == org_id,
+                Location.billing_status == "active",
+            ).count()
+            if active_locations < 1:
+                # Don't let a 0-location org consume its one free trial with nothing to audit.
+                raise HTTPException(
+                    status_code=400,
+                    detail="no_locations: connect a Google Business Profile with at least one location first.",
+                )
+
+            # An abandoned card checkout may have left an un-charged mandate; cancel it so
+            # a later approval can't debit a user who chose the no-card trial.
+            if org.razorpay_subscription_id:
+                try:
+                    client = SubscriptionService.get_razorpay_client()
+                    prev = client.subscription.fetch(org.razorpay_subscription_id)
+                    if prev.get("status") in ("created", "authenticated"):
+                        client.subscription.cancel(org.razorpay_subscription_id, {"cancel_at_cycle_end": 0})
+                except Exception as e:
+                    logger.warning("Could not cancel abandoned mandate %s for org %s: %s",
+                                   org.razorpay_subscription_id, org_id, e)
+                org.razorpay_subscription_id = None
+
+            org.trial_ends_at = datetime.now(timezone.utc) + timedelta(days=plan_config.TRIAL_DAYS)
+            db.commit()
+            return org.trial_ends_at
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
 
     @staticmethod
     def create_remandate_subscription(
