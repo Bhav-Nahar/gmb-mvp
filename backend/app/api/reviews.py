@@ -343,12 +343,24 @@ def retag_sentiment(
     then enqueue the sentiment tagging task.
     """
     location_id = location.id
-    # Reset all non-deleted reviews so they get re-tagged
+    # One retag per location per day: each run pushes EVERY review back through the
+    # paid LLM (a big location = thousands of calls), so it must not be spammable.
+    from app.core.redis_client import get_redis
+    try:
+        allowed = get_redis().set(f"retag_sentiment:loc_{location_id}", "1", nx=True, ex=86400)
+    except Exception:
+        allowed = True  # Redis hiccup: fail open, same policy as the public rate limiter
+    if not allowed:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Sentiment was already re-tagged for this location in the last 24 hours.")
+
+    # Reset all non-deleted reviews so they get re-tagged; a manual retag also grants
+    # previously-abandoned reviews a fresh set of attempts.
     db.query(Review).filter(
         Review.location_id == location_id,
         Review.organization_id == current_user.organization_id,
         Review.is_deleted == False
-    ).update({Review.sentiment_tagged_at: None}, synchronize_session=False)
+    ).update({Review.sentiment_tagged_at: None, Review.sentiment_attempts: 0}, synchronize_session=False)
     db.commit()
 
     celery_app.send_task(

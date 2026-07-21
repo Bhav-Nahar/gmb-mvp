@@ -44,6 +44,10 @@ class Review(Base):
     sentiment           = Column(String,                  nullable=True, index=True)
     issue_category      = Column(String,                  nullable=True, index=True)
     sentiment_tagged_at = Column(DateTime(timezone=True), nullable=True)
+    # Failed tagging attempts. Reviews at MAX_SENTIMENT_ATTEMPTS (sentiment_service)
+    # are excluded from the hourly retry sweep — without this, a permanently-failing
+    # batch was retried through the paid LLM every hour forever.
+    sentiment_attempts = Column(Integer, default=0, server_default=text("0"), nullable=False)
 
     organization = relationship("Organization", back_populates="reviews")
     location = relationship("Location", back_populates="reviews")

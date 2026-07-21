@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 # max_tokens budget below so the two can never drift (a stale "5" in the docstring
 # vs a real "15" once made truncation silent — see _tag_batch).
 SENTIMENT_BATCH_SIZE = 15
+# A review that fails tagging this many times is abandoned (kept untagged, excluded
+# from the hourly retry sweep) instead of burning a paid LLM call every hour forever.
+MAX_SENTIMENT_ATTEMPTS = 5
+
+
+def _bump_attempts(db: Session, reviews: list[Review]) -> None:
+    """Count a failed attempt toward MAX_SENTIMENT_ATTEMPTS for each review."""
+    for r in reviews:
+        r.sentiment_attempts = (r.sentiment_attempts or 0) + 1
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
 # Worst-case completion tokens for one classified review (its JSON object plus the
 # array punctuation). max_tokens is sized to the batch from this so a full batch's
 # JSON array is never truncated mid-output (which would drop the whole batch).
@@ -71,7 +84,10 @@ async def tag_reviews_sentiment(reviews: list[Review], db: Session) -> None:
     chunk (as we used to) multiplied calls into an unbounded paid-LLM storm whenever
     Groq was unhealthy — the hourly sweep already provides bounded, idempotent retry.
     """
-    untagged = [r for r in reviews if r.sentiment_tagged_at is None]
+    untagged = [
+        r for r in reviews
+        if r.sentiment_tagged_at is None and (r.sentiment_attempts or 0) < MAX_SENTIMENT_ATTEMPTS
+    ]
 
     if not untagged:
         return
@@ -144,10 +160,12 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
         items: list[Any] = json.loads(cleaned)
     except json.JSONDecodeError as e:
         logger.error("Failed to parse LLM JSON response for sentiment batch: %s", str(e))
+        _bump_attempts(db, reviews)
         return
 
     if not isinstance(items, list):
         logger.error("LLM sentiment response was not a JSON array — skipping batch.")
+        _bump_attempts(db, reviews)
         return
 
     # Build a lookup map for the batch
@@ -191,14 +209,18 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
         review.sentiment_tagged_at = datetime.now(timezone.utc)
         valid_updates.append(review)
 
-    if not valid_updates:
-        return
+    if valid_updates:
+        for r in valid_updates:
+            db.add(r)
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error("DB error committing sentiment updates: %s", str(e))
 
-    for r in valid_updates:
-        db.add(r)
-
-    try:
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.error("DB error committing sentiment updates: %s", str(e))
+    # Anything the LLM skipped/mislabeled stays untagged — count the attempt so
+    # the hourly sweep can't retry the same failing reviews forever.
+    tagged_ids = {r.id for r in valid_updates}
+    leftovers = [r for r in reviews if r.id not in tagged_ids]
+    if leftovers:
+        _bump_attempts(db, leftovers)

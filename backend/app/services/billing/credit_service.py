@@ -91,19 +91,17 @@ class CreditService:
             yield
             return
 
-        CreditService.precheck(db, org_id, credits_required)
-
-        # Run the work; if it raises, we never reach the deduction below.
-        yield
-
-        # Deduct after success: monthly balance first, then top-up.
-        stmt = select(Organization).where(Organization.id == org_id).with_for_update()
-        org = db.scalars(stmt).first()
-        if not org:
-            return
-        from_monthly = min(org.monthly_ai_credits_balance, credits_required)
-        org.monthly_ai_credits_balance -= from_monthly
-        remaining = credits_required - from_monthly
-        if remaining > 0:
-            org.topup_ai_credits_balance = max(0, org.topup_ai_credits_balance - remaining)
+        # Atomic debit BEFORE the work, refund if it raises. The old shape
+        # (unlocked precheck + deduct-after-success) let N parallel requests with
+        # 1 credit left all pass the check and all reach the LLM — reserve() does
+        # the check and debit together under the org row lock.
+        CreditService.reserve(db, org_id, credits_required)
+        try:
+            yield
+        except BaseException:
+            db.rollback()  # discard any half-done work added inside the block
+            CreditService.refund(db, org_id, credits_required)
+            raise
+        # Clean exit: commit work added inside the block (e.g. the generation row)
+        # exactly like the old deduct-after commit did.
         db.commit()
