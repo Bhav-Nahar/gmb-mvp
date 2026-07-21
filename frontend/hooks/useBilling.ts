@@ -28,6 +28,8 @@ export interface BillingStatus {
   // Runtime flags (super-admin toggles): which regions get the no-card phone trial UI.
   india_phone_trial?: boolean;
   row_phone_trial?: boolean;
+  // A Razorpay mandate exists: the trial converts (first charge) automatically at trial end.
+  has_mandate?: boolean;
 }
 
 export interface Quote {

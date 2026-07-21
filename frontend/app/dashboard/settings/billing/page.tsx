@@ -294,11 +294,22 @@ export default function BillingPage() {
   const monthlyAllowance = billing.monthly_ai_credits_allowance ?? 0;
   const monthlyBalance = billing.monthly_ai_credits_balance ?? 0;
 
+  // A running trial must say what happens next — "Trial" + "No active subscription"
+  // told the user nothing about when (or whether) they'd be charged.
+  const trialLine =
+    billing.subscription_status === 'trial' && billing.trial_ends_at
+      ? billing.has_mandate
+        ? `Free trial until ${formatDate(billing.trial_ends_at)} — your subscription starts that day with the first charge. Cancel anytime before then.`
+        : `Free trial until ${formatDate(billing.trial_ends_at)} — choose a plan before then to continue (nothing is charged automatically).`
+      : null;
+
   const renewalDate = billing.subscription_ends_at
     ? `Cancels ${formatDate(billing.subscription_ends_at)}`
-    : billing.current_period_end
-      ? `Renews ${formatDate(billing.current_period_end)}`
-      : null;
+    : trialLine
+      ? trialLine
+      : billing.current_period_end
+        ? `Renews ${formatDate(billing.current_period_end)}`
+        : null;
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">

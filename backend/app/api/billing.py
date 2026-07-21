@@ -357,6 +357,9 @@ def get_billing_status(
         "ai_credits_reset_date": org.ai_credits_reset_date,
         "current_period_end": org.ai_credits_reset_date,
         "trial_ends_at": org.trial_ends_at,
+        # Whether a Razorpay mandate is attached: a card/UPI trial converts (and
+        # charges) automatically at trial end; a phone trial must checkout first.
+        "has_mandate": bool(org.razorpay_subscription_id),
         "grace_period_ends_at": org.grace_period_ends_at,
         "subscription_ends_at": org.subscription_ends_at,
         # UPI re-mandate: the banner uses these to prompt the user to approve the new
