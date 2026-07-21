@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, ShieldCheck, Sparkles } from 'lucide-react'
-import { useCheckoutSubscription, useConfirmPayment, useQuote, useAuditSummary } from '@/hooks/useBilling'
+import { useCheckoutSubscription, useConfirmPayment, useQuote, useAuditSummary, useStartPhoneTrial, useBillingStatus } from '@/hooks/useBilling'
 import { useRazorpay } from '@/hooks/useRazorpay'
 import { useAuth } from '@/hooks/useAuth'
 import { isPaymentVerificationError, PAYMENT_VERIFICATION_FAILED_MSG } from '@/lib/payment'
@@ -32,6 +32,7 @@ export function OnboardingGate({ locations }: { locations: number }) {
   const { user } = useAuth()
   const { mutateAsync: checkoutSubscription } = useCheckoutSubscription()
   const { mutateAsync: confirmPayment } = useConfirmPayment()
+  const { mutateAsync: startPhoneTrial } = useStartPhoneTrial()
   const { openRazorpay } = useRazorpay()
   const queryClient = useQueryClient()
   const [submitting, setSubmitting] = useState(false)
@@ -39,6 +40,15 @@ export function OnboardingGate({ locations }: { locations: number }) {
   const [countryCode, setCountryCode] = useState(() => parsePhoneState(user?.phone).code)
   const [phoneDigits, setPhoneDigits] = useState(() => parsePhoneState(user?.phone).digits)
   const phoneOk = phoneDigits.length >= 7 && phoneDigits.length <= 15
+  // Whether the selected region gets the no-card trial (phone number only) — decided by
+  // the runtime flags (super-admin toggles, served via /billing/status — same cached
+  // query the parent already fetched): india_phone_trial for +91 (default on),
+  // row_phone_trial for everyone else (default off = card/UPI mandate). The backend
+  // re-derives both the country and the flags server-side, so this is UX only.
+  const { data: billing } = useBillingStatus()
+  const noCardTrial = countryCode === '+91'
+    ? (billing?.india_phone_trial ?? true)
+    : (billing?.row_phone_trial ?? false)
 
   const count = Math.max(1, locations || 1)
   const { data: quote } = useQuote(count, 'monthly', 'basic', true)
@@ -71,6 +81,23 @@ export function OnboardingGate({ locations }: { locations: number }) {
     if (submitting) return
     if (!phoneOk) {
       toast.error('Please enter a valid mobile number to start your trial.')
+      return
+    }
+    if (noCardTrial) {
+      // No-card region: the phone number alone starts the trial — no Razorpay, no mandate.
+      setSubmitting(true)
+      trackBeginCheckout({ user_id: user?.id, email: user?.email })
+      try {
+        await startPhoneTrial({ phone: `${countryCode}${phoneDigits}` })
+        trackTrialStart({ user_id: user?.id ?? '', email: user?.email, locationsCount: count })
+        toast.success('Your free trial is active. Welcome in.')
+      } catch (error: any) {
+        toast.error(error?.message || 'We could not start your trial. Please try again.')
+      } finally {
+        setSubmitting(false)
+        queryClient.invalidateQueries({ queryKey: ['billing_status'] })
+        window.dispatchEvent(new Event('billing:refresh'))
+      }
       return
     }
     const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY
@@ -219,12 +246,14 @@ export function OnboardingGate({ locations }: { locations: number }) {
                 <div className="flex items-baseline justify-between">
                   <span className="text-base font-bold">7 days free</span>
                   <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                    No charge today
+                    {noCardTrial ? 'No card needed' : 'No charge today'}
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {monthly !== undefined
-                    ? `Then ₹${monthly.toLocaleString('en-IN')} per month. Cancel anytime.`
+                    ? noCardTrial
+                      ? `Then ₹${monthly.toLocaleString('en-IN')} per month — pay only if you continue.`
+                      : `Then ₹${monthly.toLocaleString('en-IN')} per month. Cancel anytime.`
                     : 'Cancel anytime before your trial ends.'}
                 </p>
               </div>
@@ -243,7 +272,9 @@ export function OnboardingGate({ locations }: { locations: number }) {
               <div className="space-y-2 text-center text-xs text-muted-foreground">
                 <p className="flex items-center justify-center gap-1.5">
                   <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                  Secure checkout via Razorpay. A ₹5 verification may appear and is refunded automatically.
+                  {noCardTrial
+                    ? 'No card or UPI needed — your trial starts instantly.'
+                    : 'Secure checkout via Razorpay. A ₹5 verification may appear and is refunded automatically.'}
                 </p>
                 <p className="text-[10px] leading-relaxed px-4">
                   By starting your trial, you agree to receive onboarding support, audit reports, and critical alerts via WhatsApp & SMS.

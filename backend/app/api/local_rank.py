@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -49,6 +50,22 @@ def start_local_rank_scan(
     if not has_coords and not has_address:
         raise HTTPException(status_code=400,
                             detail="This location has no coordinates or address yet. Sync it from Google first.")
+
+    # Reuse a fresh identical scan: same keyword/grid/radius within the TTL returns
+    # the existing scan (Pending → client polls it, Completed → instant results)
+    # instead of paying DataForSEO grid_size² tasks again for the same answer.
+    RESCAN_TTL_HOURS = 6  # ponytail: fixed TTL; make it a setting if plans ever differ
+    keyword = body.keyword.strip()
+    recent = db.query(LocalRankScan).filter(
+        LocalRankScan.location_id == location_id,
+        LocalRankScan.keyword == keyword,
+        LocalRankScan.grid_size == body.grid_size,
+        LocalRankScan.radius_miles == body.radius_miles,
+        LocalRankScan.status.in_(["Pending", "Completed"]),
+        LocalRankScan.created_at >= datetime.now(timezone.utc) - timedelta(hours=RESCAN_TTL_HOURS),
+    ).order_by(LocalRankScan.id.desc()).first()
+    if recent:
+        return recent
 
     price = scan_price(body.grid_size)
     # Guard real money: refuse to queue a scan the org can't afford / is locked.

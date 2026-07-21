@@ -104,6 +104,34 @@ class LocationOut(ORMBase):
     # Embedded Microsite Status
     microsite_status: Optional[str] = None
 
+class LocationListOut(ORMBase):
+    """Slim row for GET /locations/ (the dashboard list). The JSONB/detail fields
+    (hours, service_items, description, latlng, ...) live only on LocationOut via
+    GET /locations/{id} — no list consumer reads them (verified across the frontend),
+    and at 4k locations they were ~90% of the list payload/egress."""
+    id: int
+    google_location_id: str
+    location_name: str
+    primary_category: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    website: Optional[str] = None
+    average_rating: Optional[float] = None
+    total_reviews: Optional[int] = None
+    sync_status: str
+    billing_status: str = "active"
+    last_synced_at: Optional[datetime] = None
+    sla_tracking_started_at: Optional[datetime] = None
+    created_at: datetime
+    latest_sync_status: Optional[str] = None
+    latest_sync_error: Optional[str] = None
+    is_verified: Optional[bool] = None
+    is_suspended: Optional[bool] = None
+    is_duplicate: Optional[bool] = None
+    health_score: Optional[int] = None
+    health_score_label: Optional[str] = None
+    microsite_status: Optional[str] = None
+
 # SyncLog schemas
 class SyncLogOut(ORMBase):
     id: int

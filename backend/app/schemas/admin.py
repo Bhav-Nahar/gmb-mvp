@@ -40,6 +40,14 @@ class LocationUpdate(BaseModel):
     reason: Optional[str] = None
 
 
+class FlagsUpdate(BaseModel):
+    """Global runtime feature-flag overrides (stored in app_settings). Send only the
+    flag(s) being changed; omitted flags keep their current value."""
+    india_phone_trial: Optional[bool] = None
+    row_phone_trial: Optional[bool] = None
+    reason: Optional[str] = None
+
+
 class AdminActionBody(BaseModel):
     """Optional body carrying an audit reason for action endpoints (sync/reset)."""
     reason: Optional[str] = None

@@ -58,7 +58,10 @@ class EntitlementService:
             # unexpiring trial forever.
             if org.trial_ends_at is None:
                 from app.core.plan_config import PENDING_TRIAL_MAX_DAYS
-                if org.created_at and org.created_at < now - timedelta(days=PENDING_TRIAL_MAX_DAYS):
+                created = org.created_at
+                if created is not None and created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)  # naive rows (SQLite tests)
+                if created and created < now - timedelta(days=PENDING_TRIAL_MAX_DAYS):
                     return True
                 return False
             if org.trial_ends_at < now:

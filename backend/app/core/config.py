@@ -200,6 +200,13 @@ class Settings(BaseSettings):
     # flag and the legacy branches once fully cut over.
     CARD_REQUIRED_ONBOARDING: bool = False
 
+    # Phone-only trial split of the card-required flow (both are ENV DEFAULTS — the
+    # super-admin panel's app_settings override wins at runtime; only meaningful while
+    # CARD_REQUIRED_ONBOARDING is on). ON = a phone number alone starts the trial with
+    # no card/UPI mandate; OFF = that region goes through the Razorpay mandate checkout.
+    INDIA_PHONE_TRIAL: bool = True   # +91 numbers
+    ROW_PHONE_TRIAL: bool = False    # rest of world
+
     # Server-side conversions (fired from the Razorpay webhook). All blank by default —
     # each integration stays inert until its credentials are provided.
     # Meta Conversions API

@@ -1061,11 +1061,13 @@ def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> 
         # - not soft deleted
         # TODO (future): also include reviews where review_updated_at > sentiment_tagged_at
         # to automatically re-classify reviews whose text changed after initial tagging.
+        from app.services.sentiment_service import MAX_SENTIMENT_ATTEMPTS
         untagged_reviews = db.query(Review).filter(
             Review.location_id == location_id,
             Review.organization_id == organization_id,
             Review.sentiment_tagged_at == None,  # noqa: E711
-            Review.is_deleted == False
+            Review.is_deleted == False,
+            Review.sentiment_attempts < MAX_SENTIMENT_ATTEMPTS,
         ).all()
 
         if not untagged_reviews:
@@ -3240,14 +3242,29 @@ def retry_failed_sentiment_beat_task() -> dict:
     
     db = SessionLocal()
     try:
-        # Find locations with untagged reviews
+        from app.services.sentiment_service import MAX_SENTIMENT_ATTEMPTS
+        from app.services.billing.entitlement_service import EntitlementService
+        from app.models.organization import Organization
+
+        # Find locations with untagged reviews that haven't exhausted their attempts
         untagged_locations = db.query(Review.location_id, Review.organization_id).filter(
             Review.sentiment_tagged_at == None,
-            Review.is_deleted == False
+            Review.is_deleted == False,
+            Review.sentiment_attempts < MAX_SENTIMENT_ATTEMPTS,
         ).distinct().all()
+
+        # Locked/expired orgs get no paid LLM work (same gate the sync beats use).
+        org_ids = {org_id for _, org_id in untagged_locations}
+        unlocked_org_ids = set()
+        if org_ids:
+            for org in db.query(Organization).filter(Organization.id.in_(org_ids)).all():
+                if not EntitlementService.is_org_locked(org):
+                    unlocked_org_ids.add(org.id)
 
         enqueued = 0
         for loc_id, org_id in untagged_locations:
+            if org_id not in unlocked_org_ids:
+                continue
             tag_reviews_sentiment_task.delay(loc_id, org_id)
             enqueued += 1
 

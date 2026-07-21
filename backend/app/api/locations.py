@@ -13,7 +13,7 @@ from app.models.oauth_account import OAuthAccount
 from app.models.location import Location
 from app.core.roles import ADMIN_ROLES
 from app.models.sync_log import SyncLog
-from app.schemas.schemas import LocationOut, SyncLogOut, SyncLogPaginated
+from app.schemas.schemas import LocationOut, LocationListOut, SyncLogOut, SyncLogPaginated
 from app.schemas.location import LocationSyncStatus, LocationHealthScoreOut, OrganizationHealthSummaryOut
 from app.schemas.sla import LocationSLAMetrics, LocationSLASummary
 from app.services.sla_service import get_location_sla_metrics, get_organization_sla_summary
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-@router.get("/", response_model=List[LocationOut])
+@router.get("/", response_model=List[LocationListOut])
 def get_locations(
     db: Session = Depends(get_db),
     current_user: User = Depends(staff_required)
@@ -57,13 +57,19 @@ def get_locations(
         .outerjoin(LocationHealthScore, LocationHealthScore.location_id == Location.id)
         .outerjoin(Microsite, Microsite.location_id == Location.id)
         .filter(Location.organization_id == current_user.organization_id)
-        # These blobs (raw GBP payload + attribute sets) aren't in LocationOut; at
-        # 4k+ locations they made the response set big enough that the Supabase
-        # pooler dropped the connection ("SSL SYSCALL error: EOF detected").
+        # Load only what LocationListOut serializes. The JSONB/detail columns
+        # (gbp_raw, hours, service_items, description, ...) were ~90% of both the
+        # Supabase->app transfer (the old full SELECT killed the pooler connection:
+        # "SSL SYSCALL error: EOF detected") and the app->browser egress.
         .options(
-            defer(Location.gbp_raw),
-            defer(Location.google_attributes),
-            defer(Location.draft_attributes),
+            load_only(
+                Location.id, Location.google_location_id, Location.location_name,
+                Location.primary_category, Location.address, Location.phone,
+                Location.website, Location.average_rating, Location.total_reviews,
+                Location.sync_status, Location.billing_status, Location.last_synced_at,
+                Location.sla_tracking_started_at, Location.created_at,
+                Location.is_verified, Location.is_suspended, Location.is_duplicate,
+            )
         )
     )
 
@@ -82,7 +88,7 @@ def get_locations(
 
     out = []
     for location, latest_sync_status, latest_sync_error, health_score, health_score_label, microsite_status in results:
-        loc_out = LocationOut.model_validate(location)
+        loc_out = LocationListOut.model_validate(location)
         loc_out.latest_sync_status = latest_sync_status
         loc_out.latest_sync_error = latest_sync_error
         if not hide_premium:
