@@ -199,12 +199,25 @@ def list_organizations(
 
 
 @router.get("/organizations/{org_id}")
-def get_organization(org_id: int, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+def get_organization(
+    org_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(superadmin_required),
+    user_limit: int = Query(25, ge=1, le=200),
+    user_offset: int = Query(0, ge=0),
+):
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    users = db.query(User).filter(User.organization_id == org_id).order_by(User.created_at.asc()).all()
+    # Paged: an agency org can have hundreds of seats, and this endpoint previously
+    # serialized every one of them on every page load.
+    users_query = db.query(User).filter(User.organization_id == org_id)
+    users_total = users_query.count()
+    users = (
+        users_query.order_by(User.created_at.asc())
+        .limit(user_limit).offset(user_offset).all()
+    )
     locations = db.query(Location).filter(Location.organization_id == org_id).all()
     transactions = (
         db.query(BillingTransaction)
@@ -235,6 +248,9 @@ def get_organization(org_id: int, db: Session = Depends(get_db), _: User = Depen
 
     return {
         "organization": org_detail,
+        "users_total": users_total,
+        "users_limit": user_limit,
+        "users_offset": user_offset,
         "users": [
             {
                 "id": u.id, "email": u.email, "name": u.name, "role": u.role,

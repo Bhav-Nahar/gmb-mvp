@@ -37,7 +37,9 @@ interface OrgLocation { id: number; location_name: string; billing_status: strin
 interface OrgTx { id: number; type: string | null; amount_paise: number | null; credits: number | null; status: string | null; source: string | null; invoice_url: string | null; created_at: string }
 interface OrgAudit { id: number; action: string; details: string | null; actor_user_id: number | null; target_user_id: number | null; created_at: string }
 interface OrgSyncState { sync_in_progress: boolean; sync_started_at: string | null; last_sync_status: string | null; last_sync_error: string | null; last_review_sync_at: string | null }
-interface DetailResponse { organization: OrgDetail; users: OrgUser[]; locations: OrgLocation[]; transactions: OrgTx[]; audit: OrgAudit[]; sync_state: OrgSyncState }
+interface DetailResponse { organization: OrgDetail; users: OrgUser[]; users_total: number; users_limit: number; users_offset: number; locations: OrgLocation[]; transactions: OrgTx[]; audit: OrgAudit[]; sync_state: OrgSyncState }
+
+const USERS_PAGE_SIZE = 25
 
 const ROLES = ['Owner', 'Admin', 'Regional Manager', 'Store Manager', 'Viewer']
 const inputCls = 'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30'
@@ -81,6 +83,7 @@ export default function AdminOrgDetailPage() {
   const [form, setForm] = useState<any>(null)
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
+  const [userPage, setUserPage] = useState(0)
 
   const flash = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 3500) }
 
@@ -88,7 +91,9 @@ export default function AdminOrgDetailPage() {
     setLoading(true)
     setError('')
     try {
-      const d = await api.get<DetailResponse>(`/admin/organizations/${orgId}`)
+      const d = await api.get<DetailResponse>(
+        `/admin/organizations/${orgId}?user_limit=${USERS_PAGE_SIZE}&user_offset=${userPage * USERS_PAGE_SIZE}`
+      )
       setData(d)
       const o = d.organization
       setForm({
@@ -109,7 +114,7 @@ export default function AdminOrgDetailPage() {
     }
   }
 
-  useEffect(() => { if (orgId) load() }, [orgId])
+  useEffect(() => { if (orgId) load() }, [orgId, userPage])
 
   const saveBilling = async () => {
     if (!form) return
@@ -370,7 +375,14 @@ export default function AdminOrgDetailPage() {
 
       {/* Users */}
       <section className="rounded-xl border border-border bg-card p-5">
-        <h2 className="text-sm font-bold uppercase tracking-wider mb-4">Users</h2>
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="text-sm font-bold uppercase tracking-wider">Users</h2>
+          {data.users_total > 0 && (
+            <span className="text-[11px] text-muted-foreground tabular-nums">
+              {userPage * USERS_PAGE_SIZE + 1}–{userPage * USERS_PAGE_SIZE + data.users.length} of {data.users_total}
+            </span>
+          )}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -437,6 +449,25 @@ export default function AdminOrgDetailPage() {
             </tbody>
           </table>
         </div>
+        {(userPage > 0 || data.users_total > (userPage + 1) * USERS_PAGE_SIZE) && (
+          <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
+            <button
+              onClick={() => setUserPage((p) => Math.max(0, p - 1))}
+              disabled={userPage === 0 || loading}
+              className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold hover:bg-muted/40 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <span className="text-[11px] text-muted-foreground tabular-nums">Page {userPage + 1}</span>
+            <button
+              onClick={() => setUserPage((p) => p + 1)}
+              disabled={loading || data.users_total <= (userPage + 1) * USERS_PAGE_SIZE}
+              className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold hover:bg-muted/40 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Locations & sync operations */}
