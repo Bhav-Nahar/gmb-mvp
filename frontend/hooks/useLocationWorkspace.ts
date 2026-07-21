@@ -25,7 +25,7 @@ export interface ActivityLog {
   action: string;
   entity_type: string;
   entity_id: string;
-  details: any;
+  payload: any;
   created_at: string;
 }
 

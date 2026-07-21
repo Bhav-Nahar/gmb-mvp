@@ -369,11 +369,15 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
     using the user's encrypted tokens fetched from the oauth_accounts table.
     Gracefully handles token refreshing and encryption/decryption cycles.
     """
+    import logging
     import redis
     from app.core.config import settings
     from app.models.organization_sync_state import OrganizationSyncState
     from app.services.billing.entitlement_service import EntitlementService
-    
+    from app.services import profile_change_service
+
+    logger = logging.getLogger(__name__)
+
     db: Session = SessionLocal()
     
     org = db.query(Organization).filter(Organization.id == organization_id).first()
@@ -460,6 +464,36 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             existing_loc = existing_locs_map.get(p_loc.provider_location_id)
             
             if existing_loc:
+                # Someone may have edited the live listing outside our app since the
+                # last sync (staff, a Google suggested edit, Maps feedback). Diff
+                # before we overwrite, so the owner sees it in the activity feed.
+                # SAVEPOINT, not a bare try/except: on Postgres a failed statement
+                # aborts the whole transaction, so swallowing the Python exception
+                # would leave the session unusable and take the entire org's sync
+                # down with it. begin_nested() rolls back just the detection.
+                try:
+                    with db.begin_nested():
+                        profile_change_service.detect(db, existing_loc, {
+                            "location_name": p_loc.name,
+                            "phone": p_loc.phone,
+                            "additional_phones": p_loc.additional_phones or [],
+                            "website": p_loc.website,
+                            "address": p_loc.address,
+                            "primary_category": p_loc.category,
+                            "additional_categories": p_loc.additional_categories or [],
+                            "description": p_loc.description,
+                            "business_hours": p_loc.business_hours,
+                            "special_hours": p_loc.special_hours,
+                            "open_info": p_loc.open_info,
+                            "service_area": p_loc.service_area,
+                            **({"is_verified": p_loc.is_verified,
+                                "is_suspended": p_loc.is_suspended}
+                               if p_loc.is_verified is not None else {}),
+                        })
+                except Exception:
+                    # Change detection is informational — never fail a sync over it.
+                    logger.exception("profile change detection failed for location %s", existing_loc.id)
+
                 # Update
                 existing_loc.google_account_id = p_loc.google_account_id
                 existing_loc.location_name = p_loc.name
@@ -706,6 +740,89 @@ def sync_all_organizations_task() -> str:
             triggered_count += 1
 
         return f"Triggered synchronization for {triggered_count} organizations."
+    finally:
+        db.close()
+
+
+@shared_task(name="app.tasks.check_google_updates_task")
+def check_google_updates_task(organization_id: int) -> dict:
+    """Ask Google whether it has overridden any of this org's live listings.
+
+    Deliberately NOT part of the daily location sync: this costs one extra API call
+    per location, and Google's own edits are rare and never urgent. Weekly, over
+    active locations of feature-eligible orgs only, is ~10x cheaper than riding the
+    sync and loses nothing that matters.
+    """
+    import logging
+    from app.core.config import settings
+    from app.services import profile_change_service
+    from app.services.billing.entitlement_service import EntitlementService
+
+    logger = logging.getLogger(__name__)
+    db: Session = SessionLocal()
+    try:
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        if not org or EntitlementService.is_org_locked(org):
+            return {"status": "skipped", "reason": "organization is locked"}
+        if not plan_config.plan_has_feature(org.plan_tier, plan_config.FEATURE_GOOGLE_UPDATES):
+            return {"status": "skipped", "reason": "google_updates not in plan"}
+        if not settings.GBP_GOOGLE_UPDATES_ENABLED:
+            return {"status": "skipped", "reason": "disabled"}
+
+        # Only locations we actually bill for, and only verified ones — Google has no
+        # "updated version" to report for a listing that isn't live.
+        locations = db.query(Location).filter(
+            Location.organization_id == organization_id,
+            Location.billing_status == "active",
+            Location.is_verified == True,  # noqa: E712 — SQL comparison, not a bool test
+        ).all()
+        if not locations:
+            return {"status": "success", "checked": 0, "changes": 0}
+
+        provider = ProviderFactory.get_provider("gbp", organization_id, db)
+        updated = run_async(provider.get_google_updated([l.google_location_id for l in locations]))
+
+        change_count = 0
+        for location in locations:
+            blob = updated.get(location.google_location_id)
+            if not blob:
+                continue
+            change_count += len(profile_change_service.detect_google_updates(db, location, blob))
+        db.commit()
+
+        logger.info(
+            "check_google_updates: org=%s checked=%s diverging=%s new_changes=%s",
+            organization_id, len(locations), len(updated), change_count,
+        )
+        return {"status": "success", "checked": len(locations), "changes": change_count}
+    except Exception as e:
+        db.rollback()
+        logger.error("check_google_updates failed for org %s: %s", organization_id, e, exc_info=True)
+        return {"status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
+@shared_task(name="app.tasks.check_all_google_updates_task")
+def check_all_google_updates_task() -> str:
+    """Weekly beat entry: fan out check_google_updates_task per eligible org."""
+    db: Session = SessionLocal()
+    try:
+        # Eligibility is decided by plan_has_feature, the same helper the endpoint
+        # and the per-org task use. Filtering with SQL `plan_tier IN (...)` instead
+        # would silently drop orgs whose plan_tier is NULL — plan_has_feature treats
+        # those as the default tier, so they'd pass every other gate and still never
+        # be checked.
+        rows = db.query(Organization.id, Organization.plan_tier).all()
+        org_ids = [
+            oid for oid, tier in rows
+            if plan_config.plan_has_feature(tier, plan_config.FEATURE_GOOGLE_UPDATES)
+        ]
+        # Stagger: GBP quota is per-project, so firing every org at once collides
+        # with whatever syncs and publishes are already running.
+        for i, org_id in enumerate(org_ids):
+            check_google_updates_task.apply_async(args=[org_id], countdown=i * 30)
+        return f"Queued Google-update checks for {len(org_ids)} organizations."
     finally:
         db.close()
 

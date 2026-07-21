@@ -2,8 +2,10 @@
 
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2, Sparkles } from 'lucide-react'
+import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2, Sparkles, History } from 'lucide-react'
 import Link from 'next/link'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 
 export default function Sidebar({
@@ -18,6 +20,16 @@ export default function Sidebar({
   const pathname = usePathname()
   const { user, logout } = useAuth()
 
+  // Changes detected in the last week. Deliberately decays on its own so the badge
+  // can't become a permanent number nobody is able to clear.
+  const { data: changes } = useQuery<{ count: number }>({
+    queryKey: ['profile-changes-count'],
+    queryFn: () => api.get('/profile-changes/count'),
+    enabled: !!user,
+    staleTime: 5 * 60_000,
+  })
+  const changeCount = changes?.count ?? 0
+
   const userName = user?.name || 'Google User'
   const userRole = user?.role || ''
   const userAvatar = user?.avatar || null
@@ -31,8 +43,9 @@ export default function Sidebar({
   // ponytail: nav shows every item to everyone (as before). Access is enforced on the
   // backend (403) + a friendly upgrade interstitial on gated pages — we do NOT hide nav,
   // since that surprised Basic/trial users by dropping Pro-only items like Local Rank.
-  const menuItems = [
+  const menuItems: { label: string; href: string; icon: any; badge?: number }[] = [
     { label: 'Dashboard', href: '/dashboard', icon: MapPin },
+    { label: 'Unauthorised', href: '/dashboard/changes', icon: History, badge: changeCount },
     { label: 'Leaderboard', href: '/dashboard/compare', icon: Trophy },
     { label: 'Local Rank', href: '/dashboard/local-rank', icon: Grid3x3 },
     // AI Visibility is Owner/Admin only — hide the nav item for other roles (the
@@ -131,6 +144,11 @@ export default function Sidebar({
             >
               <item.icon className={`h-4 w-4 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground/60'}`} />
               <span>{item.label}</span>
+              {!!item.badge && (
+                <span className="ml-auto rounded-full bg-primary/15 text-primary px-2 py-0.5 text-[10px] tabular-nums">
+                  {item.badge > 99 ? '99+' : item.badge}
+                </span>
+              )}
             </Link>
           )
         })}

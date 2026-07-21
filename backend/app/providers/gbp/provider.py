@@ -776,6 +776,72 @@ class GBPProvider(BaseProvider):
                 raise httpx.HTTPStatusError(f"Failed to fetch location {google_location_id}: {resp.text}", request=resp.request, response=resp)
             return resp.json()
 
+    # readMask for getGoogleUpdated — only the fields a merchant can meaningfully
+    # accept or reject. Narrower than the sync readMask on purpose: smaller responses,
+    # and we can't act on what we don't map anyway.
+    # Every field here must be resolvable by accept/reject, or we detect changes the
+    # user can only stare at. serviceArea and latlng are deliberately excluded: they
+    # have no editable column, so a divergence in them would be a permanently stuck row.
+    GOOGLE_UPDATED_READ_MASK = (
+        "name,title,categories,storefrontAddress,phoneNumbers,websiteUri,"
+        "regularHours,specialHours,openInfo,profile"
+    )
+    # GBP quota is per-project and shared with syncs/publishes running concurrently.
+    GOOGLE_UPDATED_CONCURRENCY = 8
+
+    async def get_google_updated(self, google_location_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Google's live version of each listing, where it differs from the merchant's.
+
+        `locations.list` only ever returns the merchant's version, so a change Google
+        applied from its own sources (a Maps user's suggested edit, Google's crawl) is
+        invisible to a normal sync. This is the only endpoint that reports it.
+
+        Returns {google_location_id: {"diffMask": str, "location": {...}}} containing
+        ONLY the locations that actually diverge — no entry means Google agrees.
+        """
+        access_token = await self._auth.get_valid_token()
+        if "mock_access_token" in access_token:
+            return {}
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        results: Dict[str, Dict[str, Any]] = {}
+
+        # Bounded: an unbounded gather over a large tenant queues hundreds of requests
+        # against a 100-connection pool whose pool timeout is the same 30s as the
+        # request timeout, so the overflow fails as bogus 503s after retrying.
+        semaphore = asyncio.Semaphore(self.GOOGLE_UPDATED_CONCURRENCY)
+
+        async with GBPAsyncClient(self.auth_context.organization_id) as client:
+            async def fetch(loc_id: str):
+                async with semaphore:
+                    try:
+                        url = f"https://mybusinessbusinessinformation.googleapis.com/v1/{loc_id}:getGoogleUpdated"
+                        resp = await client.request(
+                            "GET", url, headers=headers,
+                            params={"readMask": self.GOOGLE_UPDATED_READ_MASK},
+                        )
+                        data = resp.json()
+                        if data.get("diffMask"):
+                            results[loc_id] = {
+                                "diffMask": data["diffMask"],
+                                "location": data.get("location") or {},
+                            }
+                    except ProviderError as e:
+                        # The client raises on any 4xx/5xx, so status checks on the
+                        # response would be dead code. 403/404 are routine for
+                        # unverified or limited-access locations — logging those at
+                        # ERROR every week would bury the failures that matter.
+                        if e.status_code in (403, 404):
+                            logger.debug(f"getGoogleUpdated unavailable for {loc_id}: {e}")
+                        else:
+                            logger.warning(f"getGoogleUpdated failed for {loc_id}: {e}")
+                    except Exception as e:
+                        logger.error(f"Error fetching getGoogleUpdated for {loc_id}: {str(e)}")
+
+            await asyncio.gather(*(fetch(loc_id) for loc_id in google_location_ids))
+
+        return results
+
     async def get_location_attributes(self, google_location_id: str) -> Dict[str, Any]:
         access_token = await self._auth.get_valid_token()
         

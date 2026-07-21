@@ -43,6 +43,7 @@ import {
   Car,
   Mic,
   Zap,
+  History,
 } from 'lucide-react'
 import { useQuote } from '@/hooks/useBilling'
 import { INDIA_PATH, INDIA_PINS } from './indiaMap'
@@ -1019,6 +1020,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               { title: 'AEO Recommendations', badge: 'New', desc: 'Get AI-generated fixes — services to add, content to refresh, citations to claim — that make your business easier for AI engines to recommend.', icon: Zap },
               { title: 'Local SEO Health Score', badge: undefined as string | undefined, desc: 'One score per location covering completeness, consistency, freshness and reviews, so you always know what to fix first.', icon: Activity },
             ]),
+            { title: 'Unauthorised Change Alerts', badge: 'New', desc: 'Anyone can edit your listing — staff, an old agency, even Google itself from a stranger’s suggested edit. Pinzo checks daily and shows you exactly what changed, so a wrong phone number doesn’t go unnoticed for weeks.', icon: History },
             { title: 'Local Rank Tracking', badge: undefined, desc: paid ? 'See your position on Google Maps in every area you serve, so you know exactly where customers find you and where they find a competitor instead.' : 'Per-keyword heatmaps across your trade area show exactly where you win the local pack and where you are invisible.', icon: Map },
             { title: 'Lead-Capture Microsites', desc: 'A fast, SEO-friendly public page per location, with reviews, photos, hours, and a contact form that turns Google traffic into leads.', icon: Globe },
             { title: 'Unified Review Inbox', desc: 'Every Google review from all locations in one searchable inbox. Reply, track status, never miss a customer.', icon: MessageSquare },

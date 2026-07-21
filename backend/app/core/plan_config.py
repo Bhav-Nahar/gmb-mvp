@@ -84,6 +84,7 @@ FEATURE_COMPARISON = "comparison"      # competitor / location comparison
 FEATURE_LOCAL_RANK = "local_rank"      # geo-grid rank scans
 FEATURE_MICROSITE = "microsite"        # published microsite
 FEATURE_AEO = "aeo"                    # AI-search visibility (AEO) scans
+FEATURE_GOOGLE_UPDATES = "google_updates"  # detect + accept/reject Google's own edits
 
 # AEO: both Basic and Pro get one manual sync per location per calendar month.
 # The tier differs by DEPTH, not count — Basic covers Google AI surfaces only;
@@ -98,7 +99,7 @@ LIMIT_INSIGHTS_DAYS = "insights_days"        # how far back insights may look
 
 # Full-tier feature sets (Basic/Pro keep everything they have today so they never regress).
 _STANDARD_FEATURES = [FEATURE_SCHEDULER, FEATURE_TEAM, FEATURE_TEMPLATES, FEATURE_AUTO_REPLY,
-                      FEATURE_LEADERBOARD, FEATURE_COMPARISON]
+                      FEATURE_LEADERBOARD, FEATURE_COMPARISON, FEATURE_GOOGLE_UPDATES]
 
 PLANS = {
     "lite": {

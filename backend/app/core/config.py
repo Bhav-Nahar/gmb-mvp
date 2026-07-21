@@ -207,6 +207,12 @@ class Settings(BaseSettings):
     INDIA_PHONE_TRIAL: bool = True   # +91 numbers
     ROW_PHONE_TRIAL: bool = False    # rest of world
 
+    # Detect Google's own edits to a live listing (UGC / Maps / Google's sources) by
+    # calling locations:getGoogleUpdated per location during sync. Kill switch because
+    # it doubles the per-location API fan-out and GBP quota is per-project — turn off
+    # if a large tenant starts hitting rate limits.
+    GBP_GOOGLE_UPDATES_ENABLED: bool = True
+
     # Server-side conversions (fired from the Razorpay webhook). All blank by default —
     # each integration stays inert until its credentials are provided.
     # Meta Conversions API
