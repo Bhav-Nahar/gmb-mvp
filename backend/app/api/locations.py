@@ -333,7 +333,8 @@ def trigger_sync(
         .filter(
             User.organization_id == current_user.organization_id,
             User.role.in_(ADMIN_ROLES),
-            User.is_active == True
+            User.is_active == True,
+            User.deleted_at.is_(None),
         )
         .order_by(OAuthAccount.expires_at.desc(), User.id.asc())
         .first()

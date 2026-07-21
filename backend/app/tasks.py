@@ -719,7 +719,8 @@ def sync_all_organizations_task() -> str:
             .join(OAuthAccount, OAuthAccount.user_id == User.id)
             .filter(
                 User.role.in_(ADMIN_ROLES),
-                User.is_active == True
+                User.is_active == True,
+                User.deleted_at.is_(None),
             )
             .order_by(OAuthAccount.expires_at.desc())
             .all()

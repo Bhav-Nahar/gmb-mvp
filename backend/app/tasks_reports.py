@@ -131,6 +131,7 @@ def send_weekly_reports_task() -> str:
     try:
         users = db.query(User).filter(
             User.is_active == True,  # noqa: E712
+            User.deleted_at.is_(None),
             User.weekly_report_email == True,  # noqa: E712
             User.role.in_(list(STAFF_ROLES)),
         ).all()
