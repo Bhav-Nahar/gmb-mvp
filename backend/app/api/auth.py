@@ -289,6 +289,15 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                 db.add(log)
                 db.commit()
                 db.refresh(user)
+
+                # Nudge the super-admins to follow up on a fresh signup. Queued after
+                # the commit so the row is visible to the worker, and never allowed to
+                # break a login that has already succeeded.
+                try:
+                    celery.send_task("app.tasks.notify_superadmin_signup_task", args=[user.id])
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "could not queue signup notification for user %s", user.id, exc_info=True)
         else:
             # Existing user - Update profile details
             user.name = name

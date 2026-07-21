@@ -744,6 +744,58 @@ def sync_all_organizations_task() -> str:
         db.close()
 
 
+@shared_task(name="app.tasks.notify_superadmin_signup_task")
+def notify_superadmin_signup_task(user_id: int) -> dict:
+    """Tell the super-admins a new workspace signed up, so someone can follow up.
+
+    Queued rather than sent inline: this hangs off the Google OAuth callback, and a
+    third-party HTTP call there would add latency to every signup and risk failing
+    the login itself.
+    """
+    import logging
+    from html import escape
+    from app.core.config import settings
+    from app.services.email_service import send_email
+
+    logger = logging.getLogger(__name__)
+    recipients = sorted(settings.superadmin_email_set)
+    if not recipients:
+        return {"status": "skipped", "reason": "SUPERADMIN_EMAILS not configured"}
+
+    db: Session = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"status": "skipped", "reason": "user not found"}
+        org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+
+        admin_url = f"{settings.FRONTEND_URL.rstrip('/')}/admin/{user.organization_id}"
+        name, email = escape(user.name or "—"), escape(user.email or "—")
+        org_name = escape(org.name if org else "—")
+        signed_up = user.created_at.strftime("%d %b %Y, %H:%M UTC") if user.created_at else "—"
+
+        html = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px">
+  <h2 style="margin:0 0 4px">New signup — follow up</h2>
+  <p style="color:#666;margin:0 0 20px">Someone just connected Google and created a workspace.</p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:6px 0;color:#888">Name</td><td style="padding:6px 0"><b>{name}</b></td></tr>
+    <tr><td style="padding:6px 0;color:#888">Email</td><td style="padding:6px 0"><a href="mailto:{email}">{email}</a></td></tr>
+    <tr><td style="padding:6px 0;color:#888">Workspace</td><td style="padding:6px 0">{org_name}</td></tr>
+    <tr><td style="padding:6px 0;color:#888">Signed up</td><td style="padding:6px 0">{signed_up}</td></tr>
+  </table>
+  <p style="margin:24px 0 8px"><b>Reach out while they're still in the product.</b></p>
+  <a href="{admin_url}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:700">Open in admin →</a>
+</div>"""
+
+        # Display name is user-controlled and unbounded; keep the subject sane.
+        label = " ".join((user.name or user.email or "").split())[:60] or "new user"
+        sent = send_email(recipients, f"New signup: {label} — follow up", html)
+        logger.info("signup notification for user=%s sent=%s", user_id, sent)
+        return {"status": "success" if sent else "failed", "recipients": len(recipients)}
+    finally:
+        db.close()
+
+
 @shared_task(name="app.tasks.check_google_updates_task")
 def check_google_updates_task(organization_id: int) -> dict:
     """Ask Google whether it has overridden any of this org's live listings.
