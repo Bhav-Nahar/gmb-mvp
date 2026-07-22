@@ -146,7 +146,12 @@ export async function listLpseoPages(opts?: { industry?: string; country?: strin
     if (opts?.industry) params.set('industry', opts.industry)
     if (opts?.country) params.set('country', opts.country)
     const qs = params.toString() ? `?${params}` : ''
-    const res = await fetch(`${apiBase()}/public/lpseo${qs}`, { next: { revalidate: 31536000, tags: ['lpseo-list'] }, signal: AbortSignal.timeout(10000) })
+    // Industry-scoped list tag: a single page edit busts only that industry's leaves
+    // (every leaf embeds this for siblings), not the whole corpus. Global 'lpseo-list'
+    // stays for corpus-wide callers (sitemap, root/country hubs). Keep in sync with
+    // the backend revalidate payload.
+    const listTag = opts?.industry ? `lpseo-list:${opts.country ?? 'in'}:${opts.industry}` : 'lpseo-list'
+    const res = await fetch(`${apiBase()}/public/lpseo${qs}`, { next: { revalidate: 31536000, tags: [listTag] }, signal: AbortSignal.timeout(10000) })
     if (!res.ok) return []
     const data = await res.json()
     return data.pages || []

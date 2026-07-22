@@ -131,8 +131,12 @@ export async function listPseoPages(opts?: { industry?: string; country?: string
     if (opts?.industry) params.set('industry', opts.industry)
     if (opts?.country) params.set('country', opts.country)
     const qs = params.toString() ? `?${params}` : ''
-    // 1-year ISR; 'pseo-list' tag so publishes/deletes refresh hubs + sitemap data immediately.
-    const res = await fetch(`${apiBase()}/public/pseo${qs}`, { next: { revalidate: 31536000, tags: ['pseo-list'] }, signal: AbortSignal.timeout(10000) })
+    // Industry-scoped list tag so a single page edit busts only that industry's
+    // leaves (every leaf embeds this fetch for siblings) — NOT the whole corpus.
+    // Global 'pseo-list' stays for corpus-wide callers (sitemap, root/country hubs).
+    // Both tags are busted by the backend revalidate payload; keep the strings in sync.
+    const listTag = opts?.industry ? `pseo-list:${opts.country ?? 'in'}:${opts.industry}` : 'pseo-list'
+    const res = await fetch(`${apiBase()}/public/pseo${qs}`, { next: { revalidate: 31536000, tags: [listTag] }, signal: AbortSignal.timeout(10000) })
     if (!res.ok) return []
     const data = await res.json()
     return data.pages || []

@@ -231,8 +231,12 @@ def sync_reviews_task(location_id: int, run_type: str = "Scheduled", user_id: in
             
             result = run_async(ReviewSyncService.sync_location_reviews(db, location_id, run_type, sync_log_id=sync_log.id))
 
-            from app.services.revalidation_service import trigger_bulk_microsite_revalidation
-            trigger_bulk_microsite_revalidation([location_id])
+            # Only revalidate when reviews actually changed — an unconditional bust
+            # rewrote this microsite's ISR cache on every scheduled run (Vercel ISR
+            # write blowup). Matches the change-gated media/extras syncs.
+            if isinstance(result, dict) and result.get("synced_count"):
+                from app.services.revalidation_service import trigger_bulk_microsite_revalidation
+                trigger_bulk_microsite_revalidation([location_id])
 
             return {"status": "success", "result": result}
         except Exception as e:
@@ -324,7 +328,8 @@ def sync_reviews_chunk_task(self, location_ids: list, organization_id: int, run_
                 HealthScoreService.recalculate_health_score(db, loc_id, reason="review_sync")
                 db.commit()
 
-                results.append({"location_id": loc_id, "status": "success", "result": result})
+                synced_count = result.get("synced_count", 0) if isinstance(result, dict) else 0
+                results.append({"location_id": loc_id, "status": "success", "result": result, "synced_count": synced_count})
 
             except Exception as e:
                 db.rollback()
@@ -353,10 +358,14 @@ def sync_reviews_chunk_task(self, location_ids: list, organization_id: int, run_
                 # Rate limiting / Sleep in chunk
                 time.sleep(getattr(settings, "REVIEW_SYNC_SLEEP_SECONDS", 0.2))
 
-        successful_loc_ids = [res["location_id"] for res in results if res.get("status") == "success"]
-        if successful_loc_ids:
+        # Revalidate only microsites whose reviews actually changed — not every
+        # successfully-synced location. An unconditional daily bust of the full set
+        # was the dominant ISR-write source (published microsites x 30/mo).
+        changed_loc_ids = [res["location_id"] for res in results
+                           if res.get("status") == "success" and res.get("synced_count")]
+        if changed_loc_ids:
             from app.services.revalidation_service import trigger_bulk_microsite_revalidation
-            trigger_bulk_microsite_revalidation(successful_loc_ids)
+            trigger_bulk_microsite_revalidation(changed_loc_ids)
 
         return {"status": "completed", "results": results}
     finally:

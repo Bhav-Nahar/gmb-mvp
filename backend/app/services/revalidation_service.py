@@ -165,12 +165,15 @@ def _run_revalidate(payload: dict) -> None:
         logger.error(f"pSEO revalidation encountered an error: {str(e)}")
 
 
-# pSEO/lpSEO fetches are tagged PER PAGE ('{type}:{slug}') for the leaf and a
-# shared '{type}-list' tag for the hub/sitemap listing — there is deliberately NO
-# global '{type}' tag. So revalidating one page (or a batch) busts only those
-# pages' data plus the list, never every other page's cache. That precision is
-# what keeps a single admin edit from forcing all N pages to re-render on their
-# next crawl (Vercel invocations + backend hits + Redis reads).
+# pSEO/lpSEO fetches are tagged PER PAGE ('{type}:{slug}') for the leaf. There is
+# deliberately NO global '{type}' tag. The list fetch is tagged TWO ways:
+#   - '{type}-list'                    — corpus-wide callers (sitemap, root/country hubs)
+#   - '{type}-list:{country}:{industry}' — industry-scoped, embedded by every LEAF
+#     (its sibling links) and by the industry hub.
+# Every leaf embeds an industry-scoped list fetch, so a single edit busts only its
+# own industry's leaves via the scoped tag — NOT the whole corpus. Using the bare
+# '{type}-list' tag on leaves was the original blowup: one edit re-rendered all N
+# pages on their next crawl (Vercel invocations + backend hits + Redis reads).
 
 def _seo_revalidation_payload(entries: List[dict], segment: str, tag_prefix: str) -> dict:
     """Build a {tags, paths} payload for the frontend revalidate route.
@@ -179,18 +182,25 @@ def _seo_revalidation_payload(entries: List[dict], segment: str, tag_prefix: str
     published set) plus, per entry, the per-slug data tag and the leaf/hub/root
     paths. Callers pass country explicitly so deleted rows (already gone from the
     DB) still resolve the right locale."""
+    # Global list tag covers corpus-wide callers only (sitemap, root/country hubs).
+    # Leaf pages embed an INDUSTRY-scoped list fetch for their siblings, tagged
+    # '{prefix}-list:{country}:{industry}' — so per-industry busts here re-render just
+    # that industry's leaves on next crawl, not the entire corpus. Keep the tag string
+    # in sync with listPseoPages/listLpseoPages in the frontend libs.
     tags = {f"{tag_prefix}-list"}
     paths = set()
     for e in entries:
         slug = e.get("slug")
         if not slug:
             continue
-        locale = f"en-{(e.get('country') or 'in')}"
+        country = e.get("country") or "in"
+        locale = f"en-{country}"
         base = f"/{locale}/{segment}"
         tags.add(f"{tag_prefix}:{slug}")
         paths.add(base)                      # locale root hub
         paths.add(f"{base}/{slug}")          # leaf
         if e.get("industry_slug"):
+            tags.add(f"{tag_prefix}-list:{country}:{e['industry_slug']}")
             paths.add(f"{base}/{e['industry_slug']}")  # industry hub
     return {"tags": sorted(tags), "paths": sorted(paths)}
 

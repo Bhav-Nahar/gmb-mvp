@@ -50,9 +50,15 @@ def _record_sync_log(db, sync_log, organization_id, location_id, run_type, statu
 
 class ReviewSyncService:
     @staticmethod
-    async def sync_location_reviews(db: Session, location_id: int, run_type: str = "Scheduled", sync_log_id: int = None) -> str:
+    async def sync_location_reviews(db: Session, location_id: int, run_type: str = "Scheduled", sync_log_id: int = None) -> dict:
         """
         Sync reviews for a specific local location using State-Aware Delta Sync.
+
+        Returns {"status", "synced_count", "message"}. synced_count is the number of
+        reviews actually inserted/changed this run — 0 means nothing changed, so
+        callers MUST skip microsite revalidation (an unconditional bust here rewrote
+        every microsite's ISR cache daily; see revalidation_service). Provider errors
+        return synced_count=0 for the same reason.
         """
         location = db.query(Location).filter(Location.id == location_id).first()
         if not location:
@@ -86,12 +92,12 @@ class ReviewSyncService:
                 logger.error("Provider fetch failed for location %s: %s", location_id, fetch_err)
                 error_msg = f"ProviderError: {str(fetch_err)}"
                 _record_sync_log(db, sync_log, organization_id, location_id, run_type, "ProviderError", error_msg)
-                return f"PROVIDER_ERROR: {error_msg}"
+                return {"status": "provider_error", "synced_count": 0, "message": error_msg}
 
             if not provider_reviews:
                 log_msg = "Successfully synced 0 reviews."
                 _record_sync_log(db, sync_log, organization_id, location_id, run_type, "Success", log_msg)
-                return f"SUCCESS: {log_msg}"
+                return {"status": "success", "synced_count": 0, "message": log_msg}
             
             # 3. Filter out reviews with missing provider IDs
             valid_reviews = [pr for pr in provider_reviews if pr.id]
@@ -260,7 +266,7 @@ class ReviewSyncService:
             log_message = f"Successfully synced {synced_count} reviews (from {len(provider_reviews)} fetched)."
             _record_sync_log(db, sync_log, organization_id, location_id, run_type, "Success", log_message)
 
-            return f"SUCCESS: {log_message}"
+            return {"status": "success", "synced_count": synced_count, "message": log_message}
 
         except Exception as e:
             db.rollback()
