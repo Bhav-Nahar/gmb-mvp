@@ -3,6 +3,13 @@ from app.core.config import settings
 from app.llm.base import BaseLLMProvider
 from app.llm.exceptions import LLMProviderError
 
+
+def thinking_config(model: str) -> dict:
+    """Gemini 2.5 takes thinking_budget=0; 3.5+ rejects it (400) and only accepts
+    thinking_level. 3.1 accepts either. Sending the wrong one is a hard 400 -> 502."""
+    return {"thinking_budget": 0} if model.startswith("gemini-2") else {"thinking_level": "minimal"}
+
+
 class GeminiLLMProvider(BaseLLMProvider):
     # ponytail: Gemini speaks OpenAI's API at its compat endpoint, so this is the
     # groq provider with a different base_url + key. No new SDK.
@@ -14,6 +21,7 @@ class GeminiLLMProvider(BaseLLMProvider):
         )
 
     async def complete(self, system_prompt: str, user_message: str, max_tokens: int = 200, temperature: float = 0.7) -> str:
+        thinking = thinking_config(self.model)
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
@@ -21,13 +29,13 @@ class GeminiLLMProvider(BaseLLMProvider):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                # Gemini 2.5 models "think" by default, and thinking tokens share the
-                # output budget — leaving our reply truncated. Disable it (review replies
-                # don't need reasoning) and keep headroom in case the model ignores it.
+                # Gemini models "think" by default, and thinking tokens share the output
+                # budget — leaving our reply truncated. Turn it down (review replies don't
+                # need reasoning) and keep headroom in case the model ignores it.
                 max_tokens=max(max_tokens, 1024),
                 temperature=temperature,
                 timeout=20.0,
-                extra_body={"extra_body": {"google": {"thinking_config": {"thinking_budget": 0}}}},
+                extra_body={"extra_body": {"google": {"thinking_config": thinking}}},
             )
             if not response.choices or not response.choices[0].message.content:
                 raise LLMProviderError("No response content from Gemini provider.")

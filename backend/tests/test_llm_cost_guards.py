@@ -60,3 +60,12 @@ def test_bump_attempts_reaches_terminal_state(db):
     assert r.sentiment_attempts == MAX_SENTIMENT_ATTEMPTS
     # the beat/entry filters exclude reviews at the cap
     assert not (r.sentiment_tagged_at is None and r.sentiment_attempts < MAX_SENTIMENT_ATTEMPTS)
+
+
+def test_gemini_thinking_config_matches_model_family():
+    # Verified against the live API: 2.5 only accepts thinking_budget, 3.5+ only
+    # accepts thinking_level. The wrong key is a 400 -> 502 on every AI reply.
+    from app.llm.gemini import thinking_config
+    assert thinking_config("gemini-2.5-flash") == {"thinking_budget": 0}
+    assert thinking_config("gemini-3.5-flash-lite") == {"thinking_level": "minimal"}
+    assert thinking_config("gemini-3.6-flash") == {"thinking_level": "minimal"}
