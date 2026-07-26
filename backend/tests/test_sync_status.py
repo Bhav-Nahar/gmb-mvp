@@ -17,14 +17,6 @@ from app.models.user import User
 from app.models.location import Location
 from app.models.organization_sync_state import OrganizationSyncState
 
-import app as _app_pkg
-try:
-    import app.worker  # real celery app; also sets the app.worker attribute for patch()
-except Exception:
-    if "app.worker" not in sys.modules:
-        _fw = types.ModuleType("app.worker"); _fw.celery = MagicMock()
-        sys.modules["app.worker"] = _fw
-    _app_pkg.worker = sys.modules["app.worker"]
 
 
 @compiles(JSONB, "sqlite")

@@ -179,9 +179,12 @@ def list_organizations(
     org_ids = [o.id for o in orgs]
 
     # Grouped counts (avoids N+1) — empty IN() is invalid, so guard on org_ids.
+    # Live users only: counting soft-deleted seats inflated the number, and it hid the
+    # orphaned workspaces (0 live users, unreachable — nobody can log into them) that
+    # a hard DELETE on `users` leaves behind. The UI badges those.
     user_counts = dict(
         db.query(User.organization_id, func.count())
-        .filter(User.organization_id.in_(org_ids))
+        .filter(User.organization_id.in_(org_ids), User.deleted_at.is_(None))
         .group_by(User.organization_id).all()
     ) if org_ids else {}
     loc_counts = dict(
@@ -233,7 +236,12 @@ def get_organization(
         OrganizationSyncState.organization_id == org_id
     ).first()
 
-    org_detail = _org_row(org, len(users), len(locations))
+    # Count live seats, not the current page: len(users) reported "25 users" for any org
+    # past the first page, and counted soft-deleted seats as live.
+    users_live = db.query(func.count(User.id)).filter(
+        User.organization_id == org_id, User.deleted_at.is_(None)
+    ).scalar()
+    org_detail = _org_row(org, users_live, len(locations))
     org_detail.update({
         "billing_cycle": org.billing_cycle,
         "ai_credits_reset_date": org.ai_credits_reset_date,

@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import { beginGoogleLogin } from '@/lib/oauth'
 import type { CtaLocation } from '@/lib/analytics'
+import AuditLeadModal from '@/components/AuditLeadModal'
 import {
   RefreshCw,
   ArrowRight,
@@ -592,6 +593,9 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Paid page only: the audit CTAs open a lead form instead of Google OAuth, so
+  // visitors who aren't ready to connect Google still reach the super-admin Leads tab.
+  const [auditOpen, setAuditOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [openFaq, setOpenFaq] = useState<number | null>(null)
 
@@ -668,8 +672,8 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
             <button onClick={() => handleContinueWithGoogle('navbar')} disabled={loading} className="text-xs font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50">
               Login
             </button>
-            <button onClick={() => handleContinueWithGoogle('navbar')} disabled={loading} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:opacity-50">
-              {loading ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" /> : <><GoogleIcon className="h-4 w-4" /> Continue with Google</>}
+            <button onClick={() => (paid ? setAuditOpen(true) : handleContinueWithGoogle('navbar'))} disabled={loading} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:opacity-50">
+              {loading ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" /> : paid ? 'Get My Free GMB Audit' : <><GoogleIcon className="h-4 w-4" /> Continue with Google</>}
             </button>
           </div>
 
@@ -688,8 +692,8 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                 {label}
               </button>
             ))}
-            <button onClick={() => handleContinueWithGoogle('mobile_menu')} disabled={loading} className="mt-4 flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-950 disabled:opacity-50">
-              {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> Continue with Google</>}
+            <button onClick={() => (paid ? (setMobileMenuOpen(false), setAuditOpen(true)) : handleContinueWithGoogle('mobile_menu'))} disabled={loading} className="mt-4 flex w-full items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-950 disabled:opacity-50">
+              {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : paid ? 'Get My Free GMB Audit' : <><GoogleIcon /> Continue with Google</>}
             </button>
           </div>
         </div>
@@ -724,15 +728,15 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           </Reveal>
           <Reveal delay={240}>
             <div className="flex flex-col items-center gap-4 pt-2 sm:flex-row lg:justify-start">
-              <button onClick={() => handleContinueWithGoogle('hero')} disabled={loading} className="flex w-full min-w-[220px] items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50 sm:w-auto">
-                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> {paid ? 'Get My Free GMB Audit' : 'Start Free Trial'}</>}
+              <button onClick={() => (paid ? setAuditOpen(true) : handleContinueWithGoogle('hero'))} disabled={loading} className="flex w-full min-w-[220px] items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50 sm:w-auto">
+                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <>{!paid && <GoogleIcon />} {paid ? 'Get My Free GMB Audit' : 'Start Free Trial'}</>}
               </button>
               {paid ? (
                 <button onClick={() => scrollToSection('pricing')} className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
                   View Pricing <ArrowRight className="h-4 w-4" />
                 </button>
               ) : (
-                <a href="https://wa.me/917021052482?text=Hi%2C%20I%27d%20like%20to%20book%20a%20Pinzo%20demo." target="_blank" rel="noopener noreferrer" className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
+                <a href="https://wa.me/917715845972?text=Hi%2C%20I%27d%20like%20to%20book%20a%20Pinzo%20demo." target="_blank" rel="noopener noreferrer" className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
                   Book a Demo <ArrowRight className="h-4 w-4" />
                 </a>
               )}
@@ -1308,7 +1312,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                 ))}
               </ul>
             </div>
-            <a href="https://wa.me/917021052482?text=Hi%2C%20I%27m%20interested%20in%20the%20Enterprise%20plan%20for%2050%2B%20locations." target="_blank" rel="noopener noreferrer" className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-3 text-xs font-bold uppercase tracking-widest text-muted-foreground transition-all hover:border-foreground hover:text-foreground">
+            <a href="https://wa.me/917715845972?text=Hi%2C%20I%27m%20interested%20in%20the%20Enterprise%20plan%20for%2050%2B%20locations." target="_blank" rel="noopener noreferrer" className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-3 text-xs font-bold uppercase tracking-widest text-muted-foreground transition-all hover:border-foreground hover:text-foreground">
               <WhatsAppIcon className="h-4 w-4" /> Chat on WhatsApp
             </a>
           </div>
@@ -1364,8 +1368,8 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
             <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{paid ? 'Find weak branches. Fix profile gaps. Grow local visibility.' : 'Ready to be the business AI recommends?'}</h2>
             <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground">{paid ? 'Connect Google and get your free Health Score audit across every location in under a minute. No card required to start.' : 'Connect your Google Business Profiles in minutes and start growing your visibility across Google Search, Maps, ChatGPT, Gemini and Perplexity. Free audit with no card, then a 7-day free trial — no charge today.'}</p>
             <div className="flex justify-center pt-6">
-              <button onClick={() => handleContinueWithGoogle('footer')} disabled={loading} className="flex items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50">
-                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon /> {paid ? 'Get My Free GMB Audit' : 'Continue with Google'}</>}
+              <button onClick={() => (paid ? setAuditOpen(true) : handleContinueWithGoogle('footer'))} disabled={loading} className="flex items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-950 shadow-lg transition-colors hover:bg-gray-50 disabled:opacity-50">
+                {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <>{!paid && <GoogleIcon />} {paid ? 'Get My Free GMB Audit' : 'Continue with Google'}</>}
               </button>
             </div>
           </div>
@@ -1425,11 +1429,10 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
         >
           <button
-            onClick={() => handleContinueWithGoogle('sticky_mobile')}
-            disabled={loading}
+            onClick={() => setAuditOpen(true)}
             className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-gray-200 bg-white px-5 py-3.5 text-sm font-bold text-gray-950 shadow-lg disabled:opacity-50"
           >
-            {loading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" /> : <><GoogleIcon className="h-5 w-5" /> Get My Free GMB Audit</>}
+            Get My Free GMB Audit
           </button>
         </div>
       )}
@@ -1437,7 +1440,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
       {/* Floating WhatsApp button — bottom-right on mobile and desktop.
           On the paid page it sits above the sticky mobile CTA bar until md. */}
       <a
-        href="https://wa.me/917021052482?text=Hi%2C%20I%27d%20like%20to%20know%20more%20about%20Pinzo."
+        href="https://wa.me/917715845972?text=Hi%2C%20I%27d%20like%20to%20know%20more%20about%20Pinzo."
         target="_blank"
         rel="noopener noreferrer"
         aria-label="Chat with us on WhatsApp"
@@ -1446,6 +1449,8 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#25D366] opacity-30" />
         <WhatsAppIcon className="relative h-7 w-7" />
       </a>
+
+      {paid && <AuditLeadModal open={auditOpen} onOpenChange={setAuditOpen} page="/google-business-profile-management" />}
     </div>
   )
 }

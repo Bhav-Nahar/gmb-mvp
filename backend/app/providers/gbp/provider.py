@@ -3,7 +3,6 @@ import time
 import logging
 import asyncio
 from sqlalchemy.orm import Session
-from app.providers.base.provider import BaseProvider
 from app.providers.base.models import LocationModel, ReviewModel, ReviewReplyModel, PostModel, DailyInsightMetric, KeywordInsightMetric, MediaItemModel, PostInsightMetric
 from app.providers.base.exceptions import ProviderAPIError, ProviderError
 from app.providers.base.auth import AuthContext
@@ -26,7 +25,17 @@ _ACCOUNT_ID_CACHE_TTL = 3600  # seconds
 # Module-level set of already-warned unmapped metric names
 _warned_metrics: set = set()
 
-class GBPProvider(BaseProvider):
+class GBPProvider:
+    """Google Business Profile. The only provider.
+
+    Was the sole subclass of a BaseProvider ABC that declared these same twelve
+    methods and nothing else. If a second provider ever ships, reintroduce the ABC
+    from this class rather than the other way round.
+
+    Publishing may be invoked synchronously by workers (asyncio.run), but the methods
+    stay async internally — do not couple the design to sync-only assumptions.
+    """
+
     provider_name = "gbp"
 
     @classmethod

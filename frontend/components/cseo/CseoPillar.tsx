@@ -3,11 +3,11 @@ import {
   Sparkles, Check, MapPin, Building, ArrowRight, RefreshCw, ShieldCheck,
   BarChart3, Bot, Globe, Compass, Phone, ClipboardCheck, FileText, Search, Scale,
 } from 'lucide-react'
-import { canLink } from '@/lib/lpseo'
 import { MarketingHeader } from '@/components/MarketingHeader'
 import { MarketingFooter } from '@/components/MarketingFooter'
 import LpseoLeadForm from '@/components/lpseo/LpseoLeadForm'
 import { buildCseoJsonLd, type CseoPageData, type CseoLink } from '@/lib/cseo'
+import { Section, makeSafeLink } from '@/components/seo/sections'
 
 /**
  * Country pillar (Local SEO universe). Server component: the only client JS is the
@@ -32,31 +32,13 @@ export default function CseoPillar({ page, livePaths = new Set<string>() }: { pa
 
   // Never render an anchor to a page that does not exist yet (guardrail: no links
   // to planned pages). Unpublished destinations degrade to plain text.
-  const SafeLink = ({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) =>
-    canLink(href, livePaths)
-      ? <Link href={href} className={className}>{children}</Link>
-      : <span className={className} aria-disabled>{children}</span>
+  const SafeLink = makeSafeLink(livePaths)
   const country = page.country_label
   const jsonLd = buildCseoJsonLd(page)
   const primaryCta = c.primary_cta || 'Get a Free Local SEO Audit'
   const secondaryCta = c.secondary_cta || 'Start Free Trial'
-  const whatsapp = 'https://wa.me/917021052482?text=' + encodeURIComponent(`Hi, I'd like a Pinzo local SEO audit for my business in ${country}.`)
+  const whatsapp = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo local SEO audit for my business in ${country}.`)
 
-  const Section = ({ id, eyebrow, title, sub, children, alt }: {
-    id?: string; eyebrow?: string; title: string; sub?: string
-    children?: React.ReactNode; alt?: boolean
-  }) => (
-    <section id={id} className={alt ? 'border-y border-border/40 bg-muted/10 py-16' : 'py-16'}>
-      <div className="mx-auto max-w-6xl space-y-8 px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl space-y-3 text-center">
-          {eyebrow && <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">{eyebrow}</div>}
-          <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{title}</h2>
-          {sub && <p className="text-muted-foreground">{sub}</p>}
-        </div>
-        {children}
-      </div>
-    </section>
-  )
 
   const Cards = ({ rows, cols = 'sm:grid-cols-2 lg:grid-cols-4' }: { rows: { title: string; detail: string }[]; cols?: string }) => (
     <div className={`grid grid-cols-1 gap-4 ${cols}`}>

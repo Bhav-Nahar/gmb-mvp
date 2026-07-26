@@ -15,18 +15,6 @@ def compile_jsonb_sqlite(element, compiler, **kw):
 
 # Setup Celery Stub
 import types
-try:
-    import celery
-    if not hasattr(celery, "shared_task"):
-        celery.shared_task = lambda *args, **kwargs: lambda fn: fn
-except ImportError:
-    if "celery" not in sys.modules:
-        celery_stub = types.ModuleType("celery")
-        def _shared_task(*args, **kwargs):
-            return lambda fn: fn
-        celery_stub.shared_task = _shared_task
-        celery_stub.Celery = MagicMock()
-        sys.modules["celery"] = celery_stub
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

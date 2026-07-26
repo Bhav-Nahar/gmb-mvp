@@ -8,19 +8,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Resolve Celery import if not installed locally
 import types
-try:
-    import celery
-except ImportError:
-    if "celery" not in sys.modules:
-        celery_stub = types.ModuleType("celery")
-        class _StubCelery:
-            def send_task(self, *args, **kwargs):
-                return type("T", (), {"id": "stub-task"})()
-        def _shared_task(*args, **kwargs):
-            return lambda fn: fn
-        celery_stub.Celery = _StubCelery
-        celery_stub.shared_task = _shared_task
-        sys.modules["celery"] = celery_stub
 
 from app.db.session import Base
 from app.models.organization import Organization

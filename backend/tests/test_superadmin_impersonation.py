@@ -22,13 +22,6 @@ def _compile_jsonb_sqlite(element, compiler, **kw):
     return "TEXT"
 
 
-if "celery" not in sys.modules:
-    try:
-        import celery  # noqa: F401
-    except ImportError:
-        stub = types.ModuleType("celery")
-        stub.shared_task = lambda *a, **k: (lambda fn: fn)
-        sys.modules["celery"] = stub
 
 from app.db.session import Base
 from app.models.organization import Organization
