@@ -5,10 +5,9 @@ import CityPillar from '@/components/cityseo/CityPillar'
 import PseoHub from '@/components/pseo/PseoHub'
 import {
   getLpseoPage, listLpseoPages, lpseoPath, industryHubPath, rootHubPath, localeToCountry,
-  isLpseoPillar, noSlash, buildLiveFamilyPaths,
+  isLpseoPillar, noSlash, getLiveFamilyPaths,
 } from '@/lib/lpseo'
 import { isCityPillar, asCityPage } from '@/lib/cityseo'
-import { listPseoPages, pseoPath } from '@/lib/pseo'
 
 // Served at /{locale}/local-seo-services/{lpseoSlug}. [slug] is the locale (Next.js
 // forbids two dynamic names at one level, so it reuses the microsite segment name).
@@ -76,10 +75,8 @@ export default async function LocalSeoSlugPage({ params }: { params: Params }) {
 
     // City pillar ({city} slug): its own template and content schema.
     if (isCityPillar(page)) {
-      const [lp, pp] = await Promise.all([
-        listLpseoPages({ country: page.country }), listPseoPages({ country: page.country })])
       return <CityPillar page={asCityPage(page)}
-        livePaths={buildLiveFamilyPaths(lp, page.locale, pp.map((x) => pseoPath(x.locale, x.slug)))} />
+        livePaths={await getLiveFamilyPaths(page.country, page.locale)} />
     }
 
     // Sibling city pages (same industry + market) for contextual internal links.
@@ -94,9 +91,7 @@ export default async function LocalSeoSlugPage({ params }: { params: Params }) {
       : idx === -1 ? [] : [...all.slice(idx + 1), ...all.slice(0, idx)].slice(0, 6)
     // Only pages that are actually published and indexable may be linked; the
     // authored CSVs list the full planned set long before those pages exist.
-    const [lpAll, ppAll] = await Promise.all([
-      listLpseoPages({ country: page.country }), listPseoPages({ country: page.country })])
-    const livePaths = buildLiveFamilyPaths(lpAll, page.locale, ppAll.map((x) => pseoPath(x.locale, x.slug)))
+    const livePaths = await getLiveFamilyPaths(page.country, page.locale)
     return <LpseoLanding page={page} siblings={siblings} livePaths={livePaths} />
   }
 

@@ -196,14 +196,32 @@ export async function listLpseoPages(opts?: { industry?: string; country?: strin
 // /{locale}/local-seo-services/* paths that are actually published and indexable;
 // `isFamilyPath` marks the ones this gate governs. Anything outside the family
 // (/pricing, /features, /gbp-management) is left alone — it is not ours to judge.
-export function buildLiveFamilyPaths(
-  pages: LpseoListItem[], locale: string, extra: string[] = [],
-): Set<string> {
-  const live = new Set<string>([rootHubPath(locale), ...extra.map((p) => p.replace(/\/+$/, ''))])
-  for (const p of pages) {
-    live.add(lpseoPath(p.locale, p.slug))
-    live.add(industryHubPath(p.locale, p.industry_slug))
+export interface LivePaths { slugs: string[]; industries: string[] }
+
+/** Slugs of everything published+indexable in a market, for the link gate.
+ *  Hits /paths, not the full list endpoint: the gate needs strings, and the list
+ *  payload is ~190 KB for a market the size of India. */
+async function fetchPaths(segment: 'pseo' | 'lpseo', country: string): Promise<LivePaths> {
+  try {
+    const res = await fetch(`${apiBase()}/public/${segment}/paths?country=${country}`, {
+      next: { revalidate: 31536000, tags: [`${segment}-list`] },
+      signal: AbortSignal.timeout(10000),
+    })
+    if (!res.ok) return { slugs: [], industries: [] }
+    return await res.json()
+  } catch {
+    return { slugs: [], industries: [] }
   }
+}
+
+/** The set of family paths that actually resolve, for both page families. */
+export async function getLiveFamilyPaths(country: string, locale: string): Promise<Set<string>> {
+  const [lp, pp] = await Promise.all([fetchPaths('lpseo', country), fetchPaths('pseo', country)])
+  const live = new Set<string>([rootHubPath(locale)])
+  for (const s of lp.slugs) live.add(lpseoPath(locale, s))
+  for (const i of lp.industries) live.add(industryHubPath(locale, i))
+  for (const s of pp.slugs) live.add(`/${locale}/gbp-management/${s}`)
+  for (const i of pp.industries) live.add(`/${locale}/gbp-management/${i}`)
   return live
 }
 

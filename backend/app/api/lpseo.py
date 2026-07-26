@@ -128,6 +128,25 @@ def list_published_pages(
     }
 
 
+@public_router.get("/paths")
+def list_published_paths(country: Optional[str] = None, db: Session = Depends(get_db)):
+    """Slugs only, for the templates' link-safety gate.
+
+    The gate just needs to know which destinations exist. It used to call the full
+    list endpoint, which ships every page's labels and timestamps: ~190 KB for
+    India's 795 rows, deserialised on every render, to build a set of strings.
+    This returns ~20 KB of exactly what is needed."""
+    q = (db.query(LpseoPage.slug, LpseoPage.industry_slug)
+         .filter(LpseoPage.status == LpseoPageStatus.PUBLISHED.value,
+                 LpseoPage.index_status == "index",
+                 or_(LpseoPage.quality_score.is_(None), LpseoPage.quality_score >= _QUALITY_GATE)))
+    if country:
+        q = q.filter(LpseoPage.country == _country_code(country))
+    rows = q.all()
+    return {"slugs": sorted({r.slug for r in rows}),
+            "industries": sorted({r.industry_slug for r in rows})}
+
+
 @public_router.get("/{slug}")
 def get_published_page(slug: str, db: Session = Depends(get_db)):
     r = get_redis()

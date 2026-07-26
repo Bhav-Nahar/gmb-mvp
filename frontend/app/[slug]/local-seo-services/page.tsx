@@ -4,10 +4,9 @@ import PseoHub from '@/components/pseo/PseoHub'
 import CseoPillar from '@/components/cseo/CseoPillar'
 import {
   listLpseoPages, lpseoPath, rootHubPath, localeToCountry, countryName, isLpseoPillar,
-  buildLiveFamilyPaths,
+  getLiveFamilyPaths,
 } from '@/lib/lpseo'
 import { getCseoPillar, noSlash } from '@/lib/cseo'
-import { listPseoPages, pseoPath } from '@/lib/pseo'
 
 // /{locale}/local-seo-services serves the country pillar when one is published for
 // that market, and otherwise falls back to the auto-generated industry hub. The
@@ -66,9 +65,7 @@ export default async function LocalSeoMarketHubPage({ params }: { params: Params
   if (pillar) {
     // Both families' published sets, so a link to an unbuilt city, industry or GBP
     // page degrades to plain text instead of shipping a 404.
-    const [lp, pp] = await Promise.all([listLpseoPages({ country: cc }), listPseoPages({ country: cc })])
-    const livePaths = buildLiveFamilyPaths(lp, locale, pp.map((p) => pseoPath(p.locale, p.slug)))
-    return <CseoPillar page={pillar} livePaths={livePaths} />
+    return <CseoPillar page={pillar} livePaths={await getLiveFamilyPaths(cc, locale)} />
   }
 
   // Pillars share the leaf table but are not cities, so they must not inflate the

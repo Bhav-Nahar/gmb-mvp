@@ -15,15 +15,17 @@ import { getCseoPillar, noSlash } from '@/lib/cseo'
 // Locale-prefixed URLs are handled by app/[slug]/local-seo-services; this static
 // segment wins only for the exact bare path. Cached up to 1 year; a pillar edit busts
 // the 'cseo:global' tag and a leaf publish busts 'lpseo-list'.
-// Rendered on demand, NOT prerendered at build.
+// ISR, 1 hour. NOT force-dynamic, and NOT the 1-year used elsewhere in the family.
 //
-// This is the only page in the family with no dynamic segment, so Next would
-// statically prerender it during `next build` — at which point the backend is
-// unreachable and getCseoPillar() returns null, freezing the market-grid fallback
-// into the image. That is exactly what happened, and a TTL only bounds how long the
-// wrong page serves. Forcing dynamic makes it behave like every locale-prefixed
-// tier: fetched per request, with the backend's own Redis cache doing the work.
-export const dynamic = 'force-dynamic'
+// This is the only page here with no dynamic segment, so Next prerenders it during
+// `next build`. If the build cannot reach the backend, getCseoPillar() returns null
+// and the market-grid fallback is baked in. force-dynamic removes that risk but
+// invokes a function on EVERY request, forever, for a page that changes monthly.
+//
+// An hour is the cheap middle: the fallback branch is explicitly noindex, so a bad
+// bake can never be indexed, and on-demand revalidation makes a publish appear
+// immediately. Worst case is 60 minutes of a noindexed placeholder.
+export const revalidate = 3600
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
 const GLOBAL = 'global'
