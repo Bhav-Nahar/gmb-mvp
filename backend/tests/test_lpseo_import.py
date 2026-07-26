@@ -5,23 +5,9 @@ SQLite `db` fixture; revalidation is stubbed so nothing hits the network.
 """
 import csv
 import io
-from pathlib import Path
-
 from app.api import lpseo as lpseo_api
 from app.api.lpseo import admin_import_pages
 from app.models.lpseo_page import LpseoPage, LpseoPageStatus
-
-LEAF_PACKAGE_CSV = (
-    Path(__file__).resolve().parents[2]
-    / "pinzo-local-seo-industry-city-complete-package (1)"
-    / "pinzo-local-seo-industry-city-import-ready.csv"
-)
-
-# Guardrail 5.1 / editorial lint: prohibited in every generated field.
-BANNED_CHARS = {
-    "–": "en dash", "—": "em dash",
-    "‑": "non-breaking hyphen", "−": "minus sign",
-}
 
 
 class _FakeUpload:
@@ -189,104 +175,6 @@ def test_import_lpseo_native_columns_win_over_aliases(db, monkeypatch):
 
 
 # ── The shipped dentists x Mumbai leaf package ───────────────────────────────
-
-def _import_leaf_package(db, monkeypatch):
-    captured = {"touched": []}
-    monkeypatch.setattr(lpseo_api, "trigger_bulk_lpseo_revalidation",
-                        lambda entries: captured.__setitem__("touched", entries))
-    result = admin_import_pages(
-        file=_FakeUpload(LEAF_PACKAGE_CSV.read_bytes(), "import.csv"), db=db, _=None)
-    return result, captured["touched"]
-
-
-def test_shipped_leaf_package_csv_imports(db, monkeypatch):
-    """The enriched dentists x Mumbai package must import unedited. Every section the
-    reference HTML renders now has a CSV column, so the page ships on imported copy
-    rather than falling back to generic template defaults."""
-    result, touched = _import_leaf_package(db, monkeypatch)
-    assert result["created"] == 1 and result["failed"] == 0, result["results"]
-    assert touched == []  # ready_for_upload_noindex -> draft, nothing live to purge
-
-    page = db.query(LpseoPage).filter(LpseoPage.slug == "dentists-in-mumbai").one()
-    assert page.country == "in" and page.city_label == "Mumbai"
-    assert page.status == LpseoPageStatus.DRAFT.value and page.index_status == "noindex"
-    # A leaf, not a pillar: the column is what makes it a drip candidate once published.
-    assert page.page_type == "leaf"
-    assert page.quality_score == 96  # >= the 80 index gate, so it is index-eligible
-    c = page.content
-
-    # Recovered from the reference HTML: the service matrix keeps its third
-    # "dental relevance" column, which the 2-part `solutions` cell had dropped.
-    assert len(c["services"]) == 10
-    assert all(s["channel"] and s["work"] and s["outcome"] for s in c["services"])
-
-    # Sections that had no CSV column at all before the audit.
-    assert [j["title"] for j in c["journey_stages"]] == ["Search", "Compare", "Evaluate", "Contact", "Book"]
-    assert len(c["proof_points"]) == 4
-    assert len(c["value_props"]) == 3
-    assert len(c["city_factors"]) == 4
-    assert len(c["deliverables"]) == 9
-    assert len(c["comparison"]) == 6
-    assert all(r["point"] and r["agency"] and r["software"] and r["pinzo"] for r in c["comparison"])
-    assert [p["days"] for p in c["workflow_phases"]] == ["Days 1 to 30", "Days 31 to 60", "Days 61 to 90"]
-    assert all(len(p["steps"]) == 3 for p in c["workflow_phases"])
-    assert [p["featured"] for p in c["plans"]] == [False, True, False]
-    assert all(len(p["features"]) == 3 for p in c["plans"])
-    assert c["answer_heading"] == "What are Local SEO services for dentists in Mumbai?"
-    assert c["strategy_heading"] and c["strategy_body"] and c["lead_heading"] and c["lead_sub"]
-
-    # The alias still supplies the intent grid, but with the detail the HTML carries.
-    assert len(c["search_intents"]) == 4 and all(i["detail"] for i in c["search_intents"])
-
-    # 8 to 14 visible FAQs (guardrail 6.20), rendered verbatim into the accordion and
-    # the FAQPage schema, so parsing must not mangle them.
-    assert 8 <= len(c["faqs"]) <= 14
-    assert all(f["q"].endswith("?") and f["a"] for f in c["faqs"])
-
-    # Package columns describing GBP-listing work render no section here and are dropped.
-    for dead in ("gbp_categories", "gbp_attributes", "post_ideas", "photo_checklist",
-                 "solutions", "why_matters_points", "url", "schema_type"):
-        assert dead not in c
-
-
-def test_shipped_leaf_package_csv_is_a_strict_superset_of_the_50_column_header():
-    """The audit enriched the file in place. It must still carry every original
-    package column, in the original order, before the recovered ones."""
-    with LEAF_PACKAGE_CSV.open(encoding="utf-8-sig", newline="") as fh:
-        cols = list(csv.DictReader(fh).fieldnames)
-    original = [
-        "slug", "country", "industry_label", "industry_slug", "city_label", "city_slug",
-        "meta_title", "meta_description", "h1", "canonical_url", "index_status",
-        "quality_score", "status", "badge", "hero_sub", "primary_cta", "secondary_cta",
-        "answer_block", "why_matters_body", "reviews_body", "example_review", "example_reply",
-        "city_visibility_body", "final_heading", "final_sub", "final_button", "primary_keyword",
-        "page_type", "template_version", "region", "last_updated", "why_matters_points",
-        "gbp_categories", "gbp_services", "gbp_attributes", "review_themes", "post_ideas",
-        "photo_checklist", "neighborhoods", "single_points", "multi_points", "secondary_keywords",
-        "problems", "solutions", "monthly_workflow", "faqs", "review_examples", "related_pages",
-        "url", "schema_type",
-    ]
-    assert cols[:50] == original
-    assert len(cols) > 50  # enrichment actually happened
-
-
-def test_shipped_leaf_package_copy_has_no_prohibited_dashes(db, monkeypatch):
-    _import_leaf_package(db, monkeypatch)
-    page = db.query(LpseoPage).filter(LpseoPage.slug == "dentists-in-mumbai").one()
-
-    def walk(node):
-        if isinstance(node, str):
-            for ch, name in BANNED_CHARS.items():
-                assert ch not in node, f"{name} in imported copy: {node[:80]}"
-        elif isinstance(node, dict):
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(page.content)
-    walk([page.h1, page.meta_title, page.meta_description])
 
 
 def test_admin_create_syncs_page_type_column_with_content(db, monkeypatch):

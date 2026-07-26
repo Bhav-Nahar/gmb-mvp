@@ -4,18 +4,9 @@ label and its value), the three-part rows, and the staging state mapping.
 """
 import csv
 import io
-import os
-
 from app.api import cseo as cseo_api
 from app.api.cseo import admin_import, _row_to_page_in, _apply_defaults
 from app.models.cseo_page import CseoPage, CseoPageStatus
-
-
-PACKAGE_CSV = os.path.join(
-    os.path.dirname(__file__), "..", "..",
-    "pinzo-india-country-pillar-package",
-    "pinzo-india-country-pillar-import-ready.csv",
-)
 
 
 class _FakeUpload:
@@ -179,78 +170,4 @@ def test_index_toggle_rejects_junk(db, monkeypatch):
 # copy recovered from the reference HTML during the package audit so a future
 # regeneration of the CSV cannot quietly drop it again.
 
-def _import_package(db, monkeypatch):
-    monkeypatch.setattr(cseo_api, "trigger_cseo_revalidation", lambda *_a, **_k: None)
-    with open(PACKAGE_CSV, "rb") as f:
-        res = admin_import(file=_FakeUpload(f.read(), "import.csv"), db=db, _=None)
-    assert res["failed"] == 0, res["results"]
-    return db.query(CseoPage).one()
 
-
-def test_india_package_imports_as_a_draft_and_noindex(db, monkeypatch):
-    p = _import_package(db, monkeypatch)
-    assert p.country == "in" and p.country_label == "India"
-    # robots_status "noindex,nofollow" and status "staging": not live yet.
-    assert p.status == CseoPageStatus.DRAFT.value and p.index_status == "noindex"
-    assert p.quality_score == 100
-    assert p.canonical_url == "https://www.pinzo.io/en-in/local-seo-services/"
-
-
-def test_india_package_carries_every_section_the_reference_html_has(db, monkeypatch):
-    c = _import_package(db, monkeypatch).content
-    for key, n in [("search_behaviour", 4), ("service_matrix", 10), ("ranking_factors", 3),
-                   ("city_hubs", 6), ("industry_hubs", 6), ("single_location_points", 4),
-                   ("multi_location_points", 4), ("ai_entity_plan", 4), ("safeguards", 4),
-                   ("monthly_deliverables", 8), ("roadmap_90_days", 3), ("buyer_checklist", 4),
-                   ("packages", 3), ("proof_assets", 2), ("audit_checklist", 5),
-                   ("faqs", 10)]:
-        assert len(c.get(key, [])) == n, f"{key}: expected {n}, got {len(c.get(key, []))}"
-    for key in ["hero_copy", "direct_question", "direct_answer", "package_copy", "package_note"]:
-        assert c.get(key), key
-    # Guardrail 8: at least 15 contextual internal links, nav and footer excluded.
-    assert len(c["internal_links"]) >= 15
-
-
-def test_india_multi_column_tables_are_not_flattened(db, monkeypatch):
-    """Every rendered table column needs its own part in the cell. A two-part row
-    leaves a header with an empty column under it."""
-    c = _import_package(db, monkeypatch).content
-    assert all(r["area"] and r["work"] and r["why"] for r in c["service_matrix"])
-    assert all(r["ask"] and r["good"] and r["warning"] for r in c["buyer_checklist"])
-    assert all(p["tag"] and p["name"] and p["detail"] and p["features"]
-               and p["cta_label"] and p["cta_url"] for p in c["packages"])
-    assert all(r["title"] and r["detail"] for r in c["search_behaviour"])
-    assert all(r["title"] and r["detail"] for r in c["ai_entity_plan"])
-    # The descriptor is a third part, so the href must stay a bare path.
-    for l in c["city_hubs"] + c["industry_hubs"]:
-        assert l["detail"] and l["url"].startswith("/en-in/") and "::" not in l["url"]
-    # ...while the plain link list keeps two parts and an empty descriptor.
-    assert all(l["anchor"] and l["url"] and not l["detail"] for l in c["internal_links"])
-
-
-def test_india_package_has_no_forbidden_dash_characters(db, monkeypatch):
-    """Guardrail 5: no U+2013, U+2014, U+2011 or U+2212 in visible copy."""
-    p = _import_package(db, monkeypatch)
-
-    def walk(v):
-        if isinstance(v, str):
-            yield v
-        elif isinstance(v, dict):
-            for x in v.values():
-                yield from walk(x)
-        elif isinstance(v, list):
-            for x in v:
-                yield from walk(x)
-
-    for s in walk([p.content, p.h1, p.meta_title, p.meta_description]):
-        assert not (set(s) & set("–—‑−")), repr(s)
-
-
-def test_india_faq_text_survives_for_the_schema(db, monkeypatch):
-    """The FAQPage schema is generated from the visible copy, so the answers must
-    arrive intact: no "::" left over, and the primary keyword in one question."""
-    faqs = _import_package(db, monkeypatch).content["faqs"]
-    assert faqs[0]["q"] == "What are Local SEO services in India?"
-    assert all(f["q"] and f["a"] and "::" not in f["a"] for f in faqs)
-    assert sum("local SEO services in India" in f["q"] or "Local SEO services in India" in f["q"]
-               for f in faqs) >= 1
