@@ -1,5 +1,5 @@
 """Local-SEO programmatic landing pages (industry x city), served under
-/{locale}/local-seo-services/. Sibling of app/api/pseo.py — same machinery, a
+/{locale}/local-seo-services/. Sibling of app/api/pseo.py, same machinery, a
 separate table (lpseo_pages) and a richer, managed-local-SEO content schema.
 
 Three routers:
@@ -26,16 +26,18 @@ from app.api.deps import superadmin_required
 from app.core.config import settings
 from app.core.rate_limit import rate_limiter
 from app.core.redis_client import get_redis
+from app.models.lpseo_lead import LpseoLead
 from app.models.lpseo_page import LpseoPage, LpseoPageStatus
 from app.models.user import User
-from app.services import gsc_service
+from app.services import gsc_service, lpseo_drip
 from app.services.email_service import send_email
 from app.services.revalidation_service import (
     trigger_bulk_lpseo_revalidation, trigger_lpseo_page_flush,
 )
-# Pure, page-type-agnostic helpers — reused verbatim from pseo.
+# Pure, page-type-agnostic helpers, reused verbatim from pseo.
 from app.api.pseo import (
     _slugify, _country_code, _locale, _split_list, _split_pairs, _split_tuples, _read_rows,
+    check_city_country,
 )
 
 logger = logging.getLogger(__name__)
@@ -126,6 +128,25 @@ def list_published_pages(
     }
 
 
+@public_router.get("/paths")
+def list_published_paths(country: Optional[str] = None, db: Session = Depends(get_db)):
+    """Slugs only, for the templates' link-safety gate.
+
+    The gate just needs to know which destinations exist. It used to call the full
+    list endpoint, which ships every page's labels and timestamps: ~190 KB for
+    India's 795 rows, deserialised on every render, to build a set of strings.
+    This returns ~20 KB of exactly what is needed."""
+    q = (db.query(LpseoPage.slug, LpseoPage.industry_slug)
+         .filter(LpseoPage.status == LpseoPageStatus.PUBLISHED.value,
+                 LpseoPage.index_status == "index",
+                 or_(LpseoPage.quality_score.is_(None), LpseoPage.quality_score >= _QUALITY_GATE)))
+    if country:
+        q = q.filter(LpseoPage.country == _country_code(country))
+    rows = q.all()
+    return {"slugs": sorted({r.slug for r in rows}),
+            "industries": sorted({r.industry_slug for r in rows})}
+
+
 @public_router.get("/{slug}")
 def get_published_page(slug: str, db: Session = Depends(get_db)):
     r = get_redis()
@@ -161,8 +182,16 @@ class LpseoLeadIn(BaseModel):
     email: Optional[str] = None
     website: Optional[str] = None
     locations: Optional[str] = None
+    goal: Optional[str] = None
     message: Optional[str] = None
     page: Optional[str] = None  # slug or URL the form was submitted from, for context
+    # Ad attribution, sent by the form from the stored first-touch attribution.
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
+    gclid: Optional[str] = None
+    landing_page: Optional[str] = None
+    company: Optional[str] = None  # honeypot: bots fill it, humans never see it
 
     @field_validator("name")
     @classmethod
@@ -172,7 +201,8 @@ class LpseoLeadIn(BaseModel):
             raise ValueError("Name is required")
         return v[:120]
 
-    @field_validator("clinic", "phone", "email", "website", "locations", "message", "page")
+    @field_validator("clinic", "phone", "email", "website", "locations", "goal", "message", "page",
+                     "utm_source", "utm_medium", "utm_campaign", "gclid", "landing_page", "company")
     @classmethod
     def _trim(cls, v):
         if v is None:
@@ -181,9 +211,23 @@ class LpseoLeadIn(BaseModel):
 
 
 @lead_router.post("/leads", status_code=201, dependencies=[Depends(_lead_rate_limit)])
-def create_lead(payload: LpseoLeadIn):
-    """Public local-SEO lead form. Email-only (no DB row): notifies the platform
-    super-admins via Resend. Never blocks — a missing key just logs and returns ok."""
+def create_lead(payload: LpseoLeadIn, db: Session = Depends(get_db)):
+    """Public local-SEO lead form.
+
+    Stores the lead FIRST, then emails the super-admins. The row is what makes the
+    visitor's success screen honest: this used to be email-only, so a missing Resend
+    key or a rejected sender lost the enquiry while the form still showed a tick.
+    A failed email now only sets emailed=False, visible in the admin leads tab."""
+    # Honeypot: a filled hidden field means a bot. Return the same 201 so the bot
+    # cannot tell it was dropped.
+    if payload.company:
+        logger.info("lpSEO lead dropped by honeypot")
+        return {"ok": True}
+
+    lead = LpseoLead(**payload.model_dump(exclude={"company"}))
+    db.add(lead)
+    db.commit()  # a DB failure here 500s, so the form retries instead of lying
+
     recipients = sorted(settings.superadmin_email_set)
     if recipients:
         esc = lambda s: html_mod.escape(s) if s else "-"  # lead input goes into email HTML
@@ -195,19 +239,110 @@ def create_lead(payload: LpseoLeadIn):
         <p><strong>Email:</strong> {esc(payload.email)}</p>
         <p><strong>Website / Maps link:</strong> {esc(payload.website)}</p>
         <p><strong>Locations:</strong> {esc(payload.locations)}</p>
+        <p><strong>Primary goal:</strong> {esc(payload.goal)}</p>
         <p><strong>Message:</strong><br>{esc(payload.message)}</p>
         <p style="color:#888"><strong>Submitted from:</strong> {esc(payload.page)}</p>
+        <p style="color:#888"><strong>Source:</strong> {esc(payload.utm_source)} / {esc(payload.utm_medium)}
+        / {esc(payload.utm_campaign)} &middot; gclid {esc(payload.gclid)}<br>
+        <strong>Landing page:</strong> {esc(payload.landing_page)}</p>
         """
         try:
-            send_email(recipients, "New Local SEO lead — Pinzo", html)
+            sent = send_email(recipients, "New Local SEO lead — Pinzo", html)
         except Exception as e:
             logger.warning("lpSEO lead email failed: %s", e)
+            sent = False
+        if sent:
+            lead.emailed = True
+            db.commit()
     else:
-        logger.warning("lpSEO lead received but SUPERADMIN_EMAILS is empty — not emailed.")
-    return {"ok": True}
+        logger.warning("lpSEO lead %s received but SUPERADMIN_EMAILS is empty — not emailed.", lead.id)
+    return {"ok": True, "id": lead.id}
 
 
-# ── Admin ─────────────────────────────────────────────────────────────────────
+# ── Admin: leads ──────────────────────────────────────────────────────────────
+#
+# Declared before the page routes so "/leads" is matched by name. (The page routes
+# constrain their parameter to :int, so there is no real collision, but keeping the
+# literal first means a future unconstrained route cannot swallow it.)
+
+_LEAD_FIELDS = ("id", "name", "clinic", "phone", "email", "website", "locations",
+                "goal", "message", "page", "utm_source", "utm_medium", "utm_campaign",
+                "gclid", "landing_page", "emailed")
+
+
+@admin_router.get("/leads")
+def admin_list_leads(
+    q: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db),
+    _: User = Depends(superadmin_required),
+):
+    """Newest first. Read-only list: no pipeline, no assignment, no editing."""
+    query = db.query(LpseoLead)
+    if q:
+        like = f"%{q.lower()}%"
+        query = query.filter(
+            LpseoLead.name.ilike(like) | LpseoLead.clinic.ilike(like)
+            | LpseoLead.phone.ilike(like) | LpseoLead.email.ilike(like)
+            | LpseoLead.page.ilike(like)
+        )
+    total = query.count()
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 200)
+    rows = (query.order_by(LpseoLead.created_at.desc())
+            .offset((page - 1) * page_size).limit(page_size).all())
+    return {
+        "leads": [
+            {**{f: getattr(r, f) for f in _LEAD_FIELDS},
+             "created_at": r.created_at.isoformat() if r.created_at else None}
+            for r in rows
+        ],
+        "total": total, "page": page, "page_size": page_size,
+        "not_emailed": db.query(LpseoLead).filter(LpseoLead.emailed.is_(False)).count(),
+    }
+
+
+@admin_router.delete("/leads/{lead_id}")
+def admin_delete_lead(lead_id: int, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    """Spam that slipped past the honeypot, and GDPR-style erasure requests."""
+    lead = db.query(LpseoLead).get(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    db.delete(lead)
+    db.commit()
+    return {"deleted": True}
+
+
+# ── Admin: drip-feed indexing ─────────────────────────────────────────────────
+
+class DripArmIn(BaseModel):
+    min_per_day: int = Field(default=lpseo_drip.DEFAULT_MIN_PER_DAY, ge=1, le=500)
+    max_per_day: int = Field(default=lpseo_drip.DEFAULT_MAX_PER_DAY, ge=1, le=500)
+
+
+@admin_router.get("/drip")
+def admin_drip_status(db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    return lpseo_drip.status(db)
+
+
+@admin_router.post("/drip")
+def admin_drip_arm(body: DripArmIn, db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    """Schedule every eligible page to become indexable, a few dozen a day at random
+    times. Nothing goes live today: the earliest slot is tomorrow, so an accidental
+    arm can be cancelled before it touches the live site."""
+    if body.max_per_day < body.min_per_day:
+        raise HTTPException(status_code=400, detail="max_per_day must be >= min_per_day")
+    return lpseo_drip.arm(db, min_per_day=body.min_per_day, max_per_day=body.max_per_day)
+
+
+@admin_router.delete("/drip")
+def admin_drip_cancel(db: Session = Depends(get_db), _: User = Depends(superadmin_required)):
+    """Clear pending schedules. Pages already released stay indexable."""
+    return lpseo_drip.cancel(db)
+
+
+# ── Admin: pages ──────────────────────────────────────────────────────────────
 
 class LpseoPageIn(BaseModel):
     slug: Optional[str] = None
@@ -226,18 +361,53 @@ class LpseoPageIn(BaseModel):
     status: Optional[str] = None
 
 
+# The industry pillar is the country-level parent of an industry's city pages, served
+# at /{locale}/local-seo-services/{industry-slug}. It has no city, but city_label and
+# city_slug are NOT NULL on lpseo_pages. Rather than widen the schema for one row per
+# industry, the COUNTRY stands in for the city: "Dentists in India" is exactly the
+# label a pillar wants, so every default below keeps working untouched and the
+# frontend recognises a pillar by slug == industry_slug.
+PILLAR_PAGE_TYPE = "industry_pillar"
+_COUNTRY_LABELS = {
+    "in": "India", "us": "United States", "gb": "United Kingdom", "ca": "Canada",
+    "au": "Australia", "ae": "UAE", "sg": "Singapore", "za": "South Africa",
+    "ie": "Ireland", "nz": "New Zealand",
+}
+
+
+def _is_pillar(content: Optional[dict]) -> bool:
+    return str((content or {}).get("page_type") or "").strip().lower() == PILLAR_PAGE_TYPE
+
+
+def _page_type_of(content: Optional[dict]) -> str:
+    """The value for the page_type COLUMN.
+
+    content["page_type"] is what the frontend sees (the public payload serialises
+    content, not columns), but the column is what the drip scheduler filters on.
+    They must not drift: a pillar left as "leaf" in the column gets swept into the
+    20-30/day trickle meant for generated pages."""
+    return PILLAR_PAGE_TYPE if _is_pillar(content) else "leaf"
+
+
 def _apply_defaults(data: LpseoPageIn) -> LpseoPageIn:
     data.country = _country_code(data.country)
     data.industry_slug = data.industry_slug or _slugify(data.industry_label)
+    pillar = _is_pillar(data.content)
+    if pillar and not (data.city_label or "").strip():
+        data.city_label = _COUNTRY_LABELS.get(data.country, data.country.upper())
     data.city_slug = data.city_slug or _slugify(data.city_label)
-    data.slug = data.slug or f"{data.industry_slug}-in-{data.city_slug}"
+    data.slug = data.slug or (data.industry_slug if pillar else f"{data.industry_slug}-in-{data.city_slug}")
     data.h1 = data.h1 or f"Local SEO Services for {data.industry_label} in {data.city_label}"
     data.meta_title = data.meta_title or f"Local SEO Services for {data.industry_label} in {data.city_label} | Pinzo"
     data.meta_description = data.meta_description or (
         f"Grow {data.industry_label.lower()} visibility across Google Maps, local search and AI "
         f"recommendations with managed local SEO services from Pinzo in {data.city_label}. Free audit."
     )
-    data.index_status = "noindex" if (data.index_status or "").strip().lower() == "noindex" else "index"
+    # A pillar must not be indexed before its child and product links are verified
+    # (guardrail 12), so it defaults to noindex when the row says nothing. An explicit
+    # index_status still wins, which is how it goes live later.
+    index_raw = (data.index_status or "").strip().lower() or ("noindex" if pillar else "index")
+    data.index_status = "noindex" if index_raw == "noindex" else "index"
     return data
 
 
@@ -294,8 +464,13 @@ def admin_gsc_queries(page_id: int, days: int = 28, db: Session = Depends(get_db
     return {"configured": True, "queries": gsc_service.fetch_top_queries(url, days=days)}
 
 
-def _filtered_query(db: Session, q: Optional[str], status: Optional[str]):
+def _filtered_query(db: Session, q: Optional[str], status: Optional[str],
+                    page_type: Optional[str] = None):
     query = db.query(LpseoPage)
+    # The admin splits this table into "Pages" (generated leaves) and "Industry"
+    # (hand-authored pillars); same rows, different editorial workflow.
+    if page_type:
+        query = query.filter(LpseoPage.page_type == page_type)
     if status in (LpseoPageStatus.DRAFT.value, LpseoPageStatus.PUBLISHED.value):
         query = query.filter(LpseoPage.status == status)
     if q:
@@ -317,13 +492,14 @@ def admin_list_pages(
     sort_by: Optional[str] = None,
     sort_dir: str = "desc",
     gsc_days: int = 28,
+    page_type: Optional[str] = None,
     db: Session = Depends(get_db),
     _: User = Depends(superadmin_required),
 ):
     # Admin rows never render the fat `content` JSON — defer it so neither the
     # paginated list nor the sort-everything path drags every page's body out of
     # Supabase (egress + memory) just to build slim rows.
-    query = _filtered_query(db, q, status).options(defer(LpseoPage.content))
+    query = _filtered_query(db, q, status, page_type).options(defer(LpseoPage.content))
     total = query.count()
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
@@ -423,7 +599,12 @@ def admin_create_page(body: LpseoPageIn, db: Session = Depends(get_db), _: User 
         city_label=body.city_label, city_slug=body.city_slug,
         meta_title=body.meta_title, meta_description=body.meta_description, h1=body.h1,
         canonical_url=body.canonical_url or None, index_status=body.index_status, quality_score=body.quality_score,
-        content=body.content, status=body.status or LpseoPageStatus.DRAFT.value,
+        # Same sync as the update and import paths. Without it the column fell back
+        # to the "leaf" default, so a pillar hand-created in the admin UI looked like
+        # a pillar to the frontend and like a generated leaf to the drip scheduler,
+        # which would then flip it to index on its own.
+        content=body.content, page_type=_page_type_of(body.content),
+        status=body.status or LpseoPageStatus.DRAFT.value,
         published_at=datetime.now(timezone.utc) if body.status == LpseoPageStatus.PUBLISHED.value else None,
     )
     db.add(page)
@@ -452,6 +633,7 @@ def admin_update_page(page_id: int, body: LpseoPageIn, db: Session = Depends(get
     page.index_status = body.index_status
     page.quality_score = body.quality_score
     page.content = body.content
+    page.page_type = _page_type_of(body.content)
     if body.status in (LpseoPageStatus.DRAFT.value, LpseoPageStatus.PUBLISHED.value):
         if body.status == LpseoPageStatus.PUBLISHED.value and page.status != LpseoPageStatus.PUBLISHED.value:
             page.published_at = datetime.now(timezone.utc)
@@ -532,27 +714,47 @@ IDENTITY_COLS = ["slug", "country", "industry_label", "industry_slug", "city_lab
                  "quality_score", "status"]
 CONTENT_TEXT_COLS = [
     "badge", "hero_sub", "primary_cta", "secondary_cta",
-    "answer_heading", "answer_block", "strategy_heading", "strategy_body",
-    "maps_body", "city_body", "audit_summary_title", "audit_summary_body",
+    "answer_heading", "answer_block", "intent_body", "strategy_heading", "strategy_body",
+    "city_body", "reviews_body", "example_review", "example_reply",
+    "audit_summary_title", "audit_summary_body",
     "lead_heading", "lead_sub", "final_heading", "final_sub", "final_button",
     "gbp_url", "primary_keyword", "region", "last_updated", "page_type", "template_version",
 ]
 CONTENT_LIST_COLS = [
-    "strategy_points", "topics", "maps_signals", "neighborhoods", "city_requirements",
-    "single_points", "multi_points", "secondary_keywords",
+    "topics", "neighborhoods", "single_points", "multi_points",
+    "secondary_keywords", "review_themes",
 ]
 # {"title","detail"}
-CONTENT_PAIR_COLS = ["value_props", "proof_points", "deliverables"]
+CONTENT_PAIR_COLS = ["search_intents", "value_props", "city_factors", "proof_points",
+                     "deliverables", "audit_checklist", "workflow_weeks", "journey_stages"]
 # {"q","a"}
-CONTENT_QA_COLS = ["faqs", "answer_units"]
+CONTENT_QA_COLS = ["faqs"]
 # Typed dicts, see _map_tuple.
 CONTENT_TUPLE_COLS = [
-    "search_intents", "services", "comparison", "workflow_phases",
-    "audit_bars", "plans", "related_pages", "internal_links",
+    "services", "comparison", "workflow_phases", "plans", "related_pages", "internal_links",
 ]
 IGNORED_COLS = ["url", "schema_type"]
 ALL_COLS = (IDENTITY_COLS + CONTENT_TEXT_COLS + CONTENT_LIST_COLS + CONTENT_PAIR_COLS
             + CONTENT_QA_COLS + CONTENT_TUPLE_COLS + IGNORED_COLS)
+
+# The Local-SEO industry x city content package ships its CSV on the 50-column
+# GBP-management header rather than this template's column names. Accept that header
+# as-is so a generated file imports unedited: each source column is renamed to the
+# key this template actually renders. A canonical column already present in the row
+# always wins, so nothing here can shadow a purpose-built lpSEO CSV.
+PACKAGE_ALIASES = {
+    "why_matters_body": "intent_body",       # sub-copy under the search-intent grid
+    "why_matters_points": "search_intents",  # "Journey :: what customers do"
+    "city_visibility_body": "city_body",
+    "solutions": "services",                 # "SEO area :: what Pinzo manages"
+    "problems": "audit_checklist",           # "Gap :: impact" -> sample-audit rows
+    "monthly_workflow": "workflow_weeks",    # "Week 1 :: focus" -> monthly rhythm
+    "gbp_services": "topics",
+}
+# Columns the package header carries that describe GBP-listing work, not this page:
+# gbp_categories, gbp_attributes, post_ideas, photo_checklist, review_examples.
+# They parse fine and are simply not stored (the reference template renders no such
+# section). Unknown columns have always been ignored, so they need no declaration.
 
 
 def _subsplit(cell: str) -> list[str]:
@@ -562,20 +764,12 @@ def _subsplit(cell: str) -> list[str]:
 
 def _map_tuple(col: str, parts: list[str]) -> dict:
     g = lambda i: parts[i] if i < len(parts) else ""
-    if col == "search_intents":
-        return {"title": g(0), "detail": g(1), "example": g(2)}
     if col == "services":
         return {"channel": g(0), "work": g(1), "outcome": g(2)}
     if col == "comparison":
         return {"point": g(0), "agency": g(1), "software": g(2), "pinzo": g(3)}
     if col == "workflow_phases":
         return {"days": g(0), "title": g(1), "steps": _subsplit(g(2))}
-    if col == "audit_bars":
-        try:
-            pct = max(0, min(100, int(float(g(1)))))
-        except ValueError:
-            pct = 0
-        return {"label": g(0), "percent": pct}
     if col == "plans":
         return {"tag": g(0), "name": g(1), "desc": g(2), "features": _subsplit(g(3)),
                 "cta_label": g(4), "cta_href": g(5), "featured": g(6).strip().lower() in ("1", "true", "yes")}
@@ -584,7 +778,31 @@ def _map_tuple(col: str, parts: list[str]) -> dict:
     return {"anchor": g(0), "url": g(1)}  # related_pages
 
 
+def _normalise_row(row: dict[str, str]) -> dict[str, str]:
+    """Rename the content package's GBP-header columns onto this template's keys."""
+    out = dict(row)
+    for src, dst in PACKAGE_ALIASES.items():
+        value = (out.pop(src, "") or "").strip()
+        if value and not (out.get(dst) or "").strip():
+            out[dst] = value
+    return out
+
+
+def _normalise_status(row: dict[str, str]) -> tuple[Optional[str], Optional[str]]:
+    """(status, index_status). The package CSV puts a publishing-workflow state in
+    `status` ("ready_for_upload_noindex") rather than a DB state. Read it as the
+    launch gate it is: import as a draft, and hold the page out of the index."""
+    status = (row.get("status") or "").strip().lower() or None
+    index_status = (row.get("index_status") or "").strip().lower() or None
+    if status and status.startswith("ready_for_upload"):
+        if status.endswith("noindex"):
+            index_status = "noindex"
+        status = LpseoPageStatus.DRAFT.value
+    return status, index_status
+
+
 def _row_to_page_in(row: dict[str, str]) -> LpseoPageIn:
+    row = _normalise_row(row)
     content: dict[str, Any] = {}
     for col in CONTENT_TEXT_COLS:
         if (row.get(col) or "").strip():
@@ -608,6 +826,7 @@ def _row_to_page_in(row: dict[str, str]) -> LpseoPageIn:
     except ValueError:
         quality_score = None
 
+    status, index_status = _normalise_status(row)
     return LpseoPageIn(
         slug=(row.get("slug") or "").strip() or None,
         country=(row.get("country") or "").strip() or None,
@@ -619,10 +838,10 @@ def _row_to_page_in(row: dict[str, str]) -> LpseoPageIn:
         meta_description=(row.get("meta_description") or "").strip() or None,
         h1=(row.get("h1") or "").strip() or None,
         canonical_url=(row.get("canonical_url") or "").strip() or None,
-        index_status=(row.get("index_status") or "").strip().lower() or None,
+        index_status=index_status,
         quality_score=quality_score,
         content=content,
-        status=(row.get("status") or "").strip().lower() or None,
+        status=status,
     )
 
 
@@ -637,6 +856,7 @@ def admin_import_columns(_: User = Depends(superadmin_required)):
         "pair_columns": CONTENT_PAIR_COLS + CONTENT_QA_COLS,
         "list_columns": CONTENT_LIST_COLS,
         "tuple_columns": CONTENT_TUPLE_COLS,
+        "aliases": PACKAGE_ALIASES,
     }
 
 
@@ -661,6 +881,11 @@ def admin_import_pages(
     # no DB — lets us gather all slugs and preload existing rows in ONE query below
     # instead of a per-row SELECT (thousands of round-trips on a remote DB was slow
     # enough to blow past the proxy timeout mid-upload).
+    known_city_country = {
+        c: cc for c, cc in db.query(LpseoPage.city_slug, LpseoPage.country)
+        .filter(LpseoPage.page_type == 'leaf').distinct().all()
+    }
+
     parsed = []  # (idx, LpseoPageIn)
     for idx, row in enumerate(rows, start=2):
         if not any((v or "").strip() for v in row.values()):
@@ -669,6 +894,10 @@ def admin_import_pages(
             data = _apply_defaults(_row_to_page_in(row))
             if not data.industry_label or not data.city_label:
                 raise ValueError("industry_label and city_label are required")
+            # Same guard as pSEO: this importer will generate thousands of pages.
+            # A pillar's city_label is the country name, so it is exempt.
+            if not _is_pillar(data.content):
+                check_city_country(data.city_slug, data.country, known_city_country)
             if data.status and data.status not in (LpseoPageStatus.DRAFT.value, LpseoPageStatus.PUBLISHED.value):
                 raise ValueError(f"invalid status: {data.status}")
             parsed.append((idx, data))
@@ -707,6 +936,7 @@ def admin_import_pages(
                     page.index_status = data.index_status
                     page.quality_score = data.quality_score
                     page.content = data.content
+                    page.page_type = _page_type_of(data.content)
                     if data.status:
                         if data.status == LpseoPageStatus.PUBLISHED.value and page.status != LpseoPageStatus.PUBLISHED.value:
                             page.published_at = datetime.now(timezone.utc)
@@ -724,7 +954,8 @@ def admin_import_pages(
                         city_label=data.city_label, city_slug=data.city_slug,
                         meta_title=data.meta_title, meta_description=data.meta_description, h1=data.h1,
                         canonical_url=data.canonical_url or None, index_status=data.index_status, quality_score=data.quality_score,
-                        content=data.content, status=data.status or LpseoPageStatus.DRAFT.value,
+                        content=data.content, page_type=_page_type_of(data.content),
+                        status=data.status or LpseoPageStatus.DRAFT.value,
                         published_at=datetime.now(timezone.utc) if data.status == LpseoPageStatus.PUBLISHED.value else None,
                     )
                     db.add(page)

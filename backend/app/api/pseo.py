@@ -159,6 +159,25 @@ def list_published_pages(
     }
 
 
+@public_router.get("/paths")
+def list_published_paths(country: Optional[str] = None, db: Session = Depends(get_db)):
+    """Slugs only, for the templates' link-safety gate.
+
+    The gate just needs to know which destinations exist. It used to call the full
+    list endpoint, which ships every page's labels and timestamps: ~190 KB for
+    India's 795 rows, deserialised on every render, to build a set of strings.
+    This returns ~20 KB of exactly what is needed."""
+    q = (db.query(PseoPage.slug, PseoPage.industry_slug)
+         .filter(PseoPage.status == PseoPageStatus.PUBLISHED.value,
+                 PseoPage.index_status == "index",
+                 or_(PseoPage.quality_score.is_(None), PseoPage.quality_score >= _QUALITY_GATE)))
+    if country:
+        q = q.filter(PseoPage.country == _country_code(country))
+    rows = q.all()
+    return {"slugs": sorted({r.slug for r in rows}),
+            "industries": sorted({r.industry_slug for r in rows})}
+
+
 @public_router.get("/{slug}")
 def get_published_page(slug: str, db: Session = Depends(get_db)):
     r = get_redis()
@@ -552,6 +571,63 @@ CONTENT_PAIR_COLS = ["problems", "solutions", "monthly_workflow", "faqs"]
 CONTENT_TUPLE_COLS = ["review_examples", "related_pages"]
 # `url` and `schema_type` are accepted in the header but ignored: url is derived from
 # locale+slug, schema_type is generated server-side to keep structured data valid.
+# ── City / country integrity guard ───────────────────────────────────────────
+#
+# 1,034 of 1,809 pages under /en-in/ turned out to be for cities in nine other
+# countries (Bangkok, Jakarta, Manila, Riyadh, Doha...). The generator emitted
+# country="in" for the whole batch, so they served under India's locale prefix and
+# India's hreflang. Nothing validated it, so 57% of a market was wrong for months.
+#
+# Two checks, neither needing a gazetteer:
+#   1. A curated map of the cities we know are misattributable. Cheap, exact, and
+#      it stops these specific ones recurring.
+#   2. Drift: a city_slug already stored under a DIFFERENT country. This is the
+#      general check. It catches new cities the map has never heard of, because the
+#      first import defines the truth and later ones must agree.
+#
+# Genuine homographs exist (London ON vs London UK, Hamilton NZ vs Hamilton ON), so
+# check 2 keys on (city_slug, industry_slug) rather than city alone, and a row may
+# always opt out with an explicit, different city_slug.
+
+CITY_COUNTRY: dict[str, str] = {}
+for _cc, _cities in {
+    "th": "bangkok chiang-mai chiang-rai hat-yai hua-hin khon-kaen koh-samui nonthaburi pattaya phuket",
+    "id": "bandung batam bekasi bogor denpasar depok jakarta makassar malang medan palembang semarang surabaya tangerang yogyakarta",
+    "ph": "angeles bacolod baguio cagayan-de-oro cebu-city davao-city iloilo-city las-pi-as makati mandaue manila para-aque pasig quezon-city taguig",
+    "my": "cyberjaya george-town ipoh johor-bahru kota-kinabalu kuala-lumpur kuching malacca petaling-jaya putrajaya shah-alam subang-jaya",
+    "sa": "abha al-ahsa dammam dhahran jeddah jubail khobar mecca medina riyadh tabuk taif",
+    "qa": "al-khor al-rayyan al-wakrah doha lusail",
+    "bh": "budaiya isa-town manama muharraq riffa",
+    "kw": "fahaheel farwaniya hawalli kuwait-city mangaf salmiya",
+    "om": "muscat nizwa salalah seeb sohar sur",
+}.items():
+    for _c in _cities.split():
+        CITY_COUNTRY[_c] = _cc
+
+
+def check_city_country(city_slug: str, country: str, known: Optional[dict] = None) -> None:
+    """Raise if this city does not belong to the declared country.
+
+    `known` maps city_slug -> country as already stored, letting the caller supply
+    the drift check without a query per row."""
+    city = (city_slug or "").strip().lower()
+    if not city:
+        return
+    expected = CITY_COUNTRY.get(city)
+    if expected and expected != country:
+        raise ValueError(
+            f"city '{city}' is in '{expected}', not '{country}'. "
+            f"Set country={expected} for this row, or use a different city_slug."
+        )
+    if known:
+        prior = known.get(city)
+        if prior and prior != country:
+            raise ValueError(
+                f"city '{city}' is already published under country '{prior}'; "
+                f"this row says '{country}'. Two markets cannot own one city slug."
+            )
+
+
 IGNORED_COLS = ["url", "schema_type"]
 ALL_COLS = IDENTITY_COLS + CONTENT_TEXT_COLS + CONTENT_LIST_COLS + CONTENT_PAIR_COLS + CONTENT_TUPLE_COLS + IGNORED_COLS
 
@@ -684,6 +760,12 @@ def admin_import_pages(
     # no DB — lets us gather all slugs and preload existing rows in ONE query below
     # instead of a per-row SELECT (thousands of round-trips on a remote DB was slow
     # enough to blow past the proxy timeout mid-upload).
+    # city_slug -> country as already stored, so a new row cannot claim a city
+    # another market already owns. One query, not one per row.
+    known_city_country = {
+        c: cc for c, cc in db.query(PseoPage.city_slug, PseoPage.country).distinct().all()
+    }
+
     parsed = []  # (idx, PseoPageIn)
     for idx, row in enumerate(rows, start=2):  # 1-based + header row
         if not any((v or "").strip() for v in row.values()):
@@ -692,6 +774,8 @@ def admin_import_pages(
             data = _apply_defaults(_row_to_page_in(row))
             if not data.industry_label or not data.city_label:
                 raise ValueError("industry_label and city_label are required")
+            # 57% of the India market was once filed from the wrong country. Never again.
+            check_city_country(data.city_slug, data.country, known_city_country)
             if data.status and data.status not in (PseoPageStatus.DRAFT.value, PseoPageStatus.PUBLISHED.value):
                 raise ValueError(f"invalid status: {data.status}")
             parsed.append((idx, data))

@@ -1,3 +1,4 @@
+import { marketName } from '@/lib/markets'
 // pSEO (industry x city) landing pages: fetch + metadata + JSON-LD helpers.
 // Rendered by components/pseo/PseoLanding.tsx via the [slug] route fallback.
 
@@ -83,11 +84,8 @@ export const industryHubUrl = (locale: string, industrySlug: string) => `${SITE_
 
 export const localeToCountry = (locale: string) => (locale.split('-')[1] || 'in').toLowerCase()
 
-const COUNTRY_NAMES: Record<string, string> = {
-  in: 'India', us: 'United States', gb: 'United Kingdom', ca: 'Canada',
-  au: 'Australia', ae: 'UAE', sg: 'Singapore', za: 'South Africa', ie: 'Ireland', nz: 'New Zealand',
-}
-export const countryName = (code: string) => COUNTRY_NAMES[code] || code.toUpperCase()
+// Single source of truth in lib/markets.ts; see the note there on why.
+export const countryName = marketName
 
 function apiBase(): string {
   // Same internal-routing dance as microsites: SSR inside docker-compose talks

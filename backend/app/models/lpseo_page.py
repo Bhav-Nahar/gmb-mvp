@@ -32,6 +32,14 @@ class LpseoPage(Base):
     # hreflang. English-only content for now.
     country = Column(String, nullable=False, default="in")
 
+    # Which template this slug renders, and the line between hand-authored and
+    # generated pages:
+    #   "leaf"            {industry}-in-{city}, produced in bulk, drip-released
+    #   "industry_pillar" the bare {industry} slug, hand-authored
+    #   "city_pillar"     the bare {city} slug, hand-authored
+    # The drip scheduler must select on this: only leaves are trickled out.
+    page_type = Column(String, nullable=False, default="leaf")
+
     meta_title = Column(String, nullable=False)
     meta_description = Column(String, nullable=False)
     h1 = Column(String, nullable=False)
@@ -39,6 +47,11 @@ class LpseoPage(Base):
     canonical_url = Column(String, nullable=True)
     # "index" | "noindex".
     index_status = Column(String, nullable=False, default="index")
+    # Drip-feed indexing: when set, an hourly sweep flips index_status to "index"
+    # once this moment passes, then clears it. Null means "not scheduled" — either
+    # already live or never armed. Releasing a large corpus over weeks instead of in
+    # one day is the whole point; see services/lpseo_drip.py.
+    index_at = Column(DateTime(timezone=True), nullable=True)
     # Optional QA gate score (0-100); < gate auto-noindexes.
     quality_score = Column(Integer, nullable=True)
 
@@ -54,4 +67,6 @@ class LpseoPage(Base):
         Index("ix_lpseo_pages_status", "status"),
         Index("ix_lpseo_pages_industry_city", "industry_slug", "city_slug"),
         Index("ix_lpseo_pages_country_status", "country", "status"),
+        Index("ix_lpseo_pages_index_at", "index_at"),
+        Index("ix_lpseo_pages_page_type", "page_type"),
     )
