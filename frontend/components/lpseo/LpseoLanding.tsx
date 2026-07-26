@@ -5,10 +5,11 @@ import {
 } from 'lucide-react'
 import { MarketingHeader } from '@/components/MarketingHeader'
 import { MarketingFooter } from '@/components/MarketingFooter'
+import { SectionHeading, makeSafeLink } from '@/components/seo/sections'
 import LpseoLeadForm from './LpseoLeadForm'
 import {
   buildLpseoJsonLd, lpseoPath, industryHubPath, rootHubPath, isLpseoPillar, citySlugify,
-  countryName, canLink,
+  countryName,
   type LpseoPageData, type LpseoListItem, type LpseoSection,
 } from '@/lib/lpseo'
 
@@ -54,10 +55,7 @@ export default function LpseoLanding({ page, siblings = [], livePaths = new Set<
   // internal link never costs a redirect hop.
   // Renders an anchor only when the destination exists; otherwise plain text.
   // Guardrail: never link a planned page that 404s.
-  const SafeLink = ({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) =>
-    canLink(href, livePaths)
-      ? <Link href={href} className={className}>{children}</Link>
-      : <span className={className} aria-disabled>{children}</span>
+  const SafeLink = makeSafeLink(livePaths)
 
   const normaliseHref = (u: string) => (u.length > 1 && u.endsWith('/') && !u.includes('#') ? u.replace(/\/+$/, '') : u)
 
@@ -84,13 +82,6 @@ export default function LpseoLanding({ page, siblings = [], livePaths = new Set<
     )
   }
 
-  const SectionHeading = ({ eyebrow, title, sub }: { eyebrow?: string; title: string; sub?: string }) => (
-    <div className="mx-auto max-w-3xl space-y-3 text-center">
-      {eyebrow && <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">{eyebrow}</div>}
-      <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{title}</h2>
-      {sub && <p className="text-muted-foreground">{sub}</p>}
-    </div>
-  )
 
   const HeroCtas = () => (
     <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">

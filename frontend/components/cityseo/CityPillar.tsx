@@ -3,11 +3,11 @@ import {
   Sparkles, Check, MapPin, ArrowRight, ShieldCheck, BarChart3, Bot,
   Globe, Compass, Phone, FileText, HelpCircle, CalendarClock,
 } from 'lucide-react'
-import { canLink } from '@/lib/lpseo'
 import { MarketingHeader } from '@/components/MarketingHeader'
 import { MarketingFooter } from '@/components/MarketingFooter'
 import LpseoLeadForm from '@/components/lpseo/LpseoLeadForm'
 import { buildCityJsonLd, countryHubPath, type CityPageData, type CitySectionKey } from '@/lib/cityseo'
+import { Section, makeSafeLink } from '@/components/seo/sections'
 
 /**
  * City pillar (Local SEO universe), served at /{locale}/local-seo-services/{city-slug}.
@@ -33,10 +33,7 @@ export default function CityPillar({ page, livePaths = new Set<string>() }: { pa
 
   // Never render an anchor to a page that does not exist yet (guardrail: no links
   // to planned pages). Unpublished destinations degrade to plain text.
-  const SafeLink = ({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) =>
-    canLink(href, livePaths)
-      ? <Link href={href} className={className}>{children}</Link>
-      : <span className={className} aria-disabled>{children}</span>
+  const SafeLink = makeSafeLink(livePaths)
   const city = page.city_label
   const jsonLd = buildCityJsonLd(page)
   const eyebrows = c.section_eyebrows || {}
@@ -50,21 +47,6 @@ export default function CityPillar({ page, livePaths = new Set<string>() }: { pa
   const grouped = new Set((c.industry_link_groups || []).flatMap((g) => g.links.map((l) => norm(l.url))))
   const extraLinks = (c.internal_links || []).filter((l) => !grouped.has(norm(l.url)))
 
-  const Section = ({ id, eyebrow, title, sub, children, alt }: {
-    id?: string; eyebrow?: string; title: string; sub?: string
-    children?: React.ReactNode; alt?: boolean
-  }) => (
-    <section id={id} className={alt ? 'border-y border-border/40 bg-muted/10 py-16' : 'py-16'}>
-      <div className="mx-auto max-w-6xl space-y-8 px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl space-y-3 text-center">
-          {eyebrow && <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">{eyebrow}</div>}
-          <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{title}</h2>
-          {sub && <p className="text-muted-foreground">{sub}</p>}
-        </div>
-        {children}
-      </div>
-    </section>
-  )
 
   return (
     <div className="relative min-h-screen overflow-x-clip bg-background font-sans text-foreground">

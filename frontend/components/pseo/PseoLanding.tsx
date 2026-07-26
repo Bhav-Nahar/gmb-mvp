@@ -6,6 +6,7 @@ import {
 import { MarketingHeader } from '@/components/MarketingHeader'
 import { MarketingFooter } from '@/components/MarketingFooter'
 import { buildPseoJsonLd, industryHubPath, rootHubPath, pseoPath, type PseoPageData, type PseoListItem } from '@/lib/pseo'
+import { SectionHeading } from '@/components/seo/sections'
 
 /**
  * Programmatic SEO landing page (industry x city), 13-section template.
@@ -27,13 +28,6 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
   const pricingHref = isIndia ? '/pricing' : '/pricing?ccy=usd'
   const whatsappDemo = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo for my ${industry.toLowerCase()} business in ${city}.`)
 
-  const SectionHeading = ({ eyebrow, title, sub }: { eyebrow?: string; title: string; sub?: string }) => (
-    <div className="mx-auto max-w-3xl space-y-3 text-center">
-      {eyebrow && <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">{eyebrow}</div>}
-      <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">{title}</h2>
-      {sub && <p className="text-muted-foreground">{sub}</p>}
-    </div>
-  )
 
   const CtaButtons = ({ location }: { location: string }) => (
     <div className="flex flex-col items-center justify-center gap-3 sm:flex-row" data-cta={location}>
