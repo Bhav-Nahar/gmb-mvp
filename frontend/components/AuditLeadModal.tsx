@@ -1,40 +1,56 @@
 'use client'
 
-import { useState } from 'react'
-import { Loader2, CheckCircle2, ArrowRight } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Loader2, CheckCircle2, ArrowRight, Clock } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { getAttribution } from '@/lib/attribution'
+import {
+  trackAuditFormOpen, trackGenerateLead, trackLeadSignUp, trackFormError, trackCustomerData,
+  type CtaLocation,
+} from '@/lib/analytics'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
-// "Get my custom audit" modal for the paid GBP landing page. Posts to the same
+// "Request my free audit" modal for the paid GBP landing page. Posts to the same
 // public endpoint as the local-SEO landing forms, so the enquiry lands in the
 // existing super-admin Leads tab (/admin/leads) and the notification email.
 //
-// ponytail: job title + city ride along in `message` rather than getting their own
-// columns — the admin details panel already renders it. Give them columns when
-// someone needs to filter or export by city.
-export default function AuditLeadModal({ open, onOpenChange, page }: {
+// The audit is prepared by a person, so every promise here is about someone getting
+// back to them — nothing on this path connects Google or runs instantly.
+//
+// Five fields, four required. Job title, city and website were cut: none of them
+// changed how the audit actually gets done, and each one costs conversions on cold
+// paid traffic. The team asks for whatever else it needs on the follow-up.
+export default function AuditLeadModal({ open, onOpenChange, page, ctaLocation }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   page: string
+  ctaLocation?: CtaLocation
 }) {
   const [form, setForm] = useState({
-    name: '', phone: '', email: '', stores: '', jobTitle: '',
-    companyName: '', website: '', city: '',
+    name: '', phone: '', email: '', stores: '', companyName: '',
     company: '', // honeypot: hidden from humans, bots fill it
   })
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
+  // One conversion per lead, whatever the visitor does with the modal afterwards.
+  const converted = useRef(false)
 
   const update = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }))
+
+  // view_promotion — the offer was actually shown, not merely clicked.
+  useEffect(() => {
+    if (open) trackAuditFormOpen(ctaLocation ?? 'hero')
+  }, [open, ctaLocation])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (submitting || converted.current) return
     if (!/^\d{10}$/.test(form.phone.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, ''))) {
       setError('Please enter a valid 10-digit mobile number.')
+      trackFormError('audit_form: invalid phone')
       return
     }
     setSubmitting(true)
@@ -48,10 +64,8 @@ export default function AuditLeadModal({ open, onOpenChange, page }: {
           phone: form.phone,
           email: form.email,
           clinic: form.companyName,
-          website: form.website,
           locations: form.stores,
-          goal: 'Custom GBP audit',
-          message: `Job title: ${form.jobTitle}\nCity: ${form.city}`,
+          goal: 'Free GBP audit request',
           company: form.company,
           page,
           utm_source: a.utm_source,
@@ -62,10 +76,26 @@ export default function AuditLeadModal({ open, onOpenChange, page }: {
         }),
       })
       // Success only on a confirmed response — never optimistically.
-      if (!res.ok) throw new Error('Request failed')
+      if (!res.ok) throw new Error(`lead POST ${res.status}`)
+      const body = await res.json().catch(() => ({}))
+      converted.current = true
+      // Raw PII for GTM to hash — this is what powers Google Ads enhanced
+      // conversions for leads. Pushed before generate_lead so the values are
+      // already in the dataLayer when the conversion tag reads them.
+      trackCustomerData({ name: form.name, mobile: form.phone, email: form.email })
+      trackGenerateLead({
+        lead_id: body?.id,
+        cta_location: ctaLocation,
+        locationsCount: Number(form.stores.replace(/\D/g, '')) || undefined,
+        email: form.email,
+      })
+      // Same lead, also as sign_up — that's the event the Ads conversion goal
+      // currently reads. Remove once generate_lead is imported into Ads itself.
+      trackLeadSignUp({ lead_id: body?.id, cta_location: ctaLocation, email: form.email })
       setDone(true)
-    } catch {
+    } catch (err) {
       setError('Something went wrong. Please try again or WhatsApp us.')
+      trackFormError(`audit_form: ${err instanceof Error ? err.message : 'submit failed'}`)
     } finally {
       setSubmitting(false)
     }
@@ -82,48 +112,40 @@ export default function AuditLeadModal({ open, onOpenChange, page }: {
             <CheckCircle2 className="h-9 w-9 text-emerald-500" />
             <DialogTitle className="text-lg font-bold">Request received</DialogTitle>
             <DialogDescription className="max-w-sm text-sm">
-              Thanks. Our team will review your Google Business Profiles and get back with your custom audit shortly.
+              Our local visibility team is on it. You&apos;ll get your branch-wise audit
+              within 1 business day, on the email and number you shared.
             </DialogDescription>
           </div>
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Fill in the details to get your custom audit</DialogTitle>
-              <DialogDescription>Fill out this form and we&apos;ll reach out to you shortly.</DialogDescription>
+              <DialogTitle>Request your free GBP audit</DialogTitle>
+              <DialogDescription>
+                Tell us where to send it. Our team reviews your Google Business Profiles
+                by hand and comes back with the gaps worth fixing first.
+              </DialogDescription>
             </DialogHeader>
 
             <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
               <div>
                 <label className={labelCls} htmlFor="al-name">Name *</label>
-                <input id="al-name" className={inputCls} value={form.name} onChange={(e) => update('name', e.target.value)} autoComplete="name" placeholder="Full name" required />
+                <input id="al-name" name="name" className={inputCls} value={form.name} onChange={(e) => update('name', e.target.value)} autoComplete="name" placeholder="Full name" required />
               </div>
               <div>
                 <label className={labelCls} htmlFor="al-phone">10-digit mobile number *</label>
-                <input id="al-phone" className={inputCls} value={form.phone} onChange={(e) => update('phone', e.target.value)} autoComplete="tel" inputMode="numeric" placeholder="9876543210" required />
+                <input id="al-phone" name="phone" className={inputCls} value={form.phone} onChange={(e) => update('phone', e.target.value)} autoComplete="tel" inputMode="numeric" placeholder="9876543210" required />
               </div>
               <div className="sm:col-span-2">
-                <label className={labelCls} htmlFor="al-email">Official email ID *</label>
-                <input id="al-email" type="email" className={inputCls} value={form.email} onChange={(e) => update('email', e.target.value)} autoComplete="email" placeholder="you@company.com" required />
+                <label className={labelCls} htmlFor="al-email">Email *</label>
+                <input id="al-email" name="email" type="email" className={inputCls} value={form.email} onChange={(e) => update('email', e.target.value)} autoComplete="email" placeholder="you@company.com" required />
               </div>
               <div>
-                <label className={labelCls} htmlFor="al-stores">No. of stores</label>
-                <input id="al-stores" className={inputCls} value={form.stores} onChange={(e) => update('stores', e.target.value)} inputMode="numeric" placeholder="e.g. 12" />
+                <label className={labelCls} htmlFor="al-company">Business name *</label>
+                <input id="al-company" name="organization" className={inputCls} value={form.companyName} onChange={(e) => update('companyName', e.target.value)} autoComplete="organization" placeholder="As it appears on Google" required />
               </div>
               <div>
-                <label className={labelCls} htmlFor="al-title">Job title *</label>
-                <input id="al-title" className={inputCls} value={form.jobTitle} onChange={(e) => update('jobTitle', e.target.value)} autoComplete="organization-title" placeholder="e.g. Marketing Head" required />
-              </div>
-              <div>
-                <label className={labelCls} htmlFor="al-company">Company name *</label>
-                <input id="al-company" className={inputCls} value={form.companyName} onChange={(e) => update('companyName', e.target.value)} autoComplete="organization" placeholder="Company" required />
-              </div>
-              <div>
-                <label className={labelCls} htmlFor="al-city">City name *</label>
-                <input id="al-city" className={inputCls} value={form.city} onChange={(e) => update('city', e.target.value)} autoComplete="address-level2" placeholder="City" required />
-              </div>
-              <div className="sm:col-span-2">
-                <label className={labelCls} htmlFor="al-website">Company website URL *</label>
-                <input id="al-website" className={inputCls} value={form.website} onChange={(e) => update('website', e.target.value)} inputMode="url" placeholder="https://" required />
+                <label className={labelCls} htmlFor="al-stores">No. of locations</label>
+                <input id="al-stores" name="locations" className={inputCls} value={form.stores} onChange={(e) => update('stores', e.target.value)} inputMode="numeric" placeholder="e.g. 12" />
               </div>
 
               {/* Honeypot: hidden from humans and assistive tech, bots fill it. */}
@@ -134,8 +156,14 @@ export default function AuditLeadModal({ open, onOpenChange, page }: {
 
               {error && <p role="alert" className="text-xs font-semibold text-rose-500 sm:col-span-2">{error}</p>}
 
+              <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-2.5 text-[11px] font-medium leading-relaxed text-muted-foreground sm:col-span-2">
+                <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                Your branch-wise audit arrives within 1 business day. No payment, and no
+                Google account access needed to receive it.
+              </p>
+
               <button type="submit" disabled={submitting} className="flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3.5 text-sm font-bold text-primary-foreground shadow-lg transition-colors hover:bg-primary/90 disabled:opacity-60 sm:col-span-2">
-                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Get my custom audit <ArrowRight className="h-4 w-4" /></>}
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Request my free audit <ArrowRight className="h-4 w-4" /></>}
               </button>
               <p className="text-[11px] leading-relaxed text-muted-foreground sm:col-span-2">
                 By submitting you agree that Pinzo may contact you about this request. See our{' '}
