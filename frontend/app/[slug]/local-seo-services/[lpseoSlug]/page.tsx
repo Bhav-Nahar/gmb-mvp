@@ -1,10 +1,14 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import LpseoLanding from '@/components/lpseo/LpseoLanding'
+import CityPillar from '@/components/cityseo/CityPillar'
 import PseoHub from '@/components/pseo/PseoHub'
 import {
   getLpseoPage, listLpseoPages, lpseoPath, industryHubPath, rootHubPath, localeToCountry,
+  isLpseoPillar, noSlash, buildLiveFamilyPaths,
 } from '@/lib/lpseo'
+import { isCityPillar, asCityPage } from '@/lib/cityseo'
+import { listPseoPages, pseoPath } from '@/lib/pseo'
 
 // Served at /{locale}/local-seo-services/{lpseoSlug}. [slug] is the locale (Next.js
 // forbids two dynamic names at one level, so it reuses the microsite segment name).
@@ -27,7 +31,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const page = await getLpseoPage(params.lpseoSlug)
 
   if (page && page.locale === locale) {
-    const canonical = page.canonical_url || `${SITE_URL}${lpseoPath(page.locale, page.slug)}`
+    const canonical = noSlash(page.canonical_url || `${SITE_URL}${lpseoPath(page.locale, page.slug)}`)
     const noindex = page.index_status === 'noindex'
     const ogImage = page.content?.og_image || `${SITE_URL}/logo-horizontal-3.png`
     return {
@@ -36,7 +40,9 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
       robots: { index: !noindex, follow: true },
       alternates: {
         canonical,
-        languages: { [page.locale]: canonical, 'x-default': canonical },
+        // x-default is the GLOBAL pillar, not this page. Pointing it at itself made
+        // every industry pillar, city pillar and leaf its own default variant.
+        languages: { [page.locale]: canonical, 'x-default': `${SITE_URL}/local-seo-services` },
       },
       openGraph: { title: page.meta_title, description: page.meta_description, url: canonical, siteName: 'Pinzo', type: 'website', images: [{ url: ogImage }] },
       twitter: { card: 'summary_large_image', title: page.meta_title, description: page.meta_description, images: [ogImage] },
@@ -67,11 +73,31 @@ export default async function LocalSeoSlugPage({ params }: { params: Params }) {
   if (page) {
     // Wrong-locale prefix -> 404 so the two markets never serve duplicate content.
     if (locale !== page.locale) notFound()
+
+    // City pillar ({city} slug): its own template and content schema.
+    if (isCityPillar(page)) {
+      const [lp, pp] = await Promise.all([
+        listLpseoPages({ country: page.country }), listPseoPages({ country: page.country })])
+      return <CityPillar page={asCityPage(page)}
+        livePaths={buildLiveFamilyPaths(lp, page.locale, pp.map((x) => pseoPath(x.locale, x.slug)))} />
+    }
+
     // Sibling city pages (same industry + market) for contextual internal links.
-    const all = await listLpseoPages({ industry: page.industry_slug, country: page.country })
+    // The industry pillar is never a "sibling city" of its own children, so it is
+    // filtered out before the rotation rather than eating one of the six slots.
+    const all = (await listLpseoPages({ industry: page.industry_slug, country: page.country }))
+      .filter((p) => !isLpseoPillar(p))
     const idx = all.findIndex((p) => p.slug === page.slug)
-    const siblings = idx === -1 ? [] : [...all.slice(idx + 1), ...all.slice(0, idx)].slice(0, 6)
-    return <LpseoLanding page={page} siblings={siblings} />
+    // The pillar links every child (that is its routing job); a leaf shows a sample.
+    const siblings = isLpseoPillar(page)
+      ? all
+      : idx === -1 ? [] : [...all.slice(idx + 1), ...all.slice(0, idx)].slice(0, 6)
+    // Only pages that are actually published and indexable may be linked; the
+    // authored CSVs list the full planned set long before those pages exist.
+    const [lpAll, ppAll] = await Promise.all([
+      listLpseoPages({ country: page.country }), listPseoPages({ country: page.country })])
+    const livePaths = buildLiveFamilyPaths(lpAll, page.locale, ppAll.map((x) => pseoPath(x.locale, x.slug)))
+    return <LpseoLanding page={page} siblings={siblings} livePaths={livePaths} />
   }
 
   // Industry hub — scoped to this locale's market.

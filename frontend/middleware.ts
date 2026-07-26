@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { SUPPORTED_MARKETS } from '@/lib/markets'
 
-// Markets we actually publish pSEO/lpSEO pages for. MUST mirror COUNTRY_NAMES in
-// lib/pseo.ts — bots enumerate /en-th, /en-my, /en-id, /en-sa ... which have no
-// pages and 404. Without this, each junk URL still invokes the page render + a
-// backend getPseoPage lookup and caches the notFound() (a Vercel function call +
-// ISR write for nothing). Rejecting the unsupported locale here, at the edge,
-// costs one cheap middleware invocation and zero ISR writes.
-const SUPPORTED = new Set(['in', 'us', 'gb', 'ca', 'au', 'ae', 'sg', 'za', 'ie', 'nz'])
+// Derived from lib/markets.ts, the single source of truth. Bots enumerate /en-th,
+// /en-de, /en-fr ... so unsupported locales are rejected at the edge: one cheap
+// middleware invocation instead of a page render, a backend lookup and an ISR write.
+// Deriving it means publishing a new market can never leave this list behind, which
+// is exactly how 1,034 correctly-migrated pages once 404'd.
+const SUPPORTED = SUPPORTED_MARKETS
 
 // /{en-xx}/gbp-management/... or /{en-xx}/local-seo-services/...
 const SEO_LOCALE = /^\/en-([a-z]{2})\/(?:gbp-management|local-seo-services)(?:\/|$)/

@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { api } from '@/lib/api'
+import SeoSubNav from '@/components/admin/SeoSubNav'
 import {
   Plus, Upload, Download, Trash2, Loader2, Pencil, Globe, EyeOff, ExternalLink,
   Search, ArrowLeft, Save, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw,
@@ -21,6 +23,7 @@ interface ImportResult {
   results: { row: number; slug: string | null; action: string; status?: string; error?: string }[]
 }
 interface Stats { total: number; published: number; draft: number; noindex: number }
+interface Drip { scheduled: number; eligible_unscheduled: number; live: number; next_at: string | null; last_at: string | null }
 interface GscMetric { clicks: number; impressions: number; ctr: number; position: number }
 interface GscQuery extends GscMetric { query: string }
 
@@ -169,7 +172,19 @@ export default function AdminLpseoPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  // Which tier this tab is showing. The sub-nav sets ?type=; no param means the
+  // generated leaves, so "Pages" never silently includes hand-authored pillars.
+  const pageType = useSearchParams()?.get('type') || 'leaf'
+  const isLeafView = pageType === 'leaf'
+  const TIER = {
+    leaf: { title: 'Local SEO pages', blurb: 'Generated industry x city pages. Imported in bulk and released by the drip scheduler.', importPath: '/admin/lpseo/import' },
+    industry_pillar: { title: 'Industry pillars', blurb: 'The hand-authored page at /en-{country}/local-seo-services/{industry}. Goes live on its own index toggle, never on the drip.', importPath: '/admin/lpseo/import' },
+    city_pillar: { title: 'City pillars', blurb: 'The hand-authored page at /en-{country}/local-seo-services/{city}. Its CSV has its own column shape, so it imports through the city endpoint.', importPath: '/admin/cityseo/import' },
+  }[pageType] ?? { title: 'Local SEO pages', blurb: '', importPath: '/admin/lpseo/import' }
+
   const [stats, setStats] = useState<Stats | null>(null)
+  const [drip, setDrip] = useState<Drip | null>(null)
+  const [rate, setRate] = useState({ min: 20, max: 30 })
   const [gscConfigured, setGscConfigured] = useState(true)
   const [gscMetrics, setGscMetrics] = useState<Record<string, GscMetric>>({})
   const [gscDays, setGscDays] = useState(GSC_DAYS)
@@ -187,6 +202,25 @@ export default function AdminLpseoPage() {
   const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(''), 6000) }
 
   const loadStats = async () => { try { setStats(await api.get<Stats>('/admin/lpseo/stats')) } catch { /* */ } }
+  const loadDrip = async () => { try { setDrip(await api.get<Drip>('/admin/lpseo/drip')) } catch { /* */ } }
+
+  // Drip-feed indexing: releasing a big corpus over weeks rather than in one day.
+  const armDrip = async () => {
+    if (!confirm(`Schedule ${drip?.eligible_unscheduled ?? 0} page(s) to go indexable at ${rate.min}-${rate.max} per day, starting tomorrow?`)) return
+    try {
+      const r = await api.post<{ scheduled: number; days: number }>('/admin/lpseo/drip', { min_per_day: rate.min, max_per_day: rate.max })
+      flash(`Scheduled ${r.scheduled} page(s) across ${r.days} day(s).`)
+      loadDrip(); loadStats()
+    } catch (e: any) { setError(e.message || 'Failed to schedule') }
+  }
+  const cancelDrip = async () => {
+    if (!confirm('Cancel every pending schedule? Pages already released stay indexable.')) return
+    try {
+      const r = await api.delete<{ cancelled: number }>('/admin/lpseo/drip')
+      flash(`Cancelled ${r.cancelled} pending schedule(s).`)
+      loadDrip(); loadStats()
+    } catch (e: any) { setError(e.message || 'Failed to cancel') }
+  }
   const loadGsc = async () => {
     try {
       const d = await api.get<{ configured: boolean; metrics: Record<string, GscMetric> }>('/admin/lpseo/gsc-metrics', { days: String(gscDays) })
@@ -196,7 +230,7 @@ export default function AdminLpseoPage() {
   const load = async () => {
     setLoading(true); setError('')
     try {
-      const params: Record<string, string> = { page: String(page), page_size: String(PAGE_SIZE) }
+      const params: Record<string, string> = { page: String(page), page_size: String(PAGE_SIZE), page_type: pageType }
       if (q.trim()) params.q = q.trim()
       if (statusFilter) params.status = statusFilter
       if (sortBy) { params.sort_by = sortBy; params.sort_dir = sortDir; params.gsc_days = String(gscDays) }
@@ -205,7 +239,7 @@ export default function AdminLpseoPage() {
     } catch (e: any) { setError(e.message || 'Failed to load pages') } finally { setLoading(false) }
   }
 
-  useEffect(() => { load(); loadStats() }, [page, statusFilter, sortBy, sortDir]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); loadStats(); loadDrip() }, [page, statusFilter, sortBy, sortDir, pageType]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadGsc(); if (sortBy) load() }, [gscDays]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const search = () => { setPage(1); load() }
@@ -320,7 +354,7 @@ export default function AdminLpseoPage() {
         const fd = new FormData()
         const chunk = chunks[i]
         fd.append('file', chunk === null ? file : new Blob([chunk], { type: 'text/csv' }), chunk === null ? file.name : `chunk-${i + 1}.csv`)
-        const r = await api.post<ImportResult>('/admin/lpseo/import', fd)
+        const r = await api.post<ImportResult>(TIER.importPath, fd)
         created += r.created; updated += r.updated; failed += r.failed
         results = results.concat(r.results); setImportResult({ created, updated, failed, results })
       }
@@ -440,10 +474,11 @@ export default function AdminLpseoPage() {
   // ── List view ──────────────────────────────────────────────────────────────
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <SeoSubNav />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-extrabold text-foreground">Local SEO landing pages</h1>
-          <p className="text-xs text-muted-foreground">Country × industry × city pages at pinzo.io/en-&#123;country&#125;/local-seo-services/&#123;industry&#125;-in-&#123;city&#125;. Import in bulk or create one by one.</p>
+          <h1 className="text-xl font-extrabold text-foreground">{TIER.title}</h1>
+          <p className="text-xs text-muted-foreground">{TIER.blurb}</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={downloadTemplate} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-bold text-muted-foreground hover:text-foreground"><Download className="h-3.5 w-3.5" /> CSV template</button>
@@ -462,6 +497,45 @@ export default function AdminLpseoPage() {
             <div key={cc.label} className="rounded-xl border border-border bg-card px-4 py-3"><div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{cc.label}</div><div className="mt-1 text-xl font-bold text-foreground">{cc.value}</div></div>
           ))}
         </div>
+      )}
+
+      {isLeafView && (
+      <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-foreground">Drip-feed indexing</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Releases published pages to <code>index,follow</code> a few dozen a day at random times, instead of the whole corpus at once. Runs hourly in the background.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground" htmlFor="drip-min">Per day</label>
+            <input id="drip-min" type="number" min={1} max={500} value={rate.min} onChange={(e) => setRate({ ...rate, min: Number(e.target.value) })} className="h-9 w-16 rounded-lg border border-border bg-background px-2 text-sm" />
+            <span className="text-xs text-muted-foreground">to</span>
+            <input aria-label="Maximum pages per day" type="number" min={1} max={500} value={rate.max} onChange={(e) => setRate({ ...rate, max: Number(e.target.value) })} className="h-9 w-16 rounded-lg border border-border bg-background px-2 text-sm" />
+            <button onClick={armDrip} disabled={!drip?.eligible_unscheduled} className="rounded-lg bg-primary px-3 py-2 text-xs font-bold uppercase tracking-wider text-primary-foreground disabled:opacity-40">Start indexing</button>
+            {!!drip?.scheduled && <button onClick={cancelDrip} className="rounded-lg border border-border px-3 py-2 text-xs font-bold text-muted-foreground hover:text-red-500">Cancel</button>}
+          </div>
+        </div>
+        {drip && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { label: 'Indexable now', value: String(drip.live) },
+              { label: 'Scheduled', value: String(drip.scheduled) },
+              { label: 'Awaiting schedule', value: String(drip.eligible_unscheduled) },
+              { label: 'Next release', value: drip.next_at ? new Date(drip.next_at).toLocaleString() : 'None' },
+            ].map((cc) => (
+              <div key={cc.label} className="rounded-lg border border-border bg-background px-3 py-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{cc.label}</div>
+                <div className="mt-0.5 text-sm font-bold text-foreground">{cc.value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {!!drip?.scheduled && drip.last_at && (
+          <p className="text-[11px] text-muted-foreground">Last page goes live {new Date(drip.last_at).toLocaleDateString()}. Nothing is released today, so a mistaken start can be cancelled.</p>
+        )}
+      </div>
       )}
 
       {notice && <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-4 w-4 shrink-0" />{notice}</div>}

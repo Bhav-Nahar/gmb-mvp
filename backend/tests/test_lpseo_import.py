@@ -5,10 +5,23 @@ SQLite `db` fixture; revalidation is stubbed so nothing hits the network.
 """
 import csv
 import io
+from pathlib import Path
 
 from app.api import lpseo as lpseo_api
 from app.api.lpseo import admin_import_pages
 from app.models.lpseo_page import LpseoPage, LpseoPageStatus
+
+LEAF_PACKAGE_CSV = (
+    Path(__file__).resolve().parents[2]
+    / "pinzo-local-seo-industry-city-complete-package (1)"
+    / "pinzo-local-seo-industry-city-import-ready.csv"
+)
+
+# Guardrail 5.1 / editorial lint: prohibited in every generated field.
+BANNED_CHARS = {
+    "–": "en dash", "—": "em dash",
+    "‑": "non-breaking hyphen", "−": "minus sign",
+}
 
 
 class _FakeUpload:
@@ -82,8 +95,11 @@ def test_import_rejects_cross_country_slug(db, monkeypatch):
         [["Dentists", "Springfield", "in"]], monkeypatch,  # same slug, different market
     )
     assert result["failed"] == 1 and result["created"] == 0 and result["updated"] == 0
-    err = next(r for r in result["results"] if r["action"] == "error")
-    assert "across markets" in err["error"]
+    # Two guards now cover this and either may fire first: the city/country drift
+    # check (parse phase) and the cross-market slug check (upsert phase). The
+    # contract is that the row is REFUSED, not which message explains it.
+    err = next(r for r in result["results"] if r["action"] == "error")["error"]
+    assert "across markets" in err or "already published under country" in err
     # The live US page must be untouched, not silently repointed to India.
     assert db.query(LpseoPage).filter(LpseoPage.slug == "dentists-in-springfield").one().country == "us"
 
@@ -112,6 +128,183 @@ def test_import_in_file_duplicate_upserts_last_wins(db, monkeypatch):
     assert any(t["slug"] == "salons-in-jaipur" for t in touched)
 
 
+def test_import_accepts_content_package_header(db, monkeypatch):
+    """The industry x city content package ships its CSV on the GBP-management
+    header. It must import unedited: aliased columns land on the keys the template
+    renders, and the package's `ready_for_upload_noindex` state means draft+noindex
+    rather than a hard row failure."""
+    header = ["slug", "country", "industry_label", "city_label", "index_status",
+              "quality_score", "status", "why_matters_body", "why_matters_points",
+              "city_visibility_body", "solutions", "problems", "monthly_workflow",
+              "gbp_services", "gbp_categories", "faqs", "url", "schema_type"]
+    row = [
+        "dentists-in-mumbai", "India", "Dentists", "Mumbai", "noindex", "96",
+        "ready_for_upload_noindex",
+        "Patients use a mix of location, treatment and urgency queries.",
+        "Locality searches::Patients search dentist near me|Treatment searches::Patients compare implants",
+        "Mumbai searches are shaped by locality and travel time.",
+        "Google Maps and GBP::Improve categories, services and photos|Technical SEO::Fix crawlability",
+        "Weak Maps coverage::Only part of the catchment is reached",
+        "Week 1::Review rankings and profiles|Week 2::Complete GBP and website actions",
+        "Dental implants|Root canal treatment",
+        "Dentist|Dental Clinic",  # GBP-only column: parses, intentionally not stored
+        "What is local SEO?::It helps nearby patients find the clinic.",
+        "/en-in/local-seo-services/dentists-in-mumbai", "Organization,FAQPage",
+    ]
+    result, touched = _run_import(db, header, [row], monkeypatch)
+
+    assert result["created"] == 1 and result["failed"] == 0
+    page = db.query(LpseoPage).filter(LpseoPage.slug == "dentists-in-mumbai").one()
+    assert page.country == "in"
+    # Publishing-workflow status is read as the launch gate it is.
+    assert page.status == LpseoPageStatus.DRAFT.value and page.index_status == "noindex"
+    assert not touched  # never published -> no live URL to purge
+
+    c = page.content
+    assert c["intent_body"].startswith("Patients use a mix")
+    assert c["search_intents"][0] == {"title": "Locality searches", "detail": "Patients search dentist near me"}
+    assert len(c["search_intents"]) == 2
+    assert c["city_body"].startswith("Mumbai searches")
+    assert c["services"][0]["channel"] == "Google Maps and GBP"
+    assert c["services"][0]["work"].startswith("Improve categories")
+    assert c["audit_checklist"] == [{"title": "Weak Maps coverage", "detail": "Only part of the catchment is reached"}]
+    assert [w["title"] for w in c["workflow_weeks"]] == ["Week 1", "Week 2"]
+    assert c["topics"] == ["Dental implants", "Root canal treatment"]
+    assert c["faqs"] == [{"q": "What is local SEO?", "a": "It helps nearby patients find the clinic."}]
+    # Aliased source names never leak into the stored content, and GBP-listing
+    # columns this page renders no section for are dropped rather than stored.
+    for dead in ("why_matters_points", "solutions", "problems", "gbp_categories", "url"):
+        assert dead not in c
+
+
+def test_import_lpseo_native_columns_win_over_aliases(db, monkeypatch):
+    # A purpose-built lpSEO CSV must never be shadowed by an alias in the same row.
+    result, _touched = _run_import(
+        db, ["industry_label", "city_label", "city_body", "city_visibility_body"],
+        [["Cafes", "Pune", "Native copy", "Package copy"]], monkeypatch,
+    )
+    assert result["created"] == 1
+    page = db.query(LpseoPage).filter(LpseoPage.slug == "cafes-in-pune").one()
+    assert page.content["city_body"] == "Native copy"
+
+
+# ── The shipped dentists x Mumbai leaf package ───────────────────────────────
+
+def _import_leaf_package(db, monkeypatch):
+    captured = {"touched": []}
+    monkeypatch.setattr(lpseo_api, "trigger_bulk_lpseo_revalidation",
+                        lambda entries: captured.__setitem__("touched", entries))
+    result = admin_import_pages(
+        file=_FakeUpload(LEAF_PACKAGE_CSV.read_bytes(), "import.csv"), db=db, _=None)
+    return result, captured["touched"]
+
+
+def test_shipped_leaf_package_csv_imports(db, monkeypatch):
+    """The enriched dentists x Mumbai package must import unedited. Every section the
+    reference HTML renders now has a CSV column, so the page ships on imported copy
+    rather than falling back to generic template defaults."""
+    result, touched = _import_leaf_package(db, monkeypatch)
+    assert result["created"] == 1 and result["failed"] == 0, result["results"]
+    assert touched == []  # ready_for_upload_noindex -> draft, nothing live to purge
+
+    page = db.query(LpseoPage).filter(LpseoPage.slug == "dentists-in-mumbai").one()
+    assert page.country == "in" and page.city_label == "Mumbai"
+    assert page.status == LpseoPageStatus.DRAFT.value and page.index_status == "noindex"
+    # A leaf, not a pillar: the column is what makes it a drip candidate once published.
+    assert page.page_type == "leaf"
+    assert page.quality_score == 96  # >= the 80 index gate, so it is index-eligible
+    c = page.content
+
+    # Recovered from the reference HTML: the service matrix keeps its third
+    # "dental relevance" column, which the 2-part `solutions` cell had dropped.
+    assert len(c["services"]) == 10
+    assert all(s["channel"] and s["work"] and s["outcome"] for s in c["services"])
+
+    # Sections that had no CSV column at all before the audit.
+    assert [j["title"] for j in c["journey_stages"]] == ["Search", "Compare", "Evaluate", "Contact", "Book"]
+    assert len(c["proof_points"]) == 4
+    assert len(c["value_props"]) == 3
+    assert len(c["city_factors"]) == 4
+    assert len(c["deliverables"]) == 9
+    assert len(c["comparison"]) == 6
+    assert all(r["point"] and r["agency"] and r["software"] and r["pinzo"] for r in c["comparison"])
+    assert [p["days"] for p in c["workflow_phases"]] == ["Days 1 to 30", "Days 31 to 60", "Days 61 to 90"]
+    assert all(len(p["steps"]) == 3 for p in c["workflow_phases"])
+    assert [p["featured"] for p in c["plans"]] == [False, True, False]
+    assert all(len(p["features"]) == 3 for p in c["plans"])
+    assert c["answer_heading"] == "What are Local SEO services for dentists in Mumbai?"
+    assert c["strategy_heading"] and c["strategy_body"] and c["lead_heading"] and c["lead_sub"]
+
+    # The alias still supplies the intent grid, but with the detail the HTML carries.
+    assert len(c["search_intents"]) == 4 and all(i["detail"] for i in c["search_intents"])
+
+    # 8 to 14 visible FAQs (guardrail 6.20), rendered verbatim into the accordion and
+    # the FAQPage schema, so parsing must not mangle them.
+    assert 8 <= len(c["faqs"]) <= 14
+    assert all(f["q"].endswith("?") and f["a"] for f in c["faqs"])
+
+    # Package columns describing GBP-listing work render no section here and are dropped.
+    for dead in ("gbp_categories", "gbp_attributes", "post_ideas", "photo_checklist",
+                 "solutions", "why_matters_points", "url", "schema_type"):
+        assert dead not in c
+
+
+def test_shipped_leaf_package_csv_is_a_strict_superset_of_the_50_column_header():
+    """The audit enriched the file in place. It must still carry every original
+    package column, in the original order, before the recovered ones."""
+    with LEAF_PACKAGE_CSV.open(encoding="utf-8-sig", newline="") as fh:
+        cols = list(csv.DictReader(fh).fieldnames)
+    original = [
+        "slug", "country", "industry_label", "industry_slug", "city_label", "city_slug",
+        "meta_title", "meta_description", "h1", "canonical_url", "index_status",
+        "quality_score", "status", "badge", "hero_sub", "primary_cta", "secondary_cta",
+        "answer_block", "why_matters_body", "reviews_body", "example_review", "example_reply",
+        "city_visibility_body", "final_heading", "final_sub", "final_button", "primary_keyword",
+        "page_type", "template_version", "region", "last_updated", "why_matters_points",
+        "gbp_categories", "gbp_services", "gbp_attributes", "review_themes", "post_ideas",
+        "photo_checklist", "neighborhoods", "single_points", "multi_points", "secondary_keywords",
+        "problems", "solutions", "monthly_workflow", "faqs", "review_examples", "related_pages",
+        "url", "schema_type",
+    ]
+    assert cols[:50] == original
+    assert len(cols) > 50  # enrichment actually happened
+
+
+def test_shipped_leaf_package_copy_has_no_prohibited_dashes(db, monkeypatch):
+    _import_leaf_package(db, monkeypatch)
+    page = db.query(LpseoPage).filter(LpseoPage.slug == "dentists-in-mumbai").one()
+
+    def walk(node):
+        if isinstance(node, str):
+            for ch, name in BANNED_CHARS.items():
+                assert ch not in node, f"{name} in imported copy: {node[:80]}"
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(page.content)
+    walk([page.h1, page.meta_title, page.meta_description])
+
+
+def test_admin_create_syncs_page_type_column_with_content(db, monkeypatch):
+    """POST /admin/lpseo used to leave page_type at its "leaf" default, so a pillar
+    hand-created in the admin UI became a drip candidate the moment it was published."""
+    from app.api.lpseo import LpseoPageIn, admin_create_page
+    monkeypatch.setattr(lpseo_api, "trigger_bulk_lpseo_revalidation", lambda *_a, **_k: None)
+
+    admin_create_page(body=LpseoPageIn(industry_label="Dentists", city_label="",
+                                       country="in", content={"page_type": "industry_pillar"}),
+                      db=db, _=None)
+    admin_create_page(body=LpseoPageIn(industry_label="Dentists", city_label="Mumbai",
+                                       country="in", content={}), db=db, _=None)
+
+    assert db.query(LpseoPage).filter(LpseoPage.slug == "dentists").one().page_type == "industry_pillar"
+    assert db.query(LpseoPage).filter(LpseoPage.slug == "dentists-in-mumbai").one().page_type == "leaf"
+
+
 def test_import_new_draft_is_not_revalidated(db, monkeypatch):
     result, touched = _run_import(
         db, ["industry_label", "city_label", "country", "status"],
@@ -120,3 +313,45 @@ def test_import_new_draft_is_not_revalidated(db, monkeypatch):
     assert result["created"] == 1
     # Never published, no live URL to purge -> stays out of the revalidation set.
     assert not any(t["slug"] == "gyms-in-surat" for t in touched)
+
+
+def test_import_rejects_a_city_from_the_wrong_country(db, monkeypatch):
+    """The bug this exists for: 1,034 pages for Bangkok, Jakarta, Riyadh and friends
+    shipped under country='in', so they served on India's locale and hreflang for
+    months. Nothing validated it."""
+    result, _ = _run_import(
+        db, ["industry_label", "city_label", "city_slug", "country"],
+        [["Cafes", "Bangkok", "bangkok", "in"]], monkeypatch,
+    )
+    assert result["failed"] == 1 and result["created"] == 0
+    err = next(r for r in result["results"] if r["action"] == "error")["error"]
+    assert "'th'" in err and "'in'" in err
+    # ...and the same row lands fine once the country is right.
+    ok, _ = _run_import(
+        db, ["industry_label", "city_label", "city_slug", "country"],
+        [["Cafes", "Bangkok", "bangkok", "th"]], monkeypatch,
+    )
+    assert ok["created"] == 1
+
+
+def test_import_rejects_a_city_another_market_already_owns(db, monkeypatch):
+    """The general check: no gazetteer needed. The first import defines the truth."""
+    first, _ = _run_import(db, ["industry_label", "city_label", "country"],
+                           [["Cafes", "Springfield", "us"]], monkeypatch)
+    assert first["created"] == 1
+
+    drift, _ = _run_import(db, ["industry_label", "city_label", "country"],
+                           [["Salons", "Springfield", "gb"]], monkeypatch)
+    assert drift["failed"] == 1
+    assert "already published under country 'us'" in \
+        next(r for r in drift["results"] if r["action"] == "error")["error"]
+
+
+def test_guard_lets_a_pillar_through(db, monkeypatch):
+    """An industry pillar's city_label is the COUNTRY name ("India"), which is not a
+    city at all. It must not be caught by the city check."""
+    res, _ = _run_import(
+        db, ["industry_label", "city_label", "country", "page_type", "quality_score"],
+        [["Dentists", "", "in", "industry_pillar", "100"]], monkeypatch,
+    )
+    assert res["created"] == 1 and res["failed"] == 0

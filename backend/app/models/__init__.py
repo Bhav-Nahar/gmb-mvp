@@ -48,7 +48,10 @@ from app.models.push_subscription import PushSubscription
 from app.models.holiday import Holiday
 from app.models.pseo_page import PseoPage
 from app.models.lpseo_page import LpseoPage
+from app.models.lpseo_lead import LpseoLead
+from app.models.cseo_page import CseoPage
 __all__ = [
+    "LpseoLead", "CseoPage",
     "Base", "Organization", "User", "OAuthAccount", "Location",
     "SyncLog", "Invite", "Review", "UserLocationAccess", "AuditLog",
     "Campaign", "Post", "PostVariant", "PostMedia", "PublishJob", "PostAuditLog",

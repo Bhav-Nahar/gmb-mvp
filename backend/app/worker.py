@@ -104,6 +104,13 @@ celery.conf.beat_schedule = {
         "schedule": 3600.0, # Every 60 minutes — this only re-enqueues reviews that
                             # failed/were-missed tagging; hourly is ample and 4x cheaper.
     },
+    "release-lpseo-index-batch": {
+        "task": "app.tasks.release_lpseo_index_batch_task",
+        "schedule": 3600.0, # Hourly. Flips local-SEO pages whose drip-feed index_at
+                            # has passed. The schedule itself lives in Postgres, so
+                            # this tick is one indexed query and usually a no-op —
+                            # cadence only sets go-live lag on a plan spanning weeks.
+    },
     "reconcile-pending-subscriptions": {
         "task": "app.tasks.reconcile_pending_subscriptions_task",
         "schedule": 1800.0, # Every 30 minutes — safety net for missed payment webhooks.

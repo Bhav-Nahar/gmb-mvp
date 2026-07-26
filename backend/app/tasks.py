@@ -4038,3 +4038,47 @@ def run_aeo_scan_task(scan_id: int) -> dict:
         raise
     finally:
         db.close()
+
+
+@shared_task(name="app.tasks.release_lpseo_index_batch_task")
+def release_lpseo_index_batch_task() -> dict:
+    """Hourly: flip local-SEO pages whose drip-feed moment has arrived.
+
+    No Redis lock and no per-page state. The sweep is a single indexed query filtered
+    on index_status='noindex', so a re-run or an overlapping tick simply finds nothing
+    left to do. Hourly rather than per-minute keeps beat wakeups (and Upstash
+    commands) low; the only cost is up to an hour of lag on a page going live, which
+    is meaningless for a schedule measured in weeks.
+    """
+    import logging
+    from app.core.redis_client import get_redis
+    from app.db.session import SessionLocal
+    from app.services import lpseo_drip
+    from app.services.revalidation_service import trigger_bulk_lpseo_revalidation
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    try:
+        released = lpseo_drip.release_due(db)
+        if released:
+            # Bust the BACKEND cache before asking the frontend to revalidate.
+            # Without this the flip to index is invisible: the public endpoint keeps
+            # serving the cached noindex payload for up to an hour, the frontend
+            # revalidates immediately, caches that stale answer for its full TTL, and
+            # the drip has already spent its one revalidation. The page then stays
+            # noindex on the live site indefinitely.
+            # One delete for the whole tick, not one per page (Upstash bills per command).
+            try:
+                get_redis().delete(*[f"public_lpseo:{r['slug']}" for r in released])
+            except Exception:
+                logger.warning("lpSEO drip: cache purge failed; revalidating anyway", exc_info=True)
+            # Narrow per-page and per-industry tags, so a handful of pages going live
+            # never fans out into a corpus-wide ISR rebuild.
+            trigger_bulk_lpseo_revalidation(released)
+        return {"released": len(released), "slugs": [r["slug"] for r in released]}
+    except Exception:
+        db.rollback()
+        logger.exception("lpSEO drip release failed")
+        raise
+    finally:
+        db.close()

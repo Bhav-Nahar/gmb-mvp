@@ -238,3 +238,17 @@ def trigger_bulk_lpseo_revalidation(entries: List[dict]) -> None:
     if not entries:
         return
     _run_revalidate(_seo_revalidation_payload(entries, "local-seo-services", "lpseo"))
+
+
+def trigger_cseo_revalidation(country: str) -> None:
+    """Revalidate ONE country pillar at /{locale}/local-seo-services/.
+
+    Narrow on purpose: the pillar owns a single path and a single data tag, so it
+    must NOT bust 'lpseo-list'. Editing the pillar changes nothing about the leaf
+    pages, and re-rendering the whole corpus for a copy tweak was the exact ISR
+    blowup the per-page tagging above exists to prevent."""
+    cc = (country or "in").lower()
+    # The global pillar is served from the bare path; every other market is
+    # locale-prefixed. "/en-global/..." is not a route.
+    path = "/local-seo-services" if cc == "global" else f"/en-{cc}/local-seo-services"
+    _run_revalidate({"tags": [f"cseo:{cc}"], "paths": [path]})
