@@ -180,14 +180,23 @@ class ReviewAutoReplyService:
 
     def _find_backlog_targets(self, location: Location) -> list:
         """A random slice of the older backlog, paced so today's quota lands evenly over
-        24h instead of in one burst."""
+        24h instead of in one burst.
+
+        A random *window* rather than ORDER BY random(): the latter has to read and sort
+        every unreplied row for the location on each of the 24 daily ticks, while this
+        is an indexed count plus a walk to the offset. The window is contiguous by id,
+        so we shuffle what comes back — otherwise the day's replies would post in
+        review order, which reads mechanical."""
         room = self._backlog_room(location)
         if room <= 0:
             return []
-        # ponytail: ORDER BY random() scans the location's unreplied rows. Fine at a
-        # few thousand; if a location ever carries a six-figure backlog, switch to
-        # sampling on the id range.
-        return self._backlog(location).order_by(func.random()).limit(room).all()
+        q = self._backlog(location)
+        total = q.count()
+        if total <= room:
+            return q.all()
+        rows = q.order_by(Review.id).offset(random.randint(0, total - room)).limit(room).all()
+        random.shuffle(rows)
+        return rows
 
     def _get_provider(self, provider_name: str, organization_id: int):
         if provider_name not in self._providers:
@@ -201,6 +210,12 @@ class ReviewAutoReplyService:
         when the org is out of credits (the caller stops the whole run)."""
         from app.services import reply_validation
         from app.services.ai_reply_service import generate_reply, empty_review_reply
+
+        # A previous run generated and validated this one, then failed to post it.
+        # Reuse it: the credit is already spent, and regenerating would charge again.
+        if review.ai_reply_draft:
+            logger.info("Reusing paid-for AI draft on review %s", review.id)
+            return review.ai_reply_draft
 
         sensitive = reply_validation.is_sensitive_category(
             location.primary_category, location.location_name
@@ -222,6 +237,10 @@ class ReviewAutoReplyService:
             # Automation never posts a reply a human would have been asked to check.
             logger.info("AI auto-reply skipped review %s: %s", review.id, check["violations"])
             return None
+        # Bank the paid-for text before the Google call, so a failed post (or a worker
+        # dying mid-batch) costs the retry nothing.
+        review.ai_reply_draft = text
+        self.db.commit()
         return text
 
     async def _reply_one(self, review: Review, location: Location, ai_mode: bool = False) -> str:
@@ -270,6 +289,7 @@ class ReviewAutoReplyService:
         review.reply_text = text
         review.reply_template_id = template.id if template else None
         review.review_updated_at = now
+        review.ai_reply_draft = None  # it's live now, stop holding the draft
 
         if template:
             # Atomic increment — avoids the read-modify-write race across workers.

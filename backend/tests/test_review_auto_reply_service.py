@@ -397,3 +397,76 @@ def test_has_backlog_is_false_once_the_old_reviews_are_answered(db: Session, mon
     monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, l: 5)
     _run(db, provider, monkeypatch, backlog=True)
     assert ReviewAutoReplyService(db).has_backlog(loc) is False  # drained, stop polling
+
+
+def test_a_failed_post_is_not_paid_for_twice(db: Session, monkeypatch):
+    """The generation costs a credit before the Google call. If that call fails, the
+    retry must reuse the banked text instead of buying a second generation."""
+    _ai_seed(db, credits=10)
+    calls = []
+    text = ("Thank you so much for the kind words about our cafe, we are really glad the "
+            "coffee and the seating worked out well for you and we hope to see you again.")
+
+    import app.services.ai_reply_service as ai
+    async def counting(review, location, db=None):
+        calls.append(review.id)
+        return {"generated_reply": text, "variants": {"recommended": text, "short": text,
+                                                     "warm_or_professional": text},
+                "topics": [], "tone": "grateful", "sensitive": False}
+    monkeypatch.setattr(ai, "generate_reply", counting)
+
+    r = _ai_review("x", 5, datetime.now(timezone.utc) - timedelta(hours=1))
+    db.add(r)
+    db.commit()
+
+    # 1st run: Google is down.
+    failing = _FakeProvider(fail=True)
+    assert _run(db, failing, monkeypatch)["failed"] == 1
+    db.refresh(r)
+    org = db.query(Organization).filter(Organization.id == 1).first()
+    assert len(calls) == 1
+    assert org.monthly_ai_credits_balance == 9          # charged once
+    assert r.ai_reply_draft == text                     # and banked
+    assert r.reply_text is None and r.is_replied is False  # nothing shown to customers
+    assert r.auto_reply_attempts == 1
+
+    # 2nd run: Google is back.
+    ok = _FakeProvider()
+    assert _run(db, ok, monkeypatch)["replied"] == 1
+    db.refresh(r)
+    org = db.query(Organization).filter(Organization.id == 1).first()
+    assert len(calls) == 1, "regenerated a reply that was already paid for"
+    assert org.monthly_ai_credits_balance == 9          # still one charge total
+    assert ok.calls == [("pr_x", text)]                 # the banked text went live
+    assert r.is_replied is True and r.reply_text == text
+    assert r.ai_reply_draft is None                     # draft released
+
+
+def test_backlog_targets_are_a_random_slice_not_the_same_rows_every_tick(db: Session, monkeypatch):
+    """No ORDER BY random(), but the drip must still not answer the same reviews
+    (or the oldest N) every single tick."""
+    _ai_seed(db)
+    old = datetime.now(timezone.utc) - timedelta(days=90)
+    db.add_all([_ai_review(f"b{i}", 5, old + timedelta(minutes=i)) for i in range(60)])
+    db.commit()
+
+    loc = db.query(Location).filter(Location.id == 1).first()
+    monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, l: 5)
+    svc = ReviewAutoReplyService(db)
+    picks = [tuple(sorted(r.id for r in svc._find_backlog_targets(loc))) for _ in range(25)]
+
+    assert all(len(p) == 5 for p in picks)          # always exactly the room
+    assert len(set(picks)) > 1                      # not the same slice every time
+    # and the ordering inside a batch is shuffled, not ascending by id
+    assert any([r.id for r in svc._find_backlog_targets(loc)] !=
+               sorted(r.id for r in svc._find_backlog_targets(loc)) for _ in range(5))
+
+
+def test_backlog_returns_everything_when_it_fits_in_the_room(db: Session, monkeypatch):
+    _ai_seed(db)
+    old = datetime.now(timezone.utc) - timedelta(days=90)
+    db.add_all([_ai_review(f"b{i}", 5, old) for i in range(3)])
+    db.commit()
+    loc = db.query(Location).filter(Location.id == 1).first()
+    monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, l: 10)
+    assert len(ReviewAutoReplyService(db)._find_backlog_targets(loc)) == 3

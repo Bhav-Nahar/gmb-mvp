@@ -26,6 +26,12 @@ class Review(Base):
     # Failed auto-reply attempts. Gates the auto-reply query (< MAX_AUTO_REPLY_ATTEMPTS)
     # so a permanently-failing review (e.g. deleted on Google) can't starve the batch forever.
     auto_reply_attempts = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    # An AI reply that was generated and passed validation but has not been posted yet
+    # (the Google call failed). Kept so the retry reuses it instead of paying for a
+    # second generation. Cleared once the reply is live. Deliberately NOT reply_text:
+    # that column renders in the dashboard and publishes on the public microsite, so a
+    # draft there would show customers a reply that does not exist on Google.
+    ai_reply_draft = Column(Text, nullable=True)
     review_created_at = Column(DateTime(timezone=True), nullable=False)
     review_updated_at = Column(DateTime(timezone=True), nullable=True)
     raw_payload = Column(JSON().with_variant(JSONB, 'postgresql'), nullable=True)
