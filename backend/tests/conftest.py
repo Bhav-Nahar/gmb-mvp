@@ -1,7 +1,54 @@
+import sys
+import types
+from unittest.mock import MagicMock
+
 import pytest
 
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.dialects.postgresql import JSONB
+
+# ── Import-time stubs ─────────────────────────────────────────────────────────
+#
+# conftest is imported before any test module, so these land in sys.modules in
+# time for `import celery` / `import app.worker` further down the tree. Twelve
+# suites used to carry their own copy of this block.
+#
+# Both are no-ops wherever celery is actually installed (the container, CI); they
+# only fire on a machine running the suite without the full requirements.
+try:  # pragma: no cover — depends on the local environment, not on any test
+    import celery
+    if not hasattr(celery, "shared_task"):  # partial install
+        celery.shared_task = lambda *a, **kw: (lambda fn: fn)
+except ImportError:
+    if "celery" not in sys.modules:
+        _celery = types.ModuleType("celery")
+        _celery_schedules = types.ModuleType("celery.schedules")
+
+        class _StubCelery:
+            def __init__(self, *args, **kwargs):
+                self.conf = types.SimpleNamespace(beat_schedule={}, timezone="UTC")
+
+            def send_task(self, *args, **kwargs):
+                return type("T", (), {"id": "stub-task"})()
+
+            def autodiscover_tasks(self, *args, **kwargs):
+                return None
+
+        _celery.Celery = _StubCelery
+        _celery.shared_task = lambda *a, **kw: (lambda fn: fn)
+        _celery_schedules.crontab = lambda *a, **kw: None
+        sys.modules["celery"] = _celery
+        sys.modules["celery.schedules"] = _celery_schedules
+
+import app as _app_pkg
+try:  # pragma: no cover — same
+    import app.worker  # real celery app; also sets the app.worker attribute for patch()
+except Exception:
+    if "app.worker" not in sys.modules:
+        _fake_worker = types.ModuleType("app.worker")
+        _fake_worker.celery = MagicMock()
+        sys.modules["app.worker"] = _fake_worker
+    _app_pkg.worker = sys.modules["app.worker"]
 
 
 @compiles(JSONB, "sqlite")

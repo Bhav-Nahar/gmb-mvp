@@ -28,18 +28,6 @@ def _compile_jsonb_sqlite(element, compiler, **kw):
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Allow importing API modules without a real celery install.
-try:
-    import celery  # noqa: F401
-except ImportError:
-    if "celery" not in sys.modules:
-        celery_stub = types.ModuleType("celery")
-
-        def _shared_task(*args, **kwargs):
-            return lambda fn: fn
-
-        celery_stub.shared_task = _shared_task
-        sys.modules["celery"] = celery_stub
 
 from app.db.session import Base
 from app.models.organization import Organization

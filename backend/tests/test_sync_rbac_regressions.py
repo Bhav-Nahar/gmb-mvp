@@ -20,38 +20,6 @@ def compile_jsonb_sqlite(element, compiler, **kw):
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Allow tests to import API modules even when celery is not installed locally.
-try:
-    import celery
-except ImportError:
-    if "celery" not in sys.modules:
-        celery_stub = types.ModuleType("celery")
-        celery_schedules_stub = types.ModuleType("celery.schedules")
-
-        class _StubCelery:
-            def __init__(self, *args, **kwargs):
-                self.conf = types.SimpleNamespace(beat_schedule={}, timezone="UTC")
-
-            def send_task(self, *args, **kwargs):
-                return type("T", (), {"id": "stub-task"})()
-
-            def autodiscover_tasks(self, *args, **kwargs):
-                return None
-
-        def _shared_task(*args, **kwargs):
-            def _decorator(fn):
-                return fn
-
-            return _decorator
-
-        def _crontab(*args, **kwargs):
-            return None
-
-        celery_stub.Celery = _StubCelery
-        celery_stub.shared_task = _shared_task
-        celery_schedules_stub.crontab = _crontab
-        sys.modules["celery"] = celery_stub
-        sys.modules["celery.schedules"] = celery_schedules_stub
 
 from app.db.session import Base
 from app.models.organization import Organization

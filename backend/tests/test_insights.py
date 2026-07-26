@@ -15,15 +15,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Setup Celery Stub
 import types
-try:
-    import celery
-except ImportError:
-    if "celery" not in sys.modules:
-        celery_stub = types.ModuleType("celery")
-        def _shared_task(*args, **kwargs):
-            return lambda fn: fn
-        celery_stub.shared_task = _shared_task
-        sys.modules["celery"] = celery_stub
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

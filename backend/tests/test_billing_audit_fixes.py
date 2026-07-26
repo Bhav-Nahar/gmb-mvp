@@ -17,16 +17,6 @@ import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 
-# Stub the Celery app so tests that exercise enqueue paths don't pull the heavy
-# worker/task import graph. `from app.worker import celery` resolves to this.
-import app as _app_pkg
-try:
-    import app.worker  # real celery app; also sets the app.worker attribute for patch()
-except Exception:
-    if "app.worker" not in sys.modules:
-        _fw = types.ModuleType("app.worker"); _fw.celery = MagicMock()
-        sys.modules["app.worker"] = _fw
-    _app_pkg.worker = sys.modules["app.worker"]
 
 import pytest
 from sqlalchemy import create_engine
