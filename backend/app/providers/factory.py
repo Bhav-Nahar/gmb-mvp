@@ -1,5 +1,4 @@
 from sqlalchemy.orm import Session
-from app.providers.base.provider import BaseProvider
 from app.providers.base.auth import AuthContext
 from app.models.user import User
 from app.models.oauth_account import OAuthAccount
@@ -25,7 +24,7 @@ class ProviderFactory:
         return _resolve_provider(provider_name).exchange_code_for_tokens(code)
 
     @staticmethod
-    def get_provider(provider_name: str, organization_id: int, db: Session) -> BaseProvider:
+    def get_provider(provider_name: str, organization_id: int, db: Session) -> GBPProvider:
         """
         Looks up the OAuth credentials for the organization, decrypts them,
         constructs the AuthContext, and returns the instantiated provider.
