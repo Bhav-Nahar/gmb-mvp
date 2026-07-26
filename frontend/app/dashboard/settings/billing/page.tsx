@@ -334,7 +334,7 @@ export default function BillingPage() {
               !billing.subscription_ends_at &&
               !(billing.subscription_status === 'trial' && !billing.trial_ends_at) && (
                 <a
-                  href={`https://wa.me/917021052482?text=${encodeURIComponent(
+                  href={`https://wa.me/917715845972?text=${encodeURIComponent(
                     `Hi, I want to cancel my Pinzo subscription. Account: ${user?.email || ''}`
                   )}`}
                   target="_blank"

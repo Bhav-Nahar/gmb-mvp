@@ -25,7 +25,7 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
   const isIndia = page.country === 'in'
   const fromPrice = isIndia ? '₹999' : '$10'
   const pricingHref = isIndia ? '/pricing' : '/pricing?ccy=usd'
-  const whatsappDemo = 'https://wa.me/917021052482?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo for my ${industry.toLowerCase()} business in ${city}.`)
+  const whatsappDemo = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo for my ${industry.toLowerCase()} business in ${city}.`)
 
   const SectionHeading = ({ eyebrow, title, sub }: { eyebrow?: string; title: string; sub?: string }) => (
     <div className="mx-auto max-w-3xl space-y-3 text-center">

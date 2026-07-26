@@ -192,7 +192,7 @@ export default function PricingPage() {
             <h3 className="text-lg font-bold">Managing a large chain?</h3>
             <p className="text-sm text-muted-foreground">We offer custom per-location pricing and onboarding for enterprise brands.</p>
           </div>
-          <a href="https://wa.me/917021052482?text=Hi%2C%20I%27m%20interested%20in%20enterprise%20pricing."
+          <a href="https://wa.me/917715845972?text=Hi%2C%20I%27m%20interested%20in%20enterprise%20pricing."
             target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground hover:opacity-90">
             <MessageCircle className="h-4 w-4" /> Talk to sales <ArrowRight className="h-4 w-4" />

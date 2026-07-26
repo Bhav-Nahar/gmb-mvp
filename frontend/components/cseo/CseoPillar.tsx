@@ -40,7 +40,7 @@ export default function CseoPillar({ page, livePaths = new Set<string>() }: { pa
   const jsonLd = buildCseoJsonLd(page)
   const primaryCta = c.primary_cta || 'Get a Free Local SEO Audit'
   const secondaryCta = c.secondary_cta || 'Start Free Trial'
-  const whatsapp = 'https://wa.me/917021052482?text=' + encodeURIComponent(`Hi, I'd like a Pinzo local SEO audit for my business in ${country}.`)
+  const whatsapp = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo local SEO audit for my business in ${country}.`)
 
   const Section = ({ id, eyebrow, title, sub, children, alt }: {
     id?: string; eyebrow?: string; title: string; sub?: string

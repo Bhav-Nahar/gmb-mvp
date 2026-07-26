@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
 // Overridable per-environment; falls back to the number used on the marketing homepage.
-const NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '917021052482';
+const NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '917715845972';
 const HREF = `https://wa.me/${NUMBER}?text=${encodeURIComponent("Hi, I have a question about Pinzo.")}`;
 const NUDGE_DELAY_MS = 10_000;
 const DISMISS_KEY = 'wa_nudge_dismissed';

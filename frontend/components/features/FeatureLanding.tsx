@@ -17,7 +17,7 @@ export default function FeatureLanding({ feature }: { feature: Feature }) {
   const f = feature
   const jsonLd = buildFeatureJsonLd(f)
   const HeroIcon = ICONS[f.icon] || Sparkles
-  const whatsappDemo = 'https://wa.me/917021052482?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo — interested in ${f.name}.`)
+  const whatsappDemo = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo — interested in ${f.name}.`)
   const related = f.related.map(getFeature).filter(Boolean) as Feature[]
 
   const CtaButtons = ({ location }: { location: string }) => (

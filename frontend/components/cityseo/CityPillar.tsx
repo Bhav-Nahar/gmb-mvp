@@ -41,7 +41,7 @@ export default function CityPillar({ page, livePaths = new Set<string>() }: { pa
   const jsonLd = buildCityJsonLd(page)
   const eyebrows = c.section_eyebrows || {}
   const eb = (k: CitySectionKey) => eyebrows[k]
-  const whatsapp = 'https://wa.me/917021052482?text=' + encodeURIComponent(
+  const whatsapp = 'https://wa.me/917715845972?text=' + encodeURIComponent(
     `Hi, I'd like a Pinzo local SEO audit for my business in ${city}.`)
 
   // Links section 11 already renders, normalised so a trailing slash is not a
