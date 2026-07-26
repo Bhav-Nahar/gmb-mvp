@@ -1328,10 +1328,10 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Basic</span>
               <p className="text-xs font-medium text-muted-foreground">Everything you need to manage Google reviews & posts.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{basicQuote ? fmtRupees(Math.round(basicQuote.price_paise / 100)) : '...'}</span>
-                <span className="text-sm font-semibold text-muted-foreground">/{pricingInterval === 'monthly' ? 'mo' : 'yr'}</span>
+                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{basicQuote ? fmtRupees(Math.round(basicQuote.price_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
+                <span className="text-sm font-semibold text-muted-foreground">/mo</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ${fmtRupees(Math.round(basicQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingUsd ? 'billed in INR' : `+ ${Math.round(basicQuote.gst_rate * 100)}% GST`}` : ''}</p>
+              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ${fmtRupees(Math.round(basicQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(basicQuote.price_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `+ ${Math.round(basicQuote.gst_rate * 100)}% GST`}` : ''}</p>
               {pricingInterval === 'annual' && basicQuote && (
                 <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
                   Save {fmtRupees(annualSaving(basicQuote.price_paise))}/yr
@@ -1374,10 +1374,10 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
               <p className="text-xs font-medium text-foreground/70">Rank higher on Maps & turn searches into leads.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{proQuote ? fmtRupees(Math.round(proQuote.price_paise / 100)) : '...'}</span>
-                <span className="text-sm font-semibold text-muted-foreground">/{pricingInterval === 'monthly' ? 'mo' : 'yr'}</span>
+                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{proQuote ? fmtRupees(Math.round(proQuote.price_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
+                <span className="text-sm font-semibold text-muted-foreground">/mo</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ${fmtRupees(Math.round(proQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingUsd ? 'billed in INR' : `+ ${Math.round(proQuote.gst_rate * 100)}% GST`}` : ''}</p>
+              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ${fmtRupees(Math.round(proQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(proQuote.price_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `+ ${Math.round(proQuote.gst_rate * 100)}% GST`}` : ''}</p>
               {pricingInterval === 'annual' && proQuote && (
                 <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
                   Save {fmtRupees(annualSaving(proQuote.price_paise))}/yr
