@@ -10,7 +10,7 @@ from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
 from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays, aeo, pseo, lpseo, cseo, cityseo
-from app.api.endpoints import comparison
+from app.api import comparison
 from app.api.deps import check_csrf, check_billing_lock, require_feature, require_premium
 from app.core import plan_config
 from fastapi.staticfiles import StaticFiles

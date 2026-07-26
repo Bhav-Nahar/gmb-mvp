@@ -17,10 +17,16 @@ def db():
     tables created. Used by service-layer tests that need real persistence."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
     from app.db.session import Base
     import app.models  # noqa: F401 — ensure all models are registered on Base.metadata
 
-    engine = create_engine("sqlite:///file:testdb?mode=memory&cache=shared", connect_args={"check_same_thread": False, "uri": True})
+    # SQLAlchemy strips the query string off a sqlite URL, so the old
+    # "sqlite:///file:testdb?mode=memory&cache=shared" never reached SQLite as a URI:
+    # it opened a real file named `file:testdb` that survived between runs. StaticPool
+    # keeps the one connection alive, which is what made shared-cache tempting.
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     try:
