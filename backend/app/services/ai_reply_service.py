@@ -205,19 +205,24 @@ Write the three reply variants for a {rating}-star rating. Speak directly to the
 
     llm = get_llm_provider()
     generated = None
-    for attempt in range(3):
-        try:
-            generated = await asyncio.wait_for(
-                # ponytail: 0.4 (not the 0.7 default) — lower variance = more consistent
-                # instruction-following on tone/length. Raise if replies feel samey.
-                llm.complete(system_prompt, user_message, max_tokens=MAX_REPLY_TOKENS, temperature=0.4),
-                timeout=30,
-            )
-            break
-        except Exception:
-            if attempt == 2:
-                raise
-            await asyncio.sleep(2 ** attempt)
+    try:
+        for attempt in range(3):
+            try:
+                generated = await asyncio.wait_for(
+                    # ponytail: 0.4 (not the 0.7 default) — lower variance = more consistent
+                    # instruction-following on tone/length. Raise if replies feel samey.
+                    llm.complete(system_prompt, user_message, max_tokens=MAX_REPLY_TOKENS, temperature=0.4),
+                    timeout=30,
+                )
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(2 ** attempt)
+    finally:
+        # Auto-reply calls this once per review; leaking a connection pool each time
+        # is what made the worker log "Event loop is closed" after every batch.
+        await llm.aclose()
 
     variants = _parse_variants(generated, tone)
     return {

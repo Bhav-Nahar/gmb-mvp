@@ -140,16 +140,19 @@ async def _tag_batch(reviews: list[Review], db: Session) -> None:
     # Sentiment runs on Groq (see config) to keep batch classification off the Gemini quota.
     llm = get_llm_provider(settings.LLM_PROVIDER_SENTIMENT, settings.LLM_MODEL_SENTIMENT)
     raw: str = ""
-    for attempt in range(3):
-        try:
-            raw = await llm.complete(SYSTEM_PROMPT, user_message, max_tokens=max_tokens, temperature=0.1)
-            break
-        except LLMProviderError as e:
-            if attempt == 2:
-                raise
-            wait = 2 ** attempt  # 1s, 2s
-            logger.warning("LLM batch attempt %d failed, retrying in %ds: %s", attempt + 1, wait, str(e))
-            await asyncio.sleep(wait)
+    try:
+        for attempt in range(3):
+            try:
+                raw = await llm.complete(SYSTEM_PROMPT, user_message, max_tokens=max_tokens, temperature=0.1)
+                break
+            except LLMProviderError as e:
+                if attempt == 2:
+                    raise
+                wait = 2 ** attempt  # 1s, 2s
+                logger.warning("LLM batch attempt %d failed, retrying in %ds: %s", attempt + 1, wait, str(e))
+                await asyncio.sleep(wait)
+    finally:
+        await llm.aclose()  # release the pool inside the loop that opened it
 
     # Strip markdown fences if present
     raw_text = raw
