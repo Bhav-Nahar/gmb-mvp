@@ -134,12 +134,16 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
         google_id = "mock_google_id_999888777"
         name = "Google User"
         avatar = None
+        # Only Google's own verified-email claim may relink an existing account below.
+        # Stays False if the userinfo call fails, where google_id is still the placeholder.
+        email_verified = False
 
         if settings.APP_ENV == "development" and "mock_access_token" in access_token:
             # Formulate friendly mock profile details based on email prefix
             logging.warning("Mock auth bypass used for email: %s — only permitted in development", email)
             name = email.split("@")[0].title().replace("-", " ")
             google_id = f"google_id_{email.split('@')[0]}"
+            email_verified = True
         else:
             # Real Google User Info call
             import httpx
@@ -152,11 +156,22 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                 name = profile.get("name", "Google User")
                 avatar = profile.get("picture")
                 email = profile.get("email", email)
+                email_verified = bool(profile.get("email_verified", False))
 
         email = email.strip().lower()
 
         # 3. Check if user already exists in our system
         user = db.query(User).filter(User.google_id == google_id).first()
+        if not user and email_verified:
+            # `users.email` is UNIQUE, but the lookup above is by google_id alone: a row
+            # whose google_id no longer matches — recreated by hand, or a re-issued Google
+            # `sub` — fell through to the create path and died on an IntegrityError instead
+            # of logging in. Relink it to the id Google just gave us. Gated on Google's
+            # verified-email claim so an unverified address can never adopt an account.
+            user = db.query(User).filter(User.email == email).first()
+            if user:
+                logging.warning("Relinking user %s to a new google_id", user.id)
+                user.google_id = google_id
         is_new_user = False
 
         if not user:

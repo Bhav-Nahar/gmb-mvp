@@ -196,3 +196,29 @@ def test_purge_cancels_razorpay_sub_before_deleting(db):
 
     fake_client.subscription.cancel.assert_called_once_with("sub_ABC123", {"cancel_at_cycle_end": 0})
     assert db.query(Organization).filter(Organization.id == paid.id).first() is None  # still purged
+
+
+def test_org_user_count_is_live_seats_only(db, client):
+    """user_count drives the 'orphaned' badge, so it must exclude soft-deleted seats.
+
+    Counting them made an unreachable workspace — the one a hard DELETE on `users`
+    leaves behind, before the owner's next sign-in mints a second org — look occupied.
+    """
+    ghost = _org(db, "Ghost")           # user row deleted straight from the DB
+    stale = _org(db, "Stale")           # only seat is soft-deleted
+    dead = _user(db, stale, "gone@t.com")
+    dead.deleted_at = datetime.now(timezone.utc)
+    live = _org(db, "Live")
+    _user(db, live, "here@t.com")
+    db.commit()
+
+    with _superpatch():
+        _as_super(db, client)
+        items = {o["name"]: o for o in client.get("/api/v1/admin/organizations").json()["items"]}
+        assert items["Ghost"]["user_count"] == 0
+        assert items["Stale"]["user_count"] == 0
+        assert items["Live"]["user_count"] == 1
+        # Detail view counts live seats too, not just the current page.
+        detail = client.get(f"/api/v1/admin/organizations/{stale.id}").json()
+        assert detail["organization"]["user_count"] == 0
+        assert detail["users_total"] == 1  # the soft-deleted seat is still listed, badged

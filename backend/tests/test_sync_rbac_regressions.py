@@ -249,6 +249,53 @@ class SyncAndRbacRegressionTests(unittest.TestCase):
         self.assertEqual(task_args[1], user.id)
         self.assertEqual(task_args[2], "Onboarding")
 
+    def test_login_relinks_account_whose_google_id_changed(self):
+        """A stale google_id must not fall through to the create path.
+
+        The lookup is by google_id alone, but users.email is UNIQUE — so a row
+        recreated by hand (or a re-issued Google `sub`) used to hit an IntegrityError
+        on insert and lock the person out. The verified email relinks it instead.
+        """
+        user = User(
+            email="relink@acme.com",
+            name="Relink User",
+            google_id="stale_sub_from_old_row",
+            role="Owner",
+            is_active=True,
+            organization_id=self.org.id,
+        )
+        self.db.add(user)
+        self.db.commit()
+        self.db.refresh(user)
+        original_id = user.id
+
+        with patch.object(auth_api.ProviderFactory, "exchange_code_for_tokens") as exchange_tokens, patch.object(
+            auth_api, "encrypt_token"
+        ) as encrypt_token, patch.object(auth_api.celery, "send_task") as send_task:
+            exchange_tokens.return_value = {
+                "access_token": "mock_access_token_abc",
+                "refresh_token": "mock_refresh_token_def",
+                "expires_in": 3600,
+                "email": "relink@acme.com",
+            }
+            encrypt_token.side_effect = lambda v: f"enc:{v}" if v else None
+            send_task.return_value = type("T", (), {"id": "task-3"})()
+
+            result = auth_api.google_callback(
+                request=build_request_with_cookie("csrf123"),
+                code="dummy-code",
+                state="csrf123:",
+                db=self.db,
+            )
+
+        self.assertEqual(result.status_code, 307)  # logged in, not an error redirect
+        self.db.expire_all()
+        rows = self.db.query(User).filter(User.email == "relink@acme.com").all()
+        self.assertEqual(len(rows), 1)               # no duplicate row, no new workspace
+        self.assertEqual(rows[0].id, original_id)    # same account, same org data
+        self.assertEqual(rows[0].google_id, "google_id_relink")  # relinked to the new sub
+        self.assertEqual(self.db.query(Organization).count(), 1)
+
     def test_login_does_not_queue_sync_when_fresh(self):
         user = User(
             email="fresh@acme.com",

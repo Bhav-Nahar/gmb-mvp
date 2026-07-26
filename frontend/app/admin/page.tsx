@@ -258,6 +258,11 @@ export default function AdminOrgsPage() {
                     <Link href={`/admin/${o.id}`} className="font-semibold hover:text-primary">
                       {o.name}
                       {o.deleted_at && <span className="ml-2 text-[10px] font-bold uppercase text-red-600">deleted</span>}
+                      {/* No live users = nobody can sign in. Left behind when a user row is
+                          deleted straight from the DB; the owner's next sign-in makes a new org. */}
+                      {!o.deleted_at && o.user_count === 0 && (
+                        <span className="ml-2 text-[10px] font-bold uppercase text-amber-600" title="No live users — unreachable workspace, safe to delete">orphaned</span>
+                      )}
                     </Link>
                     <div className="text-[11px] text-muted-foreground">#{o.id}</div>
                   </td>

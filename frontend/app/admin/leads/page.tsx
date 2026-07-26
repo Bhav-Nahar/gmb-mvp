@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { Search, RefreshCw, ChevronLeft, ChevronRight, Trash2, AlertTriangle } from 'lucide-react'
 
@@ -30,6 +30,29 @@ interface Lead {
 const PAGE = 50
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '—')
 const dash = (s: string | null) => s || '—'
+
+// Forms that have no column of their own for a field pack it into `message` as
+// "Label: value" lines (the GBP audit form sends job title and city that way).
+// Those get their own cells here; anything else stays one free-text block.
+const detailFields = (r: Lead): [string, React.ReactNode][] => {
+  const extra: [string, React.ReactNode][] = []
+  const rest: string[] = []
+  for (const line of (r.message || '').split('\n')) {
+    const m = line.match(/^\s*([\w /]{2,24}):\s*(.+?)\s*$/)
+    if (m) extra.push([m[1], m[2]])
+    else if (line.trim()) rest.push(line)
+  }
+  return [
+    ['Email', r.email ? <a href={`mailto:${r.email}`} className="text-primary hover:underline">{r.email}</a> : '—'],
+    ['Website', r.website ? <a href={r.website} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{r.website}</a> : '—'],
+    ['Locations / stores', dash(r.locations)],
+    ...extra,
+    ['UTM source', dash(r.utm_source)], ['UTM medium', dash(r.utm_medium)],
+    ['UTM campaign', dash(r.utm_campaign)], ['GCLID', dash(r.gclid)],
+    ['Landing page', dash(r.landing_page)],
+    ...(rest.length ? ([['Message', rest.join('\n')]] as [string, React.ReactNode][]) : []),
+  ]
+}
 
 export default function AdminLeadsPage() {
   const [rows, setRows] = useState<Lead[]>([])
@@ -134,7 +157,8 @@ export default function AdminLeadsPage() {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-b border-border/60 align-top">
+                <Fragment key={r.id}>
+                <tr className={`border-b border-border/60 align-top ${open === r.id ? 'bg-muted/30' : ''}`}>
                   <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{fmt(r.created_at)}</td>
                   <td className="whitespace-nowrap px-4 py-3 font-semibold">{r.name}</td>
                   <td className="whitespace-nowrap px-4 py-3">{dash(r.clinic)}</td>
@@ -159,23 +183,21 @@ export default function AdminLeadsPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
-              {rows.map((r) => open === r.id && (
-                <tr key={`d-${r.id}`} className="border-b border-border/60 bg-muted/20">
-                  <td colSpan={8} className="px-4 py-4">
-                    <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-[11px] sm:grid-cols-4">
-                      {([['Email', r.email], ['Website / Maps', r.website], ['Locations', r.locations],
-                         ['UTM source', r.utm_source], ['UTM medium', r.utm_medium], ['UTM campaign', r.utm_campaign],
-                         ['GCLID', r.gclid], ['Landing page', r.landing_page], ['Message', r.message]] as const)
-                        .map(([k, v]) => (
-                          <div key={k}>
+                {open === r.id && (
+                  <tr className="border-b border-border/60 bg-muted/20">
+                    <td colSpan={8} className="px-4 py-4">
+                      <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-[11px] sm:grid-cols-3 lg:grid-cols-4">
+                        {detailFields(r).map(([k, v]) => (
+                          <div key={k} className="min-w-0">
                             <dt className="font-bold uppercase tracking-wide text-muted-foreground">{k}</dt>
-                            <dd className="break-words">{dash(v)}</dd>
+                            <dd className="mt-0.5 whitespace-pre-line break-words">{v}</dd>
                           </div>
                         ))}
-                    </dl>
-                  </td>
-                </tr>
+                      </dl>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
               {!loading && rows.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">No leads yet.</td></tr>
