@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.review import Review
 from app.models.location import Location
 from app.llm.factory import get_llm_provider
+from app.services.reply_validation import is_sensitive_category
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +23,33 @@ EMPTY_REVIEW_TEMPLATES = [
     "We truly appreciate your support and look forward to serving you again.",
 ]
 
+# Same, for health/legal categories: no "again", nothing that implies they were a patient.
+SENSITIVE_EMPTY_REVIEW_TEMPLATES = [
+    "Thank you for taking the time to leave a rating. We appreciate it.",
+    "Thank you for the {rating} stars. Our team appreciates your feedback.",
+    "Thank you for sharing your rating with us. Our team is here if you need anything.",
+]
 
-def empty_review_reply(rating: int) -> str:
+# 3★ and below with no text: thanking someone for the stars reads as tone-deaf when the
+# rating itself is the complaint. Acknowledge and open a door instead.
+NEUTRAL_EMPTY_REVIEW_TEMPLATES = [
+    "Thank you for taking the time to leave a rating. If something fell short, we would "
+    "genuinely like to hear about it.",
+    "We appreciate the rating and we are always working to do better. Do reach out to us "
+    "directly if there is something we could have handled differently.",
+    "Thank you for the feedback. If there is anything we can put right, please get in touch.",
+]
+
+
+def empty_review_reply(rating: int, sensitive: bool = False) -> str:
     """Rotating canned reply for rating-only reviews. No LLM call, no credit."""
-    return random.choice(EMPTY_REVIEW_TEMPLATES).replace("{rating}", str(rating))
+    if rating is not None and rating <= 3:
+        pool = NEUTRAL_EMPTY_REVIEW_TEMPLATES
+    elif sensitive:
+        pool = SENSITIVE_EMPTY_REVIEW_TEMPLATES
+    else:
+        pool = EMPTY_REVIEW_TEMPLATES
+    return random.choice(pool).replace("{rating}", str(rating))
 
 
 def _sanitize_prompt_input(value, max_len=200):
@@ -95,7 +119,10 @@ async def generate_reply(review: Review, location: Location, db: Session = None)
     location_name = _sanitize_prompt_input(location.location_name)
     primary_category = _sanitize_prompt_input(location.primary_category)
     address = _sanitize_prompt_input(location.address)
-    reviewer_name = _sanitize_prompt_input(review.reviewer_name)
+    sensitive = is_sensitive_category(location.primary_category, location.location_name)
+    # Hard guarantee, not a prompt request: in sensitive categories the model never sees
+    # the reviewer's name, so it cannot put it in the reply.
+    reviewer_name = "Withheld" if sensitive else _sanitize_prompt_input(review.reviewer_name)
 
     recent = _recent_replies(db, review.location_id) if db is not None else []
     recent_block = (
@@ -128,6 +155,7 @@ LOCAL SEO (at most ONE signal, only if it reads naturally):
 - Never use these words: "best", "no.1", "top-rated", "leading", "world-class", "guaranteed", "most trusted".
 
 GENERAL:
+- Never offer a discount, coupon, free service, gift, or any other incentive — Google's policies forbid offering incentives in review replies.
 - Never mention competitor names.
 - Never make promises you cannot keep (e.g., "we will fix this immediately").
 - Never invent services, staff, policies, or facts not provided in the context.
@@ -144,6 +172,24 @@ Tone rules based on star rating:
 Return ONLY a JSON object, no markdown, with exactly these keys:
 {"recommended": "35-55 words, grounded sincere warmth, names the specific thing they praised, no flowery filler — this is the default reply", "short": "15-25 word reply, same grounded tone", "warm_or_professional": "35-55 words, a noticeably different wording/angle from recommended so the owner has a real choice", "topics": ["topic mentioned in the review", ...]}"""
 
+    # Health, dental, mental-health, veterinary and legal practices: a reply must not
+    # confirm the reviewer was ever a patient or client (privacy law, and Google's
+    # health-provider guidance), and "come visit again!" reads as tone-deaf there.
+    SENSITIVE_RULES = """
+
+SENSITIVE CATEGORY — this business is a healthcare, dental, mental-health, veterinary or legal practice. These rules OVERRIDE everything above where they conflict:
+- NEVER use the reviewer's name, initials, or nickname, and never repeat any person's name that appears in the review. Address them only as "you". No name-based greeting.
+- NEVER confirm, deny, or imply that they were a patient or client, or that any visit, appointment, treatment, procedure, consultation, test, or case took place. Do not write "your visit", "your treatment", "your appointment", "your procedure", "as our patient".
+- NEVER mention or react to any condition, symptom, diagnosis, medication, treatment, body part, outcome, doctor, staff member, or legal matter — even if the reviewer wrote about it themselves. Keep the reply general and warm.
+- Do NOT reference a specific thing from the review (this overrides the "reference exactly one specific thing" rule above). Do NOT include any product, service, treatment, or location/SEO signal at all.
+- Do NOT invite them back: no "visit again", "see you soon", "come back", "look forward to serving you again", "your next visit". Close neutrally instead — thank them, and say the team is here if they need anything, or that they are welcome to contact the practice directly.
+- Never give medical, dental, or legal advice, and never claim or promise any outcome or result.
+- For a critical review: apologise in general terms for the experience described, do NOT dispute or correct any facts publicly, and invite them to contact the practice directly so it can be discussed privately.
+- Keep the same JSON keys and word counts. Leave "topics" empty."""
+
+    if sensitive:
+        system_prompt += SENSITIVE_RULES
+
     user_message = f"""Business Name: {location_name}
 Business Type: {primary_category}
 Business Address: {address}
@@ -159,24 +205,30 @@ Write the three reply variants for a {rating}-star rating. Speak directly to the
 
     llm = get_llm_provider()
     generated = None
-    for attempt in range(3):
-        try:
-            generated = await asyncio.wait_for(
-                # ponytail: 0.4 (not the 0.7 default) — lower variance = more consistent
-                # instruction-following on tone/length. Raise if replies feel samey.
-                llm.complete(system_prompt, user_message, max_tokens=MAX_REPLY_TOKENS, temperature=0.4),
-                timeout=30,
-            )
-            break
-        except Exception:
-            if attempt == 2:
-                raise
-            await asyncio.sleep(2 ** attempt)
+    try:
+        for attempt in range(3):
+            try:
+                generated = await asyncio.wait_for(
+                    # ponytail: 0.4 (not the 0.7 default) — lower variance = more consistent
+                    # instruction-following on tone/length. Raise if replies feel samey.
+                    llm.complete(system_prompt, user_message, max_tokens=MAX_REPLY_TOKENS, temperature=0.4),
+                    timeout=30,
+                )
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(2 ** attempt)
+    finally:
+        # Auto-reply calls this once per review; leaking a connection pool each time
+        # is what made the worker log "Event loop is closed" after every batch.
+        await llm.aclose()
 
     variants = _parse_variants(generated, tone)
     return {
         "generated_reply": variants["recommended"],  # back-compat: recommended is the default
         "variants": variants,
-        "topics": variants["topics"],
+        "topics": [] if sensitive else variants["topics"],
         "tone": tone,
+        "sensitive": sensitive,
     }

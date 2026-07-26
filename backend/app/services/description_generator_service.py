@@ -259,17 +259,20 @@ async def generate_description(
     from app.llm.factory import get_llm_provider  # lazy: keeps module import stdlib-only
     llm = get_llm_provider()
     generated = None
-    for attempt in range(_ATTEMPTS):
-        try:
-            generated = await asyncio.wait_for(
-                llm.complete(system_prompt, user_message, max_tokens=MAX_DESC_TOKENS, temperature=temperature),
-                timeout=_TIMEOUT,
-            )
-            break
-        except Exception:
-            if attempt == _ATTEMPTS - 1:
-                raise
-            await asyncio.sleep(2 ** attempt)
+    try:
+        for attempt in range(_ATTEMPTS):
+            try:
+                generated = await asyncio.wait_for(
+                    llm.complete(system_prompt, user_message, max_tokens=MAX_DESC_TOKENS, temperature=temperature),
+                    timeout=_TIMEOUT,
+                )
+                break
+            except Exception:
+                if attempt == _ATTEMPTS - 1:
+                    raise
+                await asyncio.sleep(2 ** attempt)
+    finally:
+        await llm.aclose()  # release the pool inside the loop that opened it
 
     parsed = _parse_description(generated)
     parsed["description"] = _truncate_to_sentence(parsed["description"])

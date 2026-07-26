@@ -15,10 +15,26 @@ import {
   deleteTemplate,
   getAutoReplyStatus,
   setAutoReply,
+  type AutoReplyMode,
   getTemplateAnalytics,
 } from '@/lib/api/reply-templates'
 import { resolveTemplateVariables } from '@/lib/utils/template-utils'
 import { Plus, Edit2, Trash2, Save, X, Star, Sparkles } from 'lucide-react'
+
+const AUTO_REPLY_MODES: { key: AutoReplyMode; label: string; blurb: string; meta: string }[] = [
+  {
+    key: 'template',
+    label: 'From my templates',
+    blurb: 'Posts one of your saved 4★/5★ templates, rotating the least-used one.',
+    meta: 'Free · 4–5★ · new reviews only',
+  },
+  {
+    key: 'ai',
+    label: 'Written by AI',
+    blurb: 'Writes a fresh reply for each review, and works through your older unanswered ones too.',
+    meta: '1 AI credit per reply · 3–5★ · 10–20 older reviews a day, spread out',
+  },
+]
 
 // Placeholder UI components for standard shadcn patterns since we don't have
 // direct access to the actual UI components library in this environment, we'll
@@ -54,6 +70,7 @@ export default function ReplyTemplatesSettingsPage() {
   // Auto-reply (org-wide) state
   const [autoReplyEnabledAt, setAutoReplyEnabledAt] = useState<string | null>(null)
   const [autoReplyBusy, setAutoReplyBusy] = useState(false)
+  const [autoReplyMode, setAutoReplyMode] = useState<AutoReplyMode>('template')
 
   // Analytics
   const [lastUsed, setLastUsed] = useState<Record<string, string>>({})
@@ -82,6 +99,7 @@ export default function ReplyTemplatesSettingsPage() {
     try {
       const status = await getAutoReplyStatus()
       setAutoReplyEnabledAt(status.enabled_at)
+      setAutoReplyMode(status.mode ?? 'template')
     } catch (e: any) {
       console.error('Failed to load auto-reply status', e)
     }
@@ -94,15 +112,20 @@ export default function ReplyTemplatesSettingsPage() {
     }
   }
 
-  const handleToggleAutoReply = async () => {
-    const turningOn = !autoReplyEnabledAt
+  const handleToggleAutoReply = async (mode: AutoReplyMode = autoReplyMode) => {
+    const turningOn = !autoReplyEnabledAt || mode !== autoReplyMode
     setAutoReplyBusy(true)
     setErrorAlert('')
     setSuccessAlert('')
     try {
-      const res = await setAutoReply(turningOn)
+      const res = await setAutoReply(turningOn, mode)
       setAutoReplyEnabledAt(turningOn ? (res.enabled_at ?? new Date().toISOString()) : null)
-      setSuccessAlert(turningOn ? 'Auto-reply enabled for new 4–5★ reviews.' : 'Auto-reply disabled.')
+      if (turningOn) setAutoReplyMode(mode)
+      setSuccessAlert(
+        !turningOn ? 'Auto-reply disabled.'
+          : mode === 'ai'
+            ? 'AI auto-reply enabled for 3–5★. New reviews are answered on each sync; 10–20 older reviews are answered per location per day.'
+            : 'Auto-reply enabled for new 4–5★ reviews.')
     } catch (e: any) {
       setErrorAlert(e.message || 'Failed to update auto-reply.')
     } finally {
@@ -139,8 +162,9 @@ export default function ReplyTemplatesSettingsPage() {
   const canAdd = currentCount < limit
 
   const positiveTemplateCount = templatesByStar[4].length + templatesByStar[5].length
-  const canEnableAutoReply = positiveTemplateCount >= MIN_TEMPLATES_FOR_AUTO_REPLY
-  // Auto-reply fires for both 4★ and 5★; a rating with no template is silently skipped.
+  const canEnableAutoReply = autoReplyMode === 'ai' || positiveTemplateCount >= MIN_TEMPLATES_FOR_AUTO_REPLY
+  // Template mode fires for 4★ and 5★ (AI mode also takes 3★, which needs no template);
+  // a rating with no template is silently skipped.
   const missingPositiveRatings = [4, 5].filter(r => templatesByStar[r].length === 0)
 
   const openAddDialog = () => {
@@ -237,49 +261,96 @@ export default function ReplyTemplatesSettingsPage() {
         </div>
       </div>
 
-      {/* Org-wide Auto-Reply toggle */}
+      {/* Org-wide Auto-Reply */}
       {!loading && (
-        <div className="border border-primary/20 bg-primary/5 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-2 text-sm text-muted-foreground">
-            <Sparkles className="w-4 h-4 mt-0.5 text-primary shrink-0" />
-            <div>
-              <div className="font-semibold text-foreground">
-                Auto-reply to new 4–5★ reviews
-                {autoReplyEnabledAt && (
-                  <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-green-500">On</span>
-                )}
-              </div>
-              <div className="text-xs">
-                Automatically posts one of your positive-rating templates to new reviews across all locations. Replies are public and can’t be unsent.
-                {!canEnableAutoReply && !autoReplyEnabledAt && (
-                  <span className="block text-amber-500 mt-1">
-                    Add at least {MIN_TEMPLATES_FOR_AUTO_REPLY} templates for 4★/5★ reviews to enable this ({positiveTemplateCount} so far).
+        <div className="border border-border rounded-xl overflow-hidden">
+          {/* Header: what it does + on/off */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 border-b border-border bg-muted/30">
+            <div className="flex items-start gap-2.5">
+              <Sparkles className="w-4 h-4 mt-0.5 text-primary shrink-0" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-foreground text-sm">Auto-reply</span>
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                    autoReplyEnabledAt ? 'bg-green-500/15 text-green-600' : 'bg-muted text-muted-foreground'
+                  }`}>
+                    {autoReplyEnabledAt ? 'On' : 'Off'}
                   </span>
-                )}
-                {autoReplyEnabledAt && missingPositiveRatings.map(r => (
-                  <span key={r} className="block text-amber-500 mt-1">
-                    No {r}★ template — {r}★ reviews won’t be auto-answered.
-                  </span>
-                ))}
-                {autoReplyEnabledAt && (
-                  <span className="block text-green-600 mt-1">
-                    {autoReplies30d} auto-{autoReplies30d === 1 ? 'reply' : 'replies'} in the last 30 days.
-                  </span>
-                )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Answers{' '}
+                  <span className="font-medium text-foreground">
+                    {autoReplyMode === 'ai' ? '3★, 4★ and 5★' : '4★ and 5★'}
+                  </span>{' '}
+                  reviews across all locations.{' '}
+                  {autoReplyMode === 'ai' ? '1–2★' : '1–3★'} always wait for you. Replies are public and can’t be unsent.
+                </p>
               </div>
             </div>
+            <button
+              onClick={() => handleToggleAutoReply()}
+              disabled={autoReplyBusy || (!autoReplyEnabledAt && !canEnableAutoReply)}
+              className={`w-full sm:w-auto shrink-0 min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                autoReplyEnabledAt
+                  ? 'bg-background border border-border text-foreground hover:bg-muted'
+                  : 'text-primary-foreground bg-primary hover:bg-primary/90'
+              }`}
+            >
+              {autoReplyBusy ? 'Saving…' : autoReplyEnabledAt ? 'Turn Off' : 'Turn On'}
+            </button>
           </div>
-          <button
-            onClick={handleToggleAutoReply}
-            disabled={autoReplyBusy || (!autoReplyEnabledAt && !canEnableAutoReply)}
-            className={`w-full sm:w-auto min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
-              autoReplyEnabledAt
-                ? 'bg-background border border-border text-foreground hover:bg-muted'
-                : 'text-primary-foreground bg-primary hover:bg-primary/90'
-            }`}
-          >
-            {autoReplyBusy ? 'Saving…' : autoReplyEnabledAt ? 'Turn Off' : 'Turn On'}
-          </button>
+
+          {/* Mode: pick where the reply text comes from */}
+          <div className="p-4 grid sm:grid-cols-2 gap-3">
+            {AUTO_REPLY_MODES.map(({ key, label, blurb, meta }) => {
+              const active = autoReplyMode === key
+              return (
+                <button
+                  key={key}
+                  onClick={() => (autoReplyEnabledAt ? handleToggleAutoReply(key) : setAutoReplyMode(key))}
+                  disabled={autoReplyBusy}
+                  aria-pressed={active}
+                  className={`text-left p-3 rounded-lg border transition-colors disabled:opacity-50 ${
+                    active ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`w-3.5 h-3.5 rounded-full border-[4px] shrink-0 ${
+                      active ? 'border-primary bg-background' : 'border-muted-foreground/30 bg-background'
+                    }`} />
+                    <span className="text-sm font-semibold text-foreground">{label}</span>
+                    {active && autoReplyEnabledAt && (
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-primary">Active</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">{blurb}</p>
+                  <p className="text-[11px] text-muted-foreground/80 mt-1.5 font-medium">{meta}</p>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Status / warnings */}
+          {(autoReplyEnabledAt || !canEnableAutoReply || missingPositiveRatings.length > 0) && (
+            <div className="px-4 pb-4 -mt-1 space-y-1 text-xs">
+              {autoReplyMode === 'template' && !canEnableAutoReply && !autoReplyEnabledAt && (
+                <p className="text-amber-500">
+                  Add at least {MIN_TEMPLATES_FOR_AUTO_REPLY} templates for 4★/5★ reviews to turn this on ({positiveTemplateCount} so far).
+                </p>
+              )}
+              {autoReplyEnabledAt && autoReplyMode === 'template' && missingPositiveRatings.map(r => (
+                <p key={r} className="text-amber-500">
+                  No {r}★ template — {r}★ reviews won’t be auto-answered.
+                </p>
+              ))}
+              {autoReplyEnabledAt && (
+                <p className="text-muted-foreground">
+                  <span className="font-semibold text-green-600">{autoReplies30d}</span> auto-
+                  {autoReplies30d === 1 ? 'reply' : 'replies'} in the last 30 days.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

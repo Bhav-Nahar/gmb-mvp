@@ -24,6 +24,16 @@ type EventParams = {
   cta_location?: CtaLocation
   page_path?: string
   method?: string // GA4 sign_up: how the account was created (e.g. "google")
+  // GA4 promotion params (select_promotion / view_promotion)
+  promotion_id?: string
+  promotion_name?: string
+  creative_slot?: string
+  // GA4 select_content params
+  content_type?: string
+  item_id?: string
+  // GA4 exception params
+  description?: string
+  fatal?: boolean
 }
 
 declare global {
@@ -217,17 +227,114 @@ export function trackCustomerData(c: {
   if (process.env.NEXT_PUBLIC_ANALYTICS_DEBUG) console.debug("[dataLayer] customerData")
 }
 
+// ── Paid-landing audit funnel ────────────────────────────────────────────────
+//
+// Every step uses a name GA4 already knows, so the funnel and the Google Ads
+// conversion are configurable without defining a single custom event:
+//
+//   select_promotion  audit CTA clicked
+//   view_promotion    lead form opened
+//   form_start        first field touched — GA4 Enhanced Measurement ("Form
+//                     interactions") emits this itself; we deliberately do NOT
+//                     push it, or it would double-count
+//   form_submit       same, emitted by Enhanced Measurement on the submit event
+//   generate_lead     backend CONFIRMED the lead  ← mark key event, import to Ads
+//   exception         submission failed
+//
+// generate_lead nests identity under `user`, exactly like sign_up, so existing
+// GTM user.* variables work on it unchanged.
+const AUDIT_PROMO = { promotion_id: "free_gbp_audit", promotion_name: "Free GBP audit" }
+
+export function trackAuditCtaClick(cta_location: CtaLocation) {
+  track("select_promotion", {
+    event_id: generateEventId(), ...AUDIT_PROMO, creative_slot: cta_location, cta_location,
+  })
+}
+
+export function trackAuditFormOpen(cta_location: CtaLocation) {
+  track("view_promotion", {
+    event_id: generateEventId(), ...AUDIT_PROMO, creative_slot: cta_location, cta_location,
+  })
+}
+
+// Fire ONCE, only after the API confirms the lead row exists — never on submit
+// click. This is the event Google Ads should import as the conversion goal.
+export function trackGenerateLead(o: {
+  lead_id?: number | string
+  cta_location?: CtaLocation
+  locationsCount?: number
+  email?: string
+}) {
+  track("generate_lead", {
+    event_id: generateEventId(),
+    lead_magnet: "custom_plan",
+    ...(o.lead_id !== undefined ? { lead_id: String(o.lead_id) } : {}),
+    ...(o.cta_location ? { cta_location: o.cta_location } : {}),
+    locations_count: o.locationsCount ? bucketLocations(o.locationsCount) : undefined,
+    email: o.email,
+  }, "user")
+}
+
+// GA4's standard error event, so a failed submit is visible in the same funnel
+// without inventing an event name. fatal:false — the visitor can retry.
+export function trackFormError(description: string) {
+  track("exception", { event_id: generateEventId(), description, fatal: false })
+}
+
+// WhatsApp is a separate contact path from the audit form, so it gets its own
+// countable event — select_content is GA4's recommended name for "tapped a thing".
+export function trackWhatsAppClick(cta_location: CtaLocation) {
+  track("select_content", {
+    event_id: generateEventId(), content_type: "whatsapp", item_id: cta_location, cta_location,
+  })
+}
+
 // Fires at /login/success after OAuth completes — the account exists, so this is
 // GA4's sign_up (completed), not merely "started". method = the OAuth provider.
-export function trackSignUp() {
-  const cta_location = (typeof window !== "undefined"
-    ? sessionStorage.getItem(CTA_KEY)
-    : null) as CtaLocation | null
-  sessionStorage.removeItem(CTA_KEY) // consume so a back-nav can't re-fire it
+//
+// The audit lead form also calls this (method: "audit_form"), because the Ads
+// conversion goal is currently built on sign_up — see trackLeadSignUp below.
+// Passing cta_location explicitly skips the sessionStorage lookup, so a form
+// submit can't consume a CTA that a pending OAuth round-trip still needs.
+export function trackSignUp(o: {
+  method?: string
+  lead_magnet?: EventParams["lead_magnet"]
+  cta_location?: CtaLocation
+  email?: string
+  lead_id?: number | string
+} = {}) {
+  let cta_location = o.cta_location
+  if (!cta_location && typeof window !== "undefined") {
+    cta_location = (sessionStorage.getItem(CTA_KEY) as CtaLocation | null) ?? undefined
+    sessionStorage.removeItem(CTA_KEY) // consume so a back-nav can't re-fire it
+  }
   track("sign_up", {
     event_id: generateEventId(),
-    lead_magnet: "7_day_trial",
-    method: "google",
+    lead_magnet: o.lead_magnet ?? "7_day_trial",
+    method: o.method ?? "google",
     ...(cta_location ? { cta_location } : {}),
+    ...(o.lead_id !== undefined ? { lead_id: String(o.lead_id) } : {}),
+    email: o.email,
   }, "user")
+}
+
+// A confirmed audit lead, pushed as sign_up as well as generate_lead.
+//
+// Why both: the Google Ads conversion goal is wired to sign_up today, so a lead
+// that only pushed generate_lead would not be counted or bid on. method
+// ("audit_form" vs "google") is what separates form leads from trial signups in
+// GA4. NOTE: once generate_lead is imported into Ads as its own conversion,
+// drop this call or the same lead counts twice.
+export function trackLeadSignUp(o: {
+  lead_id?: number | string
+  cta_location?: CtaLocation
+  email?: string
+}) {
+  trackSignUp({
+    method: "audit_form",
+    lead_magnet: "custom_plan",
+    cta_location: o.cta_location,
+    email: o.email,
+    lead_id: o.lead_id,
+  })
 }

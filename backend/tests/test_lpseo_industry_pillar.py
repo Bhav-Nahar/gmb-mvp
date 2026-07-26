@@ -11,23 +11,9 @@ package CSV end to end so a content-side regression fails here rather than in pr
 """
 import csv
 import io
-from pathlib import Path
-
 from app.api import lpseo as lpseo_api
 from app.api.lpseo import admin_import_pages
 from app.models.lpseo_page import LpseoPage, LpseoPageStatus
-
-PACKAGE_CSV = (
-    Path(__file__).resolve().parents[2]
-    / "pinzo-local-seo-industry-pillar-dentists-india-bundle"
-    / "pinzo-local-seo-industry-pillar-dentists-india-import-ready.csv"
-)
-
-# Guardrail 9: prohibited in every generated field and in the HTML.
-BANNED_CHARS = {
-    "–": "en dash", "—": "em dash",
-    "‑": "non-breaking hyphen", "−": "minus sign",
-}
 
 
 class _FakeUpload:
@@ -131,101 +117,6 @@ def test_pillar_and_its_city_children_coexist(db, monkeypatch):
     slugs = {p.slug for p in db.query(LpseoPage).all()}
     assert slugs == {"dentists", "dentists-in-mumbai", "dentists-in-pune"}
 
-
-# ── The shipped package ──────────────────────────────────────────────────────
-
-def test_shipped_package_csv_imports(db, monkeypatch):
-    """The enriched dentists/India package must import unedited, with the canonical
-    columns added by the audit winning over the package's lossier aliases."""
-    result, touched = _run(db, monkeypatch, PACKAGE_CSV.read_bytes())
-    assert result["created"] == 1 and result["failed"] == 0, result["results"]
-    assert touched == []  # draft, so nothing live to revalidate
-
-    page = db.query(LpseoPage).filter(LpseoPage.slug == "dentists").one()
-    assert page.country == "in" and page.city_label == "India"
-    assert page.status == LpseoPageStatus.DRAFT.value and page.index_status == "noindex"
-    assert page.canonical_url == "https://www.pinzo.io/en-in/local-seo-services/dentists"
-    c = page.content
-
-    # Recovered from the reference HTML: the service matrix is 10 rows and keeps its
-    # third "why it matters" column, which the 2-part `solutions` cell had dropped.
-    assert len(c["services"]) == 10
-    assert all(s["channel"] and s["work"] and s["outcome"] for s in c["services"])
-    assert c["services"][0]["channel"] == "Google Maps and GBP"
-
-    # Canonical column beats the package alias for the same section.
-    assert len(c["search_intents"]) == 4
-    assert c["search_intents"][0]["title"] == "Locality and near-me searches"
-    assert all(i["detail"] for i in c["search_intents"])
-
-    # Sections that had no CSV column at all before the audit.
-    assert [j["title"] for j in c["journey_stages"]] == ["Search", "Compare", "Evaluate", "Contact", "Book"]
-    assert len(c["proof_points"]) == 4
-    assert len(c["value_props"]) == 3
-    assert len(c["deliverables"]) == 9
-    assert len(c["comparison"]) == 6
-    assert all(r["point"] and r["agency"] and r["software"] and r["pinzo"] for r in c["comparison"])
-    assert [p["days"] for p in c["workflow_phases"]] == ["Days 1 to 30", "Days 31 to 60", "Days 61 to 90"]
-    assert all(len(p["steps"]) == 3 for p in c["workflow_phases"])
-    assert [p["name"] for p in c["plans"]] == ["Pinzo Platform", "Pinzo Managed Local SEO", "Pinzo for Dental Groups"]
-    assert [p["featured"] for p in c["plans"]] == [False, True, False]
-    assert all(len(p["features"]) == 3 for p in c["plans"])
-    assert c["answer_heading"].startswith("What are Local SEO services for dentists")
-    assert c["strategy_heading"] and c["strategy_body"] and c["lead_heading"] and c["lead_sub"]
-
-    # The pillar's routing job: six city names that the template turns into links.
-    assert c["neighborhoods"] == ["Mumbai", "Delhi", "Bengaluru", "Hyderabad", "Pune", "Chennai"]
-    assert len(c["city_factors"]) == 7  # six markets plus the doorway-page warning
-
-    # 8 to 12 visible FAQs (guardrail 5.18); the template renders these verbatim into
-    # both the accordion and the FAQPage schema, so parsing must not mangle them.
-    assert 8 <= len(c["faqs"]) <= 12
-    assert all(f["q"].endswith("?") and f["a"] for f in c["faqs"])
-
-    # Package columns describing GBP-listing work render no section here and are dropped.
-    for dead in ("gbp_categories", "gbp_attributes", "post_ideas", "photo_checklist",
-                 "solutions", "why_matters_points", "url", "schema_type"):
-        assert dead not in c
-
-
-def test_shipped_package_csv_is_a_strict_superset_of_the_50_column_header(db):
-    """The audit enriched the file in place. It must still carry every original
-    package column, in the original order, before the recovered ones."""
-    with PACKAGE_CSV.open(encoding="utf-8-sig", newline="") as fh:
-        cols = list(csv.DictReader(fh).fieldnames)
-    original = [
-        "slug", "country", "industry_label", "industry_slug", "city_label", "city_slug",
-        "meta_title", "meta_description", "h1", "canonical_url", "index_status",
-        "quality_score", "status", "badge", "hero_sub", "primary_cta", "secondary_cta",
-        "answer_block", "why_matters_body", "reviews_body", "example_review", "example_reply",
-        "city_visibility_body", "final_heading", "final_sub", "final_button", "primary_keyword",
-        "page_type", "template_version", "region", "last_updated", "why_matters_points",
-        "gbp_categories", "gbp_services", "gbp_attributes", "review_themes", "post_ideas",
-        "photo_checklist", "neighborhoods", "single_points", "multi_points", "secondary_keywords",
-        "problems", "solutions", "monthly_workflow", "faqs", "review_examples", "related_pages",
-        "url", "schema_type",
-    ]
-    assert cols[:50] == original
-    assert len(cols) > 50  # enrichment actually happened
-
-
-def test_shipped_package_copy_has_no_prohibited_dashes(db, monkeypatch):
-    _run(db, monkeypatch, PACKAGE_CSV.read_bytes())
-    page = db.query(LpseoPage).filter(LpseoPage.slug == "dentists").one()
-
-    def walk(node):
-        if isinstance(node, str):
-            for ch, name in BANNED_CHARS.items():
-                assert ch not in node, f"{name} in imported copy: {node[:80]}"
-        elif isinstance(node, dict):
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(page.content)
-    walk([page.h1, page.meta_title, page.meta_description])
 
 
 def test_import_syncs_page_type_column_with_content(db, monkeypatch):

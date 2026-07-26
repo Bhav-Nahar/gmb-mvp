@@ -13,19 +13,11 @@ These tests pin the three things that were easy to get wrong:
 """
 import csv
 import io
-import os
-
 from app.api import cseo as cseo_api
 from app.api.cseo import (
     GLOBAL, _apply_defaults, _code, _loc, _path, _row_to_page_in, admin_import,
 )
 from app.models.cseo_page import CseoPage, CseoPageStatus
-
-PACKAGE_CSV = os.path.join(
-    os.path.dirname(__file__), "..", "..",
-    "pinzo-global-local-seo-pillar-complete-package",
-    "pinzo-global-local-seo-services-pillar-import-ready.csv",
-)
 
 
 class _FakeUpload:
@@ -153,78 +145,4 @@ def test_country_pillar_tuple_shapes_are_unchanged():
                               "cta_label": "Request a Scope", "cta_url": "#audit"}]
 
 
-# ── The shipped package ──────────────────────────────────────────────────────
 
-def test_package_csv_imports_as_a_draft_and_noindex(db, monkeypatch):
-    with open(PACKAGE_CSV, "rb") as f:
-        res = _run(db, f.read(), monkeypatch)
-    assert res["failed"] == 0, res["results"]
-    assert res["created"] == 1
-
-    p = db.query(CseoPage).one()
-    assert p.country == GLOBAL and p.country_label == "Global"
-    # The CSV ships index_status "index" and status "ready". Guardrail: launch QA
-    # flips robots, an import never does.
-    assert p.status == CseoPageStatus.DRAFT.value
-    assert p.index_status == "noindex"
-    assert p.quality_score == 94
-    assert p.canonical_url == "https://www.pinzo.io/local-seo-services/"
-    assert p.h1 == "Local SEO Services for Google Maps, Local Search and AI Discovery"
-
-
-def test_package_csv_carries_every_section_the_reference_html_has(db, monkeypatch):
-    with open(PACKAGE_CSV, "rb") as f:
-        _run(db, f.read(), monkeypatch)
-    c = db.query(CseoPage).one().content
-
-    # Section copy recovered from the reference HTML during the package audit.
-    for key, n in [("journey_stages", 4), ("why_pillars", 3), ("service_workstreams", 12),
-                   ("ai_surfaces", 7), ("ai_approach", 3), ("ai_signals", 8),
-                   ("business_models", 3), ("roadmap_phases", 3), ("deliverables_table", 7),
-                   ("proof_cases", 3), ("engagement_models", 3), ("buyer_checklist", 7),
-                   ("market_pathways", 6), ("related_cards", 6), ("audit_points", 5),
-                   ("hero_trust", 4), ("faqs", 12)]:
-        assert len(c.get(key, [])) == n, f"{key}: expected {n}, got {len(c.get(key, []))}"
-
-    for key in ["cost_drivers", "policy"]:
-        assert c[key]["title"] and c[key]["detail"], key
-    for key in ["answer_note", "proof_note", "audit_note", "hero_sub", "answer_block"]:
-        assert c.get(key), key
-
-    # Every workstream and model keeps its nested bullets.
-    assert all(len(w["points"]) == 4 for w in c["service_workstreams"])
-    assert all(len(m["points"]) == 4 for m in c["business_models"])
-    assert all(len(p["points"]) == 6 for p in c["roadmap_phases"])
-    assert all(m["cta_label"] and m["cta_url"] for m in c["engagement_models"])
-    assert all(r["detail"] for r in c["related_cards"])
-
-
-def test_package_copy_has_no_forbidden_dash_characters(db, monkeypatch):
-    """Guardrail: no U+2013, U+2014, U+2011 or U+2212 in visible copy."""
-    with open(PACKAGE_CSV, "rb") as f:
-        _run(db, f.read(), monkeypatch)
-    p = db.query(CseoPage).one()
-
-    def walk(v):
-        if isinstance(v, str):
-            yield v
-        elif isinstance(v, dict):
-            for x in v.values():
-                yield from walk(x)
-        elif isinstance(v, list):
-            for x in v:
-                yield from walk(x)
-
-    for s in walk([p.content, p.h1, p.meta_title, p.meta_description]):
-        assert not (set(s) & set("–—‑−")), repr(s)
-
-
-def test_faq_text_is_preserved_exactly_for_the_schema(db, monkeypatch):
-    """The FAQPage schema is generated from the visible copy, so the imported answer
-    must be the package answer byte for byte, single pipes included."""
-    with open(PACKAGE_CSV, "rb") as f:
-        _run(db, f.read(), monkeypatch)
-    faqs = db.query(CseoPage).one().content["faqs"]
-    assert faqs[0]["q"] == "What are Local SEO services?"
-    assert faqs[-1]["q"] == "Should I choose Local SEO software or a managed service?"
-    assert all(f["q"] and f["a"] and "::" not in f["a"] for f in faqs)

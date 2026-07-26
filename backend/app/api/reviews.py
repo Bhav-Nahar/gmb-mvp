@@ -276,9 +276,11 @@ async def generate_review_reply(
 
     rating = review.rating if review.rating is not None else 3
 
+    sensitive = reply_validation.is_sensitive_category(location.primary_category, location.location_name)
+
     # Rating-only review: rotating canned reply, no LLM, no credit.
     if not (review.comment or "").strip():
-        reply = empty_review_reply(rating)
+        reply = empty_review_reply(rating, sensitive)
         return GenerateReplyResponse(
             review_id=review.id,
             generated_reply=reply,
@@ -310,10 +312,15 @@ async def generate_review_reply(
     variants = result["variants"]
     # Validate EVERY variant the user can post (not just the recommended one), with the
     # right word bounds per variant, and surface the worst risk across all of them.
-    _bounds = {"recommended": (30, 60), "warm_or_professional": (30, 60), "short": (12, 30)}
+    # Sensitive-category replies are stripped of every specific detail, so they land
+    # legitimately shorter — lower the floors instead of flagging every compliant reply.
+    _bounds = ({"recommended": (18, 60), "warm_or_professional": (18, 60), "short": (6, 30)}
+               if sensitive else
+               {"recommended": (30, 60), "warm_or_professional": (30, 60), "short": (12, 30)})
     all_checks = [
         reply_validation.validate(variants[k], review.sentiment, rating, review.comment,
-                                  min_words=lo, max_words=hi)
+                                  min_words=lo, max_words=hi,
+                                  sensitive=sensitive, reviewer_name=review.reviewer_name or "")
         for k, (lo, hi) in _bounds.items()
     ]
     _risk_rank = {"low": 0, "medium": 1, "high": 2}
