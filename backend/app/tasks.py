@@ -1,4 +1,5 @@
 import datetime
+import random
 from datetime import timezone
 from celery import shared_task
 from sqlalchemy.orm import Session
@@ -1267,16 +1268,23 @@ def tag_reviews_sentiment_task(self, location_id: int, organization_id: int) -> 
         db.close()
 
 @shared_task(bind=True, name="app.tasks.auto_reply_reviews_task", max_retries=2)
-def auto_reply_reviews_task(self, location_id: int, organization_id: int) -> dict:
+def auto_reply_reviews_task(self, location_id: int, organization_id: int,
+                            backlog: bool = False) -> dict:
     """
-    Auto-reply to newly-synced positive reviews from reply templates.
+    Auto-reply to newly-synced positive reviews from reply templates (or, in AI mode,
+    from the LLM). backlog=True instead drips older reviews — see
+    drip_ai_backlog_replies_beat_task.
     Thin entry point: owns the Redis lock; orchestration lives in
     ReviewAutoReplyService so it stays unit-testable.
     """
     from app.services.review_auto_reply_service import ReviewAutoReplyService
 
     r = _get_redis()
-    lock = r.lock(f"lock:auto_reply:{organization_id}:{location_id}", timeout=300)
+    # 30 min, not 5. An AI-mode batch is up to 20 reviews, each an LLM call (30s
+    # timeout, 3 attempts) plus a Google POST — a slow run can outlive a 300s lock,
+    # and once it expires the next tick starts a second run that re-replies to the
+    # same reviews and pays for the generation twice.
+    lock = r.lock(f"lock:auto_reply:{organization_id}:{location_id}", timeout=1800)
     if not lock.acquire(blocking=False):
         return {"status": "skipped", "reason": "already running"}
 
@@ -1288,12 +1296,64 @@ def auto_reply_reviews_task(self, location_id: int, organization_id: int) -> dic
         org = db.query(Organization).filter(Organization.id == organization_id).first()
         if not org or not plan_config.plan_has_feature(org.plan_tier, plan_config.FEATURE_AUTO_REPLY):
             return {"status": "skipped", "reason": "auto_reply not in plan"}
-        return run_async(ReviewAutoReplyService(db).run(organization_id, location_id))
+        return run_async(ReviewAutoReplyService(db).run(organization_id, location_id, backlog=backlog))
     finally:
         try:
             lock.release()
         except Exception:
             pass
+        db.close()
+
+
+@shared_task(bind=True, name="app.tasks.drip_ai_backlog_replies_beat_task", max_retries=1)
+def drip_ai_backlog_replies_beat_task(self) -> dict:
+    """Hourly: hand each AI-mode location its next slice of backlog replies.
+
+    Fresh reviews are answered by the sync-triggered task; this only paces the older
+    ones, so a 10-20/day quota lands spread over the day instead of in one burst. The
+    child task computes what is due from the clock, so a missed tick self-corrects.
+    """
+    from app.core import plan_config
+    from app.services.billing.entitlement_service import EntitlementService
+    from app.services.review_auto_reply_service import ReviewAutoReplyService
+
+    db: Session = SessionLocal()
+    try:
+        rows = (
+            db.query(Organization, Location)
+            .join(Location, Location.organization_id == Organization.id)
+            .filter(
+                Organization.auto_reply_mode == "ai",
+                Organization.auto_reply_enabled_at.isnot(None),
+                Location.billing_status == "active",
+            )
+            .all()
+        )
+        svc = ReviewAutoReplyService(db)
+        enqueued = 0
+        for org, location in rows:
+            if EntitlementService.is_org_locked(org):
+                continue
+            if not plan_config.plan_has_feature(org.plan_tier, plan_config.FEATURE_AUTO_REPLY):
+                continue
+            # Two indexed reads here beat a Celery round-trip that would only
+            # return "nothing due": steady state is an empty backlog, so without
+            # this every AI-mode location costs 24 pointless tasks (and their
+            # broker traffic) a day. The child re-checks both — the jitter delay
+            # means the numbers can move before it runs.
+            if not svc.has_backlog(location) or svc._backlog_room(location) <= 0:
+                continue
+            location_id = location.id
+            # Jitter across the hour so replies don't all land on :00. The child
+            # recomputes what is due from the clock, so a later start just means a
+            # slightly later post, never a skipped or doubled one.
+            auto_reply_reviews_task.apply_async(
+                kwargs={"location_id": location_id, "organization_id": org.id, "backlog": True},
+                countdown=random.randint(0, 3300),  # 0-55 min
+            )
+            enqueued += 1
+        return {"status": "success", "enqueued": enqueued}
+    finally:
         db.close()
 
 

@@ -29,6 +29,10 @@ class Organization(Base):
     # auto-replied from a reply template, across all of the org's active locations.
     # NULL = off. Timestamp (not bool) so enabling never machine-guns the backlog.
     auto_reply_enabled_at = Column(DateTime(timezone=True), nullable=True)
+    # "template" = pick from the org's reply templates (original behaviour).
+    # "ai" = generate each reply with the LLM, costs one AI credit per reply, and
+    # drips a randomised 10-20 per location per day (new reviews first, then backlog).
+    auto_reply_mode = Column(String, nullable=False, default="template", server_default=text("'template'"))
     razorpay_customer_id = Column(String, index=True, nullable=True)
     razorpay_subscription_id = Column(String, nullable=True)
     subscription_ends_at = Column(DateTime(timezone=True), nullable=True)

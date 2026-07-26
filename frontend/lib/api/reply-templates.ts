@@ -54,8 +54,11 @@ export async function deleteTemplate(id: number): Promise<{ auto_reply_disabled:
 // Org-wide auto-reply: replies to new 4-5★ reviews from a template automatically.
 export const MIN_TEMPLATES_FOR_AUTO_REPLY = 2;
 
+export type AutoReplyMode = 'template' | 'ai';
+
 export interface AutoReplyStatus {
   enabled_at: string | null;
+  mode: AutoReplyMode;
   positive_template_count: number;
   min_required: number;
 }
@@ -64,8 +67,11 @@ export async function getAutoReplyStatus(): Promise<AutoReplyStatus> {
   return api.get<AutoReplyStatus>('/reply-templates/auto-reply');
 }
 
-export async function setAutoReply(enabled: boolean): Promise<{ status: string; enabled_at?: string | null }> {
-  return api.post(`/reply-templates/auto-reply/${enabled ? 'enable' : 'disable'}`);
+export async function setAutoReply(
+  enabled: boolean,
+  mode: AutoReplyMode = 'template',
+): Promise<{ status: string; enabled_at?: string | null; mode?: AutoReplyMode }> {
+  return api.post(enabled ? `/reply-templates/auto-reply/enable?mode=${mode}` : '/reply-templates/auto-reply/disable');
 }
 
 // Variables offered in the editor's "Insert" toolbar (mirrors backend INSERTABLE_VARIABLES).

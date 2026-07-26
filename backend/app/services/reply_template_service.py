@@ -178,7 +178,8 @@ class ReplyTemplateService:
         auto_reply_disabled = False
         if star in AUTO_REPLY_RATINGS:
             org = db.query(Organization).filter(Organization.id == organization_id).first()
-            if org and org.auto_reply_enabled_at is not None and \
+            # AI mode does not use templates, so losing one must not switch it off.
+            if org and org.auto_reply_enabled_at is not None and org.auto_reply_mode != "ai" and \
                     ReplyTemplateService.count_positive_templates(db, organization_id) < MIN_TEMPLATES_FOR_AUTO_REPLY:
                 org.auto_reply_enabled_at = None
                 auto_reply_disabled = True

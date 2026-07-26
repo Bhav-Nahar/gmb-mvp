@@ -45,10 +45,10 @@ def _make_review(rid, rating, created_at, **kw):
     )
 
 
-def _run(db, provider, monkeypatch):
+def _run(db, provider, monkeypatch, backlog=False):
     monkeypatch.setattr(ReviewAutoReplyService, "_get_provider",
                         lambda self, name, org_id: provider)
-    return asyncio.run(ReviewAutoReplyService(db).run(1, 1))
+    return asyncio.run(ReviewAutoReplyService(db).run(1, 1, backlog=backlog))
 
 
 def test_only_eligible_reviews_are_replied(db: Session, monkeypatch):
@@ -150,3 +150,250 @@ def test_resolve_variables_first_name_and_location_fields():
     assert out == "Hi Sam! Visit Acme in Pune, call 123 or acme.com."
     # Unsupplied fields render empty, not the literal token.
     assert ReplyTemplateService.resolve_variables("[{{city}}]", "Sam", "Acme") == "[]"
+
+
+# ── AI mode ───────────────────────────────────────────────────────────────────
+
+def _ai_seed(db: Session, credits=50, mode="ai"):
+    org = Organization(id=1, name="Org", subscription_status="active",
+                       auto_reply_enabled_at=datetime.now(timezone.utc) - timedelta(days=30),
+                       auto_reply_mode=mode, monthly_ai_credits_balance=credits,
+                       topup_ai_credits_balance=0)
+    db.add(org)
+    db.add(Location(id=1, organization_id=1, google_location_id="locations/1",
+                    location_name="Acme Cafe", primary_category="Cafe",
+                    billing_status="active", sync_status="Synced"))
+    db.commit()
+
+
+def _ai_review(rid, rating, created_at, **kw):
+    """Like _make_review but with review text, so AI mode takes the LLM path rather
+    than the no-comment canned reply."""
+    r = _make_review(rid, rating, created_at, **kw)
+    r.comment = "Lovely coffee and the staff were friendly, the seating is comfortable too."
+    return r
+
+
+def _stub_ai(monkeypatch, text="Thank you so much for the kind words about our cafe, we are "
+                              "really glad the coffee and the seating worked out well for you "
+                              "and we hope to see you here again soon."):
+    import app.services.ai_reply_service as ai
+
+    async def fake(review, location, db=None):
+        return {"generated_reply": text, "variants": {"recommended": text, "short": text,
+                                                      "warm_or_professional": text},
+                "topics": [], "tone": "grateful", "sensitive": False}
+    monkeypatch.setattr(ai, "generate_reply", fake)
+
+
+def test_ai_mode_replies_to_backlog_without_templates(db: Session, monkeypatch):
+    """The whole point of AI mode: old reviews get answered, and no template is needed."""
+    _ai_seed(db)
+    _stub_ai(monkeypatch)
+    old = datetime.now(timezone.utc) - timedelta(days=200)
+    db.add_all([_ai_review(f"b{i}", 5, old) for i in range(30)])
+    db.commit()
+
+    provider = _FakeProvider()
+    monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, loc: 12)
+    result = _run(db, provider, monkeypatch, backlog=True)
+
+    assert result["replied"] == 12, result          # this slice of the drip, not all 30
+    assert len(provider.calls) == 12
+    replied = db.query(Review).filter(Review.is_replied == True).all()  # noqa: E712
+    assert all(r.reply_template_id is None for r in replied)
+    org = db.query(Organization).filter(Organization.id == 1).first()
+    assert org.monthly_ai_credits_balance == 50 - 12  # one credit per generated reply
+
+
+def test_ai_mode_prioritises_new_reviews_over_backlog(db: Session, monkeypatch):
+    _ai_seed(db)
+    _stub_ai(monkeypatch)
+    fresh = _ai_review("fresh", 5, datetime.now(timezone.utc) - timedelta(hours=2))
+    db.add(fresh)
+    db.add_all([_ai_review(f"b{i}", 5, datetime.now(timezone.utc) - timedelta(days=100))
+                for i in range(5)])
+    db.commit()
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch)   # the sync-triggered run
+
+    assert result["replied"] == 1               # only the fresh one; backlog waits for the drip
+    db.refresh(fresh)
+    assert fresh.is_replied is True
+
+
+def test_ai_mode_never_posts_a_reply_that_needs_a_human(db: Session, monkeypatch):
+    _ai_seed(db)
+    _stub_ai(monkeypatch, text="We are the best cafe in town and you deserve nothing less "
+                               "than perfection from us every single time you drop by here.")
+    db.add(_ai_review("x", 5, datetime.now(timezone.utc) - timedelta(hours=1)))
+    db.commit()
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch)
+
+    assert result["replied"] == 0 and result["needs_human"] == 1, result
+    assert provider.calls == []  # banned superlative never reached Google
+
+
+def test_ai_mode_stops_the_run_when_credits_run_out(db: Session, monkeypatch):
+    _ai_seed(db, credits=3)
+    _stub_ai(monkeypatch)
+    db.add_all([_ai_review(f"b{i}", 5, datetime.now(timezone.utc) - timedelta(days=50))
+                for i in range(10)])
+    db.commit()
+
+    monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, loc: 10)
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch, backlog=True)
+
+    assert result["replied"] == 3, result  # stopped at the balance, no 402 storm
+    assert len(provider.calls) == 3
+
+
+def test_daily_quota_is_stable_within_a_day_and_in_range(db: Session):
+    svc = ReviewAutoReplyService(db)
+    q = svc._daily_quota(7)
+    assert 10 <= q <= 20
+    assert svc._daily_quota(7) == q          # same day, same number across runs
+
+
+def test_backlog_drip_is_paced_across_the_day(db: Session):
+    """Nothing due at midnight, the whole quota due by the end of the day, monotonic."""
+    due = ReviewAutoReplyService._due_by_now
+    midnight = datetime(2026, 7, 26, 0, 0, tzinfo=timezone.utc)
+    assert due(20, midnight) == 0
+    assert due(20, midnight.replace(hour=12)) == 10
+    assert due(20, midnight.replace(hour=23, minute=59)) == 20
+    assert due(10, midnight.replace(hour=12)) == 5
+    hourly = [due(15, midnight.replace(hour=h)) for h in range(24)]
+    assert hourly == sorted(hourly) and max(hourly) <= 15
+
+
+def test_backlog_run_is_ai_mode_only(db: Session, monkeypatch):
+    """A template-mode org must never have its backlog machine-gunned by the drip."""
+    _ai_seed(db, mode="template")
+    db.add_all([_ai_review(f"b{i}", 5, datetime.now(timezone.utc) - timedelta(days=90))
+                for i in range(5)])
+    db.commit()
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch, backlog=True)
+
+    assert result["status"] == "skipped", result
+    assert provider.calls == []
+
+
+def test_ai_mode_skips_entirely_when_the_org_has_no_credits(db: Session, monkeypatch):
+    """No balance = no LLM call at all, not one 402 per review."""
+    _ai_seed(db, credits=0)
+    calls = []
+
+    import app.services.ai_reply_service as ai
+    async def boom(review, location, db=None):
+        calls.append(review.id)
+        raise AssertionError("must not reach the LLM with no credits")
+    monkeypatch.setattr(ai, "generate_reply", boom)
+
+    db.add_all([_ai_review(f"b{i}", 5, datetime.now(timezone.utc) - timedelta(hours=1))
+                for i in range(4)])
+    db.commit()
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch)
+
+    assert result == {"status": "skipped", "reason": "no AI credits"}, result
+    assert calls == [] and provider.calls == []
+
+
+def test_ai_mode_answers_3_star_but_never_1_or_2(db: Session, monkeypatch):
+    _ai_seed(db)
+    _stub_ai(monkeypatch)
+    recent = datetime.now(timezone.utc) - timedelta(hours=1)
+    three, two, one = (_ai_review("t3", 3, recent), _ai_review("t2", 2, recent),
+                       _ai_review("t1", 1, recent))
+    db.add_all([three, two, one])
+    db.commit()
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch)
+
+    assert result["replied"] == 1, result
+    for r, expected in ((three, True), (two, False), (one, False)):
+        db.refresh(r)
+        assert r.is_replied is expected, (r.rating, r.is_replied)
+
+
+def test_template_mode_still_stops_at_4_star(db: Session, monkeypatch):
+    """Lowering the AI floor must not change the template automation."""
+    t0 = datetime.now(timezone.utc) - timedelta(days=1)
+    _seed(db, enabled_at=t0)
+    db.add(_make_review("t3", 3, t0 + timedelta(hours=1)))
+    db.commit()
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch)
+
+    assert result["status"] == "skipped", result
+    assert provider.calls == []
+
+
+def test_rating_only_low_star_does_not_thank_them_for_the_stars(db: Session):
+    from app.services.ai_reply_service import empty_review_reply
+    for _ in range(20):
+        low = empty_review_reply(3)
+        assert 'stars' not in low.lower() and 'support' not in low.lower(), low
+        assert empty_review_reply(5)  # positive pool still works
+
+
+def test_ai_mode_skipped_for_onboarding_org(db: Session, monkeypatch):
+    """Pre-payment org (trial with no clock started) must not spend credits."""
+    _ai_seed(db)
+    org = db.query(Organization).filter(Organization.id == 1).first()
+    org.subscription_status, org.trial_ends_at = "trial", None   # onboarding state
+    db.commit()
+    db.add(_ai_review("x", 5, datetime.now(timezone.utc) - timedelta(hours=1)))
+    db.commit()
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch)
+
+    assert result == {"status": "skipped", "reason": "AI features locked for this org"}, result
+    assert provider.calls == []
+
+
+def test_fresh_burst_is_capped(db: Session, monkeypatch):
+    """First sync after enabling must not turn a day of reviews into a 100-credit burst."""
+    from app.services.review_auto_reply_service import AI_DAILY_MAX
+    _ai_seed(db, credits=500)
+    _stub_ai(monkeypatch)
+    db.add_all([_ai_review(f"f{i}", 5, datetime.now(timezone.utc) - timedelta(hours=3))
+                for i in range(40)])
+    db.commit()
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch)
+
+    assert result["replied"] == AI_DAILY_MAX, result
+
+
+def test_has_backlog_is_false_once_the_old_reviews_are_answered(db: Session, monkeypatch):
+    """The hourly beat job uses this to avoid enqueueing a task per location per hour
+    when there is nothing left to drip."""
+    _ai_seed(db)
+    _stub_ai(monkeypatch)
+    loc = db.query(Location).filter(Location.id == 1).first()
+    svc = ReviewAutoReplyService(db)
+    assert svc.has_backlog(loc) is False              # nothing seeded yet
+
+    db.add(_ai_review("old", 5, datetime.now(timezone.utc) - timedelta(days=60)))
+    db.add(_ai_review("fresh", 5, datetime.now(timezone.utc) - timedelta(hours=2)))
+    db.commit()
+    assert svc.has_backlog(loc) is True               # the old one counts
+    assert ReviewAutoReplyService(db)._find_backlog_targets(loc)
+
+    provider = _FakeProvider()
+    monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, l: 5)
+    _run(db, provider, monkeypatch, backlog=True)
+    assert ReviewAutoReplyService(db).has_backlog(loc) is False  # drained, stop polling

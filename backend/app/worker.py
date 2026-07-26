@@ -104,6 +104,13 @@ celery.conf.beat_schedule = {
         "schedule": 3600.0, # Every 60 minutes — this only re-enqueues reviews that
                             # failed/were-missed tagging; hourly is ample and 4x cheaper.
     },
+    "drip-ai-backlog-replies-hourly": {
+        "task": "app.tasks.drip_ai_backlog_replies_beat_task",
+        "schedule": 3600.0, # Hourly. Only orgs on auto_reply_mode='ai' get a child task,
+                            # and each child works out from the clock how much of today's
+                            # 10-20 quota is due — so a missed tick self-corrects and the
+                            # tick itself is one indexed query (usually zero rows).
+    },
     "release-lpseo-index-batch": {
         "task": "app.tasks.release_lpseo_index_batch_task",
         "schedule": 3600.0, # Hourly. Flips local-SEO pages whose drip-feed index_at

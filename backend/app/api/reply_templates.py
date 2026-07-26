@@ -39,22 +39,32 @@ def get_auto_reply_status(
     count = ReplyTemplateService.count_positive_templates(db, current_user.organization_id)
     return {
         "enabled_at": org.auto_reply_enabled_at if org else None,
+        "mode": org.auto_reply_mode if org else "template",
         "positive_template_count": count,
         "min_required": MIN_TEMPLATES_FOR_AUTO_REPLY,
     }
 
 @router.post("/auto-reply/enable", status_code=status.HTTP_200_OK)
 def enable_auto_reply(
+    mode: str = "template",
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required)
 ):
-    """Turn on org-wide auto-reply. Only future 4-5★ reviews are replied to."""
-    count = ReplyTemplateService.count_positive_templates(db, current_user.organization_id)
-    if count < MIN_TEMPLATES_FOR_AUTO_REPLY:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Add at least {MIN_TEMPLATES_FOR_AUTO_REPLY} reply templates for 4-5★ reviews before enabling auto-reply."
-        )
+    """Turn on org-wide auto-reply for 4-5★ reviews.
+
+    mode=template: reply from the org's saved templates, future reviews only.
+    mode=ai: generate each reply with the LLM (1 credit each) and drip 10-20 per
+    location per day, newest reviews first, then a random sample of the backlog.
+    """
+    if mode not in ("template", "ai"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode must be 'template' or 'ai'")
+    if mode == "template":
+        count = ReplyTemplateService.count_positive_templates(db, current_user.organization_id)
+        if count < MIN_TEMPLATES_FOR_AUTO_REPLY:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Add at least {MIN_TEMPLATES_FOR_AUTO_REPLY} reply templates for 4-5★ reviews before enabling auto-reply."
+            )
     now = datetime.now(timezone.utc)
     db.execute(
         update(Organization)
@@ -62,9 +72,15 @@ def enable_auto_reply(
         .where(Organization.auto_reply_enabled_at.is_(None))
         .values(auto_reply_enabled_at=now)
     )
+    # Mode is switchable while already enabled, so it is set unconditionally.
+    db.execute(
+        update(Organization)
+        .where(Organization.id == current_user.organization_id)
+        .values(auto_reply_mode=mode)
+    )
     db.commit()
     org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
-    return {"status": "enabled", "enabled_at": org.auto_reply_enabled_at}
+    return {"status": "enabled", "enabled_at": org.auto_reply_enabled_at, "mode": org.auto_reply_mode}
 
 @router.post("/auto-reply/disable", status_code=status.HTTP_200_OK)
 def disable_auto_reply(
