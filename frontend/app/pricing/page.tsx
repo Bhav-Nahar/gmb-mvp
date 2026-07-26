@@ -21,6 +21,7 @@ const PLANS = [
     key: 'lite', name: 'Lite', tagline: 'For a single storefront', Icon: Store, engines: [],
     monthly: 999, annualPerMo: 999, credits: 10, highlight: false,
     perks: ['1 location', 'AI review replies', 'All reviews + Google posts', 'Credit top-ups'],
+    missing: ['Post scheduling & auto-reply', 'AI Search Visibility', 'Team members & roles', 'Local Rank geo-grid'],
   },
   {
     key: 'basic', name: 'Basic', tagline: 'For growing multi-location brands', Icon: Building2,
@@ -29,6 +30,7 @@ const PLANS = [
     perks: ['Unlimited locations', 'AI Search Visibility (Google AI)', 'Post scheduling + reply templates',
             'Auto-reply + email alerts', 'Unauthorised change alerts', 'Team members & roles',
             'Full insights & search intelligence'],
+    missing: ['ChatGPT / Gemini / Perplexity visibility', 'Local Rank geo-grid', 'Lead-capture microsite'],
   },
   {
     key: 'pro', name: 'Pro', tagline: 'To rank higher & convert more', Icon: Rocket,
@@ -36,6 +38,7 @@ const PLANS = [
     monthly: 3000, annualPerMo: 2400, credits: 45, highlight: false,
     perks: ['Everything in Basic', 'Full AI Search Visibility (ChatGPT, Gemini, Perplexity)',
             'Local Rank geo-grid heatmaps', 'Lead-capture microsite', 'Most AI credits per location'],
+    missing: [],
   },
 ] as const;
 
@@ -219,10 +222,18 @@ export default function PricingPage() {
                 <ul className="mt-6 space-y-2.5 border-t border-border/60 pt-5 text-sm">
                   {p.perks.map((perk) => (
                     <li key={perk} className="flex items-start gap-2">
-                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                        <Check className="h-2.5 w-2.5 text-primary" />
+                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+                        <Check className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
                       </span>
                       <span className="text-muted-foreground">{perk}</span>
+                    </li>
+                  ))}
+                  {p.missing.map((m) => (
+                    <li key={m} className="flex items-start gap-2">
+                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500/15">
+                        <X className="h-2.5 w-2.5 text-red-500" />
+                      </span>
+                      <span className="text-muted-foreground/60 line-through decoration-muted-foreground/30">{m}</span>
                     </li>
                   ))}
                 </ul>
