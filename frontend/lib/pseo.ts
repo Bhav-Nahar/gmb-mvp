@@ -171,8 +171,8 @@ export function buildPseoJsonLd(page: PseoPageData) {
       // Must match the visible "Plans from" price (Lite plan; same 1 USD = ₹100 peg
       // as the page) — structured data contradicting on-page pricing is a Google flag.
       offers: page.country === 'in'
-        ? { '@type': 'Offer', price: '999', priceCurrency: 'INR', description: 'Plans from ₹999/month + GST after a 7-day free trial. Free audit, no card required.' }
-        : { '@type': 'Offer', price: '10', priceCurrency: 'USD', description: 'Plans from $10/month after a 7-day free trial. Free audit, no card required.' },
+        ? { '@type': 'Offer', price: '799', priceCurrency: 'INR', description: 'Plans from ₹799/month (incl. GST) after a 7-day free trial. Free audit, no card required.' }
+        : { '@type': 'Offer', price: '8', priceCurrency: 'USD', description: 'Plans from $8/month after a 7-day free trial. Free audit, no card required.' },
     },
     {
       '@type': 'Service',

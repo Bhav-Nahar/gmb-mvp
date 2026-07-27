@@ -129,6 +129,123 @@ def get_reviews(
         pages=pages
     )
 
+@router.get("/analytics")
+def get_review_analytics(
+    location_id: Optional[int] = None,
+    days: int = Query(90, ge=7, le=730),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required)
+):
+    """Aggregated review analytics for the Reviews > Analytics tab.
+
+    NPS here is a proxy derived from star ratings (5=promoter, 4=passive,
+    <=3=detractor), not a surveyed NPS — the UI labels it 'Review NPS'."""
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    prev_since = since - timedelta(days=days)
+
+    filters = [
+        Review.organization_id == current_user.organization_id,
+        Review.is_deleted == False,
+    ]
+    allowed_location_ids = get_user_location_ids(current_user, db)
+    if allowed_location_ids is not None:
+        filters.append(Review.location_id.in_(allowed_location_ids))
+    if location_id is not None:
+        if allowed_location_ids is not None and location_id not in allowed_location_ids:
+            raise HTTPException(status_code=403, detail="No access to this location")
+        filters.append(Review.location_id == location_id)
+
+    period = filters + [Review.review_created_at >= since]
+
+    # One aggregate pass for the headline numbers.
+    agg = db.query(
+        func.count(Review.id),
+        func.avg(Review.rating),
+        func.count(func.nullif(Review.is_replied, False)),
+        # Non-empty comment = "text review"
+        func.count(Review.id).filter(func.coalesce(func.trim(Review.comment), "") != ""),
+        func.count(Review.id).filter(Review.rating == 5),
+        func.count(Review.id).filter(Review.rating == 4),
+        func.count(Review.id).filter(Review.rating <= 3),
+        # Avg hours from review to owner reply
+        func.avg(extract("epoch", Review.reply_created_at - Review.review_created_at) / 3600.0)
+            .filter(Review.reply_created_at.isnot(None)),
+    ).filter(*period).one()
+    total, avg_rating, replied, text_count, promoters, passives, detractors, avg_reply_hours = agg
+
+    # Star distribution
+    dist_rows = db.query(Review.rating, func.count(Review.id)).filter(*period).group_by(Review.rating).all()
+    distribution = {star: 0 for star in (1, 2, 3, 4, 5)}
+    for star, n in dist_rows:
+        if star in distribution:
+            distribution[star] = n
+
+    # Sentiment split (LLM-tagged; untagged reviews fall outside these counts)
+    sent_rows = (db.query(Review.sentiment, func.count(Review.id))
+                 .filter(*period, Review.sentiment.isnot(None))
+                 .group_by(Review.sentiment).all())
+    sentiment = {s: n for s, n in sent_rows}
+
+    # Top issue categories (LLM-tagged) — what customers talk about most
+    issue_rows = (db.query(Review.issue_category, func.count(Review.id))
+                  .filter(*period, Review.issue_category.isnot(None))
+                  .group_by(Review.issue_category)
+                  .order_by(func.count(Review.id).desc()).limit(6).all())
+    issue_categories = [{"category": c, "count": n} for c, n in issue_rows]
+
+    # Sentiment weekly trend: % positive per week (only tagged reviews)
+    bucket = func.date_trunc("week", Review.review_created_at)
+    sent_trend_rows = (
+        db.query(bucket,
+                 func.count(Review.id).filter(Review.sentiment == "Positive"),
+                 func.count(Review.id))
+        .filter(*period, Review.sentiment.isnot(None))
+        .group_by(bucket).order_by(bucket).all())
+    sentiment_trend = [{"week": b.date().isoformat(), "positive_pct": round(p / t * 100, 1), "count": t}
+                       for b, p, t in sent_trend_rows if t]
+
+    # Weekly trend: avg rating + volume per ISO week
+    trend_rows = (db.query(bucket, func.avg(Review.rating), func.count(Review.id))
+                  .filter(*period).group_by(bucket).order_by(bucket).all())
+    trend = [{"week": b.date().isoformat(), "avg_rating": round(float(a), 2), "count": n}
+             for b, a, n in trend_rows]
+
+    # Velocity vs the previous window of the same length
+    prev_total = db.query(func.count(Review.id)).filter(
+        *filters, Review.review_created_at >= prev_since, Review.review_created_at < since
+    ).scalar() or 0
+
+    # NPS over rated reviews only — null-rating reviews would dilute the score.
+    rated = promoters + passives + detractors
+    nps = round(((promoters - detractors) / rated) * 100) if rated else None
+
+    return {
+        "days": days,
+        "total_reviews": total,
+        "avg_rating": round(float(avg_rating), 2) if avg_rating is not None else None,
+        "replied_count": replied,
+        "unreplied_count": total - replied,
+        "response_rate": round(replied / total * 100, 1) if total else None,
+        "text_count": text_count,
+        "non_text_count": total - text_count,
+        "review_nps": nps,
+        "promoters": promoters,
+        "passives": passives,
+        "detractors": detractors,
+        "rating_distribution": distribution,
+        "sentiment": sentiment,
+        "sentiment_trend": sentiment_trend,
+        "issue_categories": issue_categories,
+        "trend": trend,
+        "avg_reply_hours": round(float(avg_reply_hours), 1) if avg_reply_hours is not None else None,
+        "reviews_per_day": round(total / days, 2),
+        "prev_period_total": prev_total,
+        "velocity_change_pct": round((total - prev_total) / prev_total * 100, 1) if prev_total else None,
+    }
+
 @router.post("/sync", status_code=status.HTTP_202_ACCEPTED)
 def trigger_reviews_sync(
     location_id: Optional[int] = None,

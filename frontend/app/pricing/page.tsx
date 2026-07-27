@@ -14,20 +14,20 @@ const ENGINES = [
   { key: 'perplexity', label: 'Perplexity' },
 ] as const;
 
-// Mirrors backend plan_config. Prices are per-location; annual = 12× with the standard
-// 20% discount on Basic/Pro. Lite has no annual discount (kept flat/simple).
+// Mirrors backend plan_config. Prices are per-location, GST-INCLUSIVE; annual is billed
+// yearly at the discounted per-month rate (~20% off; Lite ~25%).
 const PLANS = [
   {
-    key: 'lite', name: 'Lite', tagline: 'For a single storefront', Icon: Store, engines: [],
-    monthly: 999, annualPerMo: 999, credits: 10, highlight: false,
-    perks: ['1 location', 'AI review replies', 'All reviews + Google posts', 'Credit top-ups'],
+    key: 'lite', name: 'Lite', tagline: 'The essentials, at the lowest price', Icon: Store, engines: [],
+    monthly: 799, annualPerMo: 599, credits: 10, highlight: false,
+    perks: ['Unlimited locations', 'AI review replies', 'All reviews + Google posts', 'Credit top-ups'],
     missing: ['Post scheduling & auto-reply', 'AI Search Visibility', 'Team members & roles', 'Local Rank geo-grid'],
   },
   {
     key: 'basic', name: 'Basic', tagline: 'For growing multi-location brands', Icon: Building2,
     engines: ['google'],
-    monthly: 2500, annualPerMo: 2000, credits: 30, highlight: true,
-    perks: ['Unlimited locations', 'AI Search Visibility (Google AI)', 'Post scheduling + reply templates',
+    monthly: 1999, annualPerMo: 1599, credits: 30, highlight: true,
+    perks: ['Unlimited locations', 'AI Search Visibility (Google AI · 5 prompts)', 'Post scheduling + reply templates',
             'Auto-reply + email alerts', 'Unauthorised change alerts', 'Team members & roles',
             'Full insights & search intelligence'],
     missing: ['ChatGPT / Gemini / Perplexity visibility', 'Local Rank geo-grid', 'Lead-capture microsite'],
@@ -35,8 +35,8 @@ const PLANS = [
   {
     key: 'pro', name: 'Pro', tagline: 'To rank higher & convert more', Icon: Rocket,
     engines: ['google', 'chatgpt', 'gemini', 'perplexity'],
-    monthly: 3000, annualPerMo: 2400, credits: 45, highlight: false,
-    perks: ['Everything in Basic', 'Full AI Search Visibility (ChatGPT, Gemini, Perplexity)',
+    monthly: 2999, annualPerMo: 2399, credits: 45, highlight: false,
+    perks: ['Everything in Basic', 'Full AI Search Visibility (ChatGPT, Gemini, Perplexity · 10 prompts)',
             'Local Rank geo-grid heatmaps', 'Lead-capture microsite', 'Most AI credits per location'],
     missing: [],
   },
@@ -48,7 +48,7 @@ const FAQS = [
   { q: 'What are AI credits?', a: 'Each AI action — a review reply draft, a post, an AI visibility scan — spends one credit. Credits reset monthly per location and you can top up any time.' },
   { q: 'Can I cancel anytime?', a: 'Yes. No lock-in on self-serve plans. Cancel from billing settings and you will not be charged again.' },
   { q: 'Which payment methods do you accept?', a: 'Cards, UPI AutoPay and netbanking via Razorpay. International cards are charged in INR at your card network rate.' },
-  { q: 'Do prices include GST?', a: 'No — all prices exclude 18% GST, which is added at checkout for Indian customers.' },
+  { q: 'Do prices include GST?', a: 'Yes — every price you see is the final amount, inclusive of 18% GST. Your invoice shows the tax breakup.' },
 ];
 
 // Display-only FX. Razorpay still charges/settles in INR (international cards convert
@@ -57,7 +57,7 @@ const FAQS = [
 const USD_PER_INR = 1 / 100; // 1 USD = 100 INR
 
 const FEATURES: { label: string; lite: boolean | string; basic: boolean | string; pro: boolean | string; marks?: string[] }[] = [
-  { label: 'Locations', lite: '1', basic: 'Unlimited', pro: 'Unlimited' },
+  { label: 'Locations', lite: 'Unlimited', basic: 'Unlimited', pro: 'Unlimited' },
   { label: 'AI credits / location / mo', lite: '10', basic: '30', pro: '45' },
   { label: 'AI review replies', lite: true, basic: true, pro: true },
   { label: 'All reviews synced', lite: true, basic: true, pro: true },
@@ -73,6 +73,7 @@ const FEATURES: { label: string; lite: boolean | string; basic: boolean | string
   { label: 'Unauthorised change alerts', lite: false, basic: true, pro: true },
   { label: 'AI Visibility — Google AI answers', lite: false, basic: true, pro: true, marks: ['google'] },
   { label: 'AI Visibility — ChatGPT / Gemini / Perplexity', lite: false, basic: false, pro: true, marks: ['chatgpt', 'gemini', 'perplexity'] },
+  { label: 'AI Visibility prompts tracked / scan', lite: false, basic: '5', pro: '10' },
   { label: 'Local Rank (geo-grid)', lite: false, basic: false, pro: true },
   { label: 'Lead-capture microsite', lite: false, basic: false, pro: true },
 ];
@@ -111,7 +112,7 @@ export default function PricingPage() {
   }, []);
 
   return (
-    <div className="relative min-h-screen bg-background text-foreground">
+    <div className="relative min-h-screen overflow-x-clip bg-background text-foreground">
       <div className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[700px] w-[1100px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle_at_50%_0%,hsl(var(--primary)/0.08)_0%,hsl(var(--primary)/0.03)_35%,transparent_70%)]" />
       <MarketingHeader />
 
@@ -134,7 +135,7 @@ export default function PricingPage() {
               </button>
               <button onClick={() => setAnnual(true)}
                 className={`rounded-full px-5 py-1.5 font-semibold transition ${annual ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
-                Yearly <span className="text-xs text-emerald-500">· save 20%</span>
+                Yearly <span className="text-xs text-emerald-500">· save up to 25%</span>
               </button>
             </div>
             <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card p-1 text-sm">
@@ -186,15 +187,25 @@ export default function PricingPage() {
                 <h2 className="mt-4 text-lg font-bold">{p.name}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">{p.tagline}</p>
                 <div className="mt-5">
-                  <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-5xl font-extrabold tracking-tight text-transparent">{fmtPrice(price)}</span>
-                  <span className="text-sm text-muted-foreground"> /location/mo</span>
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    {annual && (
+                      <span className="text-lg font-semibold text-muted-foreground/50 line-through decoration-2">{fmtPrice(p.monthly)}</span>
+                    )}
+                    <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-5xl font-extrabold tracking-tight text-transparent">{fmtPrice(price)}</span>
+                    <span className="text-sm text-muted-foreground">/location/mo</span>
+                  </div>
                   <p className="mt-1.5 text-xs text-muted-foreground">
-                    {annual && p.key !== 'lite' ? 'billed yearly · ' : ''}
-                    {usd ? 'charged in INR at checkout' : '+ 18% GST'}
+                    {annual ? 'billed yearly · ' : ''}
+                    {usd ? 'charged in INR at checkout' : 'incl. 18% GST'}
+                    {!usd && <> · that&apos;s ~{fmtPrice(Math.ceil(price / 30))}/day</>}
                   </p>
-                  {saves && (
+                  {saves ? (
                     <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                      Save {fmtPrice((p.monthly - p.annualPerMo) * 12)}/location/yr
+                      Save {Math.round((1 - p.annualPerMo / p.monthly) * 100)}% · {fmtPrice((p.monthly - p.annualPerMo) * 12)}/location/yr
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                      {fmtPrice(p.annualPerMo)}/mo if billed yearly
                     </p>
                   )}
                 </div>
@@ -325,7 +336,7 @@ export default function PricingPage() {
         </div>
 
         <p className="mt-8 text-center text-xs text-muted-foreground">
-          All plans include a 7-day free trial for all your locations, with 10 AI credits included. Prices exclude 18% GST.
+          All plans include a 7-day free trial for all your locations, with 10 AI credits included. All prices are inclusive of 18% GST.
         </p>
       </main>
 

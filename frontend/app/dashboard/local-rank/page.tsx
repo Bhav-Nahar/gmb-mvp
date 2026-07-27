@@ -5,11 +5,13 @@ import { useQuery } from '@tanstack/react-query'
 import { MapPin } from 'lucide-react'
 import { api } from '@/lib/api'
 import { LocalRankPanel } from '@/components/local-rank/LocalRankPanel'
+import { CompetitionPanel } from '@/components/local-rank/CompetitionPanel'
 
-interface Loc { id: number; location_name: string }
+interface Loc { id: number; location_name: string; average_rating?: number | null; total_reviews?: number | null }
 
 export default function LocalRankPage() {
   const [selected, setSelected] = useState<number | null>(null)
+  const [view, setView] = useState<'heatmap' | 'competition'>('heatmap')
 
   const { data: locations = [], isLoading: loading } = useQuery<Loc[]>({
     queryKey: ['locations'],
@@ -31,6 +33,17 @@ export default function LocalRankPage() {
         </p>
       </div>
 
+      <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card p-1 text-sm">
+        <button onClick={() => setView('heatmap')}
+          className={`rounded-full px-5 py-1.5 font-semibold transition ${view === 'heatmap' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
+          Heatmap
+        </button>
+        <button onClick={() => setView('competition')}
+          className={`rounded-full px-5 py-1.5 font-semibold transition ${view === 'competition' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
+          Competition
+        </button>
+      </div>
+
       <div className="space-y-1 max-w-sm">
         <label htmlFor="lr-location" className="text-xs font-medium text-muted-foreground">Location</label>
         <select
@@ -49,7 +62,11 @@ export default function LocalRankPage() {
       ) : !locations.length ? (
         <p className="text-sm text-muted-foreground">No locations found. Sync your Google Business Profile first.</p>
       ) : selected ? (
-        <LocalRankPanel key={selected} locationId={selected} />
+        view === 'heatmap' ? (
+          <LocalRankPanel key={selected} locationId={selected} />
+        ) : (
+          <CompetitionPanel key={`comp-${selected}`} locationId={selected} />
+        )
       ) : null}
     </div>
   )

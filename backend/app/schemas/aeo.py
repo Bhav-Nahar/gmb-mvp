@@ -12,6 +12,7 @@ class AEOQueriesOut(BaseModel):
     custom: list[str]
     auto_enabled: bool
     max_custom: int
+    max_queries: int  # plan's per-scan prompt cap — the scan runs at most this many
 
 
 class AEOQueriesUpdate(BaseModel):

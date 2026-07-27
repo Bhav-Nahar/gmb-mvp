@@ -223,8 +223,7 @@ def get_organization_health_summary(
 
     scores = (
         db.query(LocationHealthScore)
-        # summary only needs score+label, not the breakdown/recommendations JSONB
-        .options(load_only(LocationHealthScore.score, LocationHealthScore.label))
+        .options(load_only(LocationHealthScore.score, LocationHealthScore.label, LocationHealthScore.breakdown))
         .join(Location, Location.id == LocationHealthScore.location_id)
         .filter(*loc_filter)
         .all()
@@ -240,6 +239,14 @@ def get_organization_health_summary(
     poor = sum(1 for s in scores if s.label == "Poor")
     critical = sum(1 for s in scores if s.label == "Critical")
 
+    # Avg per-dimension pct across scored locations (feeds the dashboard radar).
+    dim_totals: dict[str, list[int]] = {}
+    for s in scores:
+        for key, dim in (s.breakdown or {}).items():
+            if isinstance(dim, dict) and dim.get("max_score"):
+                dim_totals.setdefault(key, []).append(round(dim["score"] * 100 / dim["max_score"]))
+    dimension_averages = {k: sum(v) // len(v) for k, v in dim_totals.items()}
+
     return OrganizationHealthSummaryOut(
         average_score=avg_score,
         total_locations=total_locations,
@@ -249,6 +256,7 @@ def get_organization_health_summary(
         poor_count=poor,
         critical_count=critical,
         not_calculated_count=not_calculated,
+        dimension_averages=dimension_averages,
     )
 
 @router.get("/{location_id}", response_model=LocationOut)
@@ -424,8 +432,8 @@ def get_location_health_score(
     # admin could read/recalculate another org's location by raw id).
     score = db.query(LocationHealthScore).filter(LocationHealthScore.location_id == location_id).first()
     
-    if not score:
-        # Calculate on the fly if missing
+    if not score or score.score_version != HealthScoreService.SCORE_VERSION:
+        # Calculate on the fly if missing or computed by an older score version
         score = HealthScoreService.recalculate_health_score(db, location_id, "manual")
         if not score:
             raise HTTPException(status_code=404, detail="Location not found for scoring")

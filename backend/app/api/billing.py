@@ -74,7 +74,7 @@ def get_quote(location_count: int, interval: str = "monthly", plan_tier: str = "
         location_count=location_count,
         interval=interval,
         plan_tier=plan_tier,
-        price_paise=base,
+        price_paise=gst["base_paise"],
         gst_paise=gst["gst_paise"],
         total_paise=gst["total_paise"],
         gst_rate=plan_config.GST_RATE,

@@ -21,10 +21,10 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
   const primaryCta = c.primary_cta || 'Start Free Trial'
   const secondaryCta = c.secondary_cta || 'Book a Demo'
   // Non-India pSEO pages present pricing in USD by default; India (country 'in') stays in ₹.
-  // Display-only: Razorpay still charges INR. 'From' price = Lite plan (₹999/mo); the USD
+  // Display-only: Razorpay still charges INR. 'From' price = Lite plan (₹799/mo incl. GST); the USD
   // figure uses the same 1 USD = ₹100 peg as /pricing.
   const isIndia = page.country === 'in'
-  const fromPrice = isIndia ? '₹999' : '$10'
+  const fromPrice = isIndia ? '₹799' : '$8'
   const pricingHref = isIndia ? '/pricing' : '/pricing?ccy=usd'
   const whatsappDemo = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo for my ${industry.toLowerCase()} business in ${city}.`)
 

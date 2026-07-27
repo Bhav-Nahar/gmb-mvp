@@ -13,6 +13,8 @@ class LocationSyncStatus(ORMBase):
 class HealthScoreBreakdown(BaseModel):
     score: int
     max_score: int
+    # One-line "why this score" explanation (HEALTH_V2).
+    detail: Optional[str] = None
 
 class DescriptionBreakdown(BaseModel):
     score: int
@@ -30,6 +32,11 @@ class HealthScoreBreakdowns(BaseModel):
     photos_media: HealthScoreBreakdown
     # Optional so older cached scores (pre-enrichment) still serialize.
     description: Optional[DescriptionBreakdown] = None
+    # Radar-only dimensions (HEALTH_V2) — present only when the location has data.
+    ranking: Optional[HealthScoreBreakdown] = None
+    traffic: Optional[HealthScoreBreakdown] = None
+    sentiment: Optional[HealthScoreBreakdown] = None
+    website: Optional[HealthScoreBreakdown] = None
 
 class HealthScoreRecommendation(BaseModel):
     title: str
@@ -58,3 +65,5 @@ class OrganizationHealthSummaryOut(BaseModel):
     # Locations in the org that don't yet have a calculated health score. These
     # are counted in total_locations but excluded from average_score.
     not_calculated_count: int = 0
+    # Avg per-dimension strength across scored locations, as {breakdown_key: pct 0-100}.
+    dimension_averages: dict[str, int] = {}

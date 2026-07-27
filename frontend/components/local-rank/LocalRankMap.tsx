@@ -30,7 +30,7 @@ export interface RankCell {
 // Leaflet from CDN (no npm dependency -> Docker `npm ci` stays intact). ponytail:
 // OSM tiles are fine for low volume; switch to a paid provider if traffic grows.
 let leafletPromise: Promise<any> | null = null
-function loadLeaflet(): Promise<any> {
+export function loadLeaflet(): Promise<any> {
   if (typeof window === 'undefined') return Promise.reject(new Error('no window'))
   if ((window as any).L) return Promise.resolve((window as any).L)
   if (leafletPromise) return leafletPromise

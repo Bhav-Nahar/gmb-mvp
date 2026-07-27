@@ -96,7 +96,7 @@ export function TopUpModal({ open, onOpenChange }: TopUpModalProps) {
           <div className="border rounded-lg p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="font-bold">500 Credits Pack</p>
-              <p className="text-sm text-muted-foreground">₹499/- + 18% GST · one-time</p>
+              <p className="text-sm text-muted-foreground">₹499/- incl. GST · one-time</p>
             </div>
             <Button
               className="w-full sm:w-auto"
@@ -110,7 +110,7 @@ export function TopUpModal({ open, onOpenChange }: TopUpModalProps) {
           <div className="border rounded-lg p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="font-bold">2000 Credits Pack</p>
-              <p className="text-sm text-muted-foreground">₹1,799/- + 18% GST · one-time</p>
+              <p className="text-sm text-muted-foreground">₹1,799/- incl. GST · one-time</p>
             </div>
             <Button
               className="w-full sm:w-auto"

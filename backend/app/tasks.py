@@ -142,6 +142,13 @@ def run_local_rank_scan_task(scan_id: int) -> dict:
                 scan.credits_charged = price
                 scan.status = "Completed"
                 db.add(scan)
+                # Free competitor tracking: snapshot tracked competitors from this
+                # scan's local-pack results (no extra API spend). Never fail the scan.
+                try:
+                    from app.services import competitor_service
+                    competitor_service.harvest_from_scan(db, scan)
+                except Exception:
+                    logger.exception("Competitor harvest failed for scan %s", scan_id)
                 # Capture the storefront's real coords (from our own result) so future
                 # scans centre exactly — only when we don't already have coordinates.
                 bc = result.get("business_coords")

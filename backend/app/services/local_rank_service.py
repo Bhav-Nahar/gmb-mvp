@@ -81,23 +81,23 @@ def parse_cell(items: list[dict], business_name: str, business_place_id: str | N
             "domain": it.get("domain"),
             "address": it.get("address"),
             "image": it.get("main_image"),
-            "_place_id": it.get("place_id"),
-            "_lat": it.get("latitude"),
-            "_lng": it.get("longitude"),
+            "place_id": it.get("place_id"),
+            "lat": it.get("latitude"),
+            "lng": it.get("longitude"),
         })
     rows.sort(key=lambda r: r["rank"])
 
     # Find "us": exact by place_id first, else loose by name.
     me = None
     if pid:
-        me = next((r for r in rows if r.get("_place_id") and r["_place_id"] == pid), None)
+        me = next((r for r in rows if r.get("place_id") and r["place_id"] == pid), None)
     if me is None and target:
         me = next((r for r in rows if target in r["name"].lower() or r["name"].lower() in target), None)
 
     rank = me["rank"] if me else None
     business_coords = None
-    if me and me.get("_lat") is not None and me.get("_lng") is not None:
-        business_coords = {"latitude": me["_lat"], "longitude": me["_lng"]}
+    if me and me.get("lat") is not None and me.get("lng") is not None:
+        business_coords = {"latitude": me["lat"], "longitude": me["lng"]}
 
     top_competitor = next((r["name"] for r in rows if r is not me), None)
     top_results = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows[:top_n]]

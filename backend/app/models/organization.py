@@ -65,7 +65,7 @@ class Organization(Base):
 
     # Enterprise custom pricing (set by a super-admin). Both NULL = standard tier pricing.
     #   custom_price_paise: negotiated per-location MONTHLY rate (paise/location). Replaces
-    #     the graduated tiers; annual = rate * 12 (no annual discount for negotiated deals).
+    #     the standard plan price; annual = rate * 12 (no annual discount for negotiated deals).
     #   custom_credits_per_location: AI credits granted per location (replaces the tier's).
     custom_price_paise = Column(Integer, nullable=True)
     custom_credits_per_location = Column(Integer, nullable=True)

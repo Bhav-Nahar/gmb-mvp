@@ -3,14 +3,18 @@ from sqlalchemy import func
 from datetime import datetime, timezone
 import json
 
+from datetime import timedelta
+
 from app.models.location import Location
 from app.models.review import Review
 from app.models.location_health_score import LocationHealthScore
 from app.models.location_media import LocationMedia, LocationMediaStatus
+from app.models.local_rank_scan import LocalRankScan
+from app.models.location_daily_insights import LocationDailyInsight
 from app.services import description_validation
 
 class HealthScoreService:
-    SCORE_VERSION = "HEALTH_V1"
+    SCORE_VERSION = "HEALTH_V2.1"
 
     @classmethod
     def recalculate_health_score(cls, db: Session, location_id: int, reason: str = "manual") -> LocationHealthScore:
@@ -127,6 +131,58 @@ class HealthScoreService:
         else: additional_score = 0
         photo_score = logo_score + cover_score + additional_score
 
+        # --- Radar-only dimensions (0-10 each, NOT counted in the 100-pt total;
+        # an axis is omitted when the location has no data for it) ---
+        now_utc = datetime.now(timezone.utc)
+
+        # Ranking: latest completed local rank scan's share-of-local-voice (0-100%).
+        ranking_score = None
+        latest_scan = (
+            db.query(LocalRankScan.solv)
+            .filter(LocalRankScan.location_id == location_id,
+                    LocalRankScan.status == "Completed",
+                    LocalRankScan.solv.isnot(None))
+            .order_by(LocalRankScan.created_at.desc())
+            .first()
+        )
+        if latest_scan:
+            ranking_score = round(latest_scan.solv / 10, 1)
+
+        # Traffic + Sentiment + website clicks: last 30 days of daily insights.
+        views_30d, clicks_30d, sentiment_avg = (
+            db.query(
+                func.coalesce(func.sum(LocationDailyInsight.profile_views), 0),
+                func.coalesce(func.sum(LocationDailyInsight.website_clicks), 0),
+                func.avg(LocationDailyInsight.avg_sentiment_score),
+            )
+            .filter(LocationDailyInsight.location_id == location_id,
+                    LocationDailyInsight.date >= (now_utc - timedelta(days=30)).date())
+            .one()
+        )
+
+        # Traffic: tiered on monthly profile views.
+        # ponytail: absolute tiers, switch to category/cohort benchmarks if needed.
+        traffic_score = None
+        if views_30d > 0:
+            if views_30d >= 3000: traffic_score = 10.0
+            elif views_30d >= 1500: traffic_score = 8.0
+            elif views_30d >= 600: traffic_score = 6.0
+            elif views_30d >= 200: traffic_score = 4.0
+            elif views_30d >= 50: traffic_score = 2.5
+            else: traffic_score = 1.0
+
+        # Sentiment: -1..1 mapped onto 0-10.
+        sentiment_score = round((sentiment_avg + 1) * 5, 1) if sentiment_avg is not None else None
+
+        # Website: URL on the profile (up to 6) + clicks actually happening (up to 4).
+        website_score = None
+        if has_website or clicks_30d > 0:
+            website_score = 6.0 if has_website else 0.0
+            if clicks_30d >= 100: website_score += 4.0
+            elif clicks_30d >= 25: website_score += 3.0
+            elif clicks_30d >= 5: website_score += 2.0
+            elif clicks_30d >= 1: website_score += 1.0
+
         # --- Totals ---
         total_score = prof_score + reviews_score + resp_score + post_score + photo_score
         potential_score = 100  # Max is 100
@@ -138,12 +194,34 @@ class HealthScoreService:
         elif total_score >= 40: label = "Poor"
         else: label = "Critical"
 
+        # One-line "why this score" per dimension, shown next to the radar.
+        missing_fields = [name for ok, name in [
+            (has_name, "name"), (has_address, "address"), (has_phone, "phone"),
+            (has_website, "website"), (has_hours, "hours"), (has_desc, "description"),
+        ] if not ok]
+        prof_detail = ("All core profile fields are filled." if not missing_fields
+                       else f"Missing: {', '.join(missing_fields)}.")
+        reviews_detail = (f"{avg_rating:.1f}★ average across {total_revs} reviews."
+                          if total_revs else "No reviews yet.")
+        resp_detail = (f"{replied_revs} of {db_total_revs} reviews replied to."
+                       if db_total_revs else "No reviews to reply to yet.")
+        if location.last_published_at:
+            post_detail = f"Last post published {days_ago} day{'s' if days_ago != 1 else ''} ago."
+        else:
+            post_detail = "No posts published yet — regular posts improve local SEO."
+        photo_bits = []
+        if not has_logo: photo_bits.append("no logo")
+        if not has_cover: photo_bits.append("no cover photo")
+        if additional_count < 5: photo_bits.append(f"only {additional_count} gallery photos (5+ recommended)")
+        photo_detail = (f"{photos_count} photos live on your profile."
+                        if not photo_bits else f"{photos_count} photos live, but {', '.join(photo_bits)}.")
+
         breakdown = {
-            "profile_completeness": {"score": prof_score, "max_score": 30},
-            "reviews_rating": {"score": reviews_score, "max_score": 25},
-            "response_rate": {"score": resp_score, "max_score": 10},
-            "post_activity": {"score": post_score, "max_score": 20},
-            "photos_media": {"score": photo_score, "max_score": 15},
+            "profile_completeness": {"score": prof_score, "max_score": 30, "detail": prof_detail},
+            "reviews_rating": {"score": reviews_score, "max_score": 25, "detail": reviews_detail},
+            "response_rate": {"score": resp_score, "max_score": 10, "detail": resp_detail},
+            "post_activity": {"score": post_score, "max_score": 20, "detail": post_detail},
+            "photos_media": {"score": photo_score, "max_score": 15, "detail": photo_detail},
             # Surfaced so the UI shows the description's "before" status/flags
             # straight from the cached score — no recompute, no extra table.
             "description": {
@@ -154,6 +232,26 @@ class HealthScoreService:
                 "soft_flags": desc_analysis["soft_flags"],
             },
         }
+        ranking_detail = (f"You appear in {latest_scan.solv:.0f}% of local search grid points in your latest rank scan."
+                          if latest_scan else None)
+        traffic_detail = f"{views_30d} profile views in the last 30 days." if views_30d > 0 else None
+        if sentiment_avg is not None:
+            mood = "positive" if sentiment_avg > 0.3 else ("negative" if sentiment_avg < -0.3 else "mixed")
+            sentiment_detail = f"Review sentiment over the last 30 days is {mood}."
+        else:
+            sentiment_detail = None
+        website_detail = None
+        if website_score is not None:
+            website_detail = ((f"Website on profile; {clicks_30d} clicks in the last 30 days."
+                               if has_website else f"{clicks_30d} website clicks, but no website URL on your profile.")
+                              if clicks_30d else "Website on profile, but no clicks in the last 30 days.")
+
+        for key, val, detail in (("ranking", ranking_score, ranking_detail),
+                                 ("traffic", traffic_score, traffic_detail),
+                                 ("sentiment", sentiment_score, sentiment_detail),
+                                 ("website", website_score, website_detail)):
+            if val is not None:
+                breakdown[key] = {"score": min(round(val), 10), "max_score": 10, "detail": detail}
 
         # Recommendations
         recs = []
