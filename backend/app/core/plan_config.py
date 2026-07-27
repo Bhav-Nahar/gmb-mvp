@@ -1,23 +1,19 @@
 # ---------------------------------------------------------------------------
-# Single pricing model: per-location, graduated (volume) tiers.
+# Single pricing model: flat per-location pricing per plan tier.
 # There are no separate "starter / growth / enterprise" SKUs. A subscription is
 # simply N locations, priced per the bands below, and what you get scales with N.
 # ---------------------------------------------------------------------------
 
-# Graduated price bands. Each tuple is (upper_bound_inclusive, price_paise_per_location).
-# The last band uses None as an open-ended upper bound.
-#   locations  1-10  -> ₹2,500 each
-#   locations 11-25  -> ₹2,000 each
-#   locations  26+   -> ₹1,500 each
-LOCATION_PRICE_TIERS = [
-    (10, 250_000),
-    (25, 200_000),
-    (None, 150_000),
-]
+# Flat per-location pricing (no volume bands — negotiated volume deals go through
+# the admin custom per-location rate instead). Tuples keep the (upper_bound, price)
+# shape the pricing service expects. All prices GST-INCLUSIVE.
+LOCATION_PRICE_TIERS = [(None, 199_900)]  # ₹1,999 / location
 
-# Annual billing: pay for 12 months at a 20% discount.
+# Annual billing: pay 12 months upfront at the plan's discounted per-month rate.
+# Each plan carries its own `annual_price_tiers` (≈20% off; Lite ≈25%) so the
+# headline numbers stay round — there is no global discount multiplier anymore.
 ANNUAL_MONTHS = 12
-ANNUAL_DISCOUNT = 0.20
+LOCATION_ANNUAL_PRICE_TIERS = [(None, 159_900)]  # ₹1,599 / location / mo
 
 # Entitlements that scale with the number of locations purchased.
 CREDITS_PER_LOCATION = 30
@@ -62,8 +58,8 @@ AI_TOPUP_PACKS = {
     "large": {"credits": 2_000, "price_paise": 179_900},
 }
 
-# GST added on top of every price. Change the rate here and it applies everywhere
-# prices are quoted/charged (all stored prices are GST-exclusive base amounts).
+# All stored prices are GST-INCLUSIVE: the listed price is exactly what is charged.
+# GST_RATE is used to carve the tax component out of that total for invoices/quotes.
 GST_RATE = 0.18
 
 # ---------------------------------------------------------------------------
@@ -87,13 +83,18 @@ FEATURE_AEO = "aeo"                    # AI-search visibility (AEO) scans
 FEATURE_GOOGLE_UPDATES = "google_updates"  # detect + accept/reject Google's own edits
 
 # AEO: both Basic and Pro get one manual sync per location per calendar month.
-# The tier differs by DEPTH, not count — Basic covers Google AI surfaces only;
-# Pro adds the third-party LLMs + brand share-of-voice.
+# The tier differs by DEPTH (Basic covers Google AI surfaces only; Pro adds the
+# third-party LLMs + brand share-of-voice) and by PROMPT COUNT per scan below.
 AEO_SYNCS_PER_MONTH = 1
+
+# AI-visibility prompts (queries) actually run per scan, keyed by scan depth:
+# Basic ('google') 5, Pro ('full') 10. Keeps provider cost per scan bounded.
+AEO_QUERIES_BY_DEPTH = {"google": 5, "full": 10}
 
 # Limit keys (a tier's `limits` dict caps these; absent = unlimited).
 LIMIT_MAX_LOCATIONS = "max_locations"
 LIMIT_MAX_SEATS = "max_seats"
+LIMIT_COMPETITORS = "max_competitors"  # tracked competitors per location
 LIMIT_SEARCH_QUERIES = "search_query_limit"  # Search Intelligence rows shown
 LIMIT_INSIGHTS_DAYS = "insights_days"        # how far back insights may look
 
@@ -104,29 +105,34 @@ _STANDARD_FEATURES = [FEATURE_SCHEDULER, FEATURE_TEAM, FEATURE_TEMPLATES, FEATUR
 PLANS = {
     "lite": {
         "name": "Lite",
-        "price_tiers": [(None, 99_900)],   # flat ₹999 / location
+        "price_tiers": [(None, 79_900)],          # flat ₹799 / location, GST-incl.
+        "annual_price_tiers": [(None, 59_900)],   # ₹599/mo on annual (≈25% off)
         "credits_per_location": 10,
         "features": [],                    # none of the premium capabilities
         "limits": {
-            LIMIT_MAX_LOCATIONS: 1,        # single-location small business (anti-cannibalization)
-            LIMIT_MAX_SEATS: 1,            # owner only
+            # Unlimited locations: Lite is the cheap per-location wedge to undercut
+            # RightChoice. Anti-cannibalization now rests entirely on the FEATURE gap
+            # (no scheduler/auto-reply/AI-visibility/team) — the upsell to Basic.
+            LIMIT_MAX_SEATS: 1,            # owner only (no team feature)
             LIMIT_SEARCH_QUERIES: 10,      # top 10 search-intelligence queries
             LIMIT_INSIGHTS_DAYS: 7,        # last 7 days of insights
         },
     },
     "basic": {
         "name": "Basic",
-        "price_tiers": LOCATION_PRICE_TIERS,            # current graduated pricing
+        "price_tiers": LOCATION_PRICE_TIERS,            # flat ₹1,999 / location, GST-incl.
+        "annual_price_tiers": LOCATION_ANNUAL_PRICE_TIERS,  # ₹1,599/mo on annual
         "credits_per_location": CREDITS_PER_LOCATION,   # 30
         "features": _STANDARD_FEATURES + [FEATURE_AEO],
-        "limits": {},
+        "limits": {LIMIT_COMPETITORS: 3},
     },
     "pro": {
         "name": "Pro",
-        "price_tiers": [(10, 300_000), (25, 250_000), (None, 200_000)],  # ~₹500/loc more
+        "price_tiers": [(None, 299_900)],          # flat ₹2,999 / location, GST-incl.
+        "annual_price_tiers": [(None, 239_900)],   # ₹2,399/mo on annual
         "credits_per_location": 45,
         "features": _STANDARD_FEATURES + [FEATURE_LOCAL_RANK, FEATURE_MICROSITE, FEATURE_AEO],
-        "limits": {},
+        "limits": {LIMIT_COMPETITORS: 10},
     },
 }
 DEFAULT_PLAN_TIER = "basic"
@@ -153,10 +159,17 @@ def aeo_tier_for_plan(plan_tier: str | None) -> str | None:
     return "full" if plan_tier == "pro" else "google"
 
 
+def aeo_queries_cap(plan_tier: str | None) -> int:
+    """Prompts per AI-visibility scan for a plan (0 if the plan has no AEO)."""
+    depth = aeo_tier_for_plan(plan_tier)
+    return AEO_QUERIES_BY_DEPTH.get(depth, 0) if depth else 0
+
+
 def price_with_gst(price_paise: int) -> dict:
-    """base / gst / total (paise) for a price, applying GST_RATE."""
-    gst = round(price_paise * GST_RATE)
-    return {"base_paise": price_paise, "gst_paise": gst, "total_paise": price_paise + gst}
+    """base / gst / total (paise) for a GST-INCLUSIVE listed price: the total charged
+    IS the listed price; base and gst are the carve-out for invoices/quotes."""
+    base = round(price_paise / (1 + GST_RATE))
+    return {"base_paise": base, "gst_paise": price_paise - base, "total_paise": price_paise}
 
 
 PLATFORM_AI_ACTIONS = {

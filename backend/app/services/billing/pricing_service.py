@@ -20,16 +20,20 @@ class PricingService:
 
     @staticmethod
     def compute_monthly_price_paise(location_count: int, plan_tier: str = "basic",
-                                    custom_per_location_paise: int | None = None) -> int:
+                                    custom_per_location_paise: int | None = None,
+                                    annual: bool = False) -> int:
         """Monthly total. With a negotiated per-location rate (enterprise custom pricing)
-        it's a flat `count * rate`; otherwise the standard graduated tiers apply, where
-        each location is priced at the band it falls into."""
+        it's a flat `count * rate`; otherwise the plan's flat per-location price applies
+        (the tier loop supports banded pricing but every plan is a single flat band).
+        With annual=True the plan's discounted annual rate is used instead."""
         PricingService.validate_location_count(location_count)
         if custom_per_location_paise is not None:
             return location_count * custom_per_location_paise
         total = 0
         prev_bound = 0
-        for upper, price in plan_config.get_plan(plan_tier)["price_tiers"]:
+        plan = plan_config.get_plan(plan_tier)
+        tiers = plan["annual_price_tiers"] if annual else plan["price_tiers"]
+        for upper, price in tiers:
             band_top = location_count if upper is None else min(location_count, upper)
             slots_in_band = max(0, band_top - prev_bound)
             total += slots_in_band * price
@@ -41,15 +45,14 @@ class PricingService:
     @staticmethod
     def compute_price_paise(location_count: int, interval: str = "monthly", plan_tier: str = "basic",
                             custom_per_location_paise: int | None = None) -> int:
-        monthly = PricingService.compute_monthly_price_paise(location_count, plan_tier, custom_per_location_paise)
         if interval == "annual":
-            # Negotiated custom rates are final — the annual discount is NOT applied on top
-            # (the rate you set IS the rate). Standard pricing keeps the 20% annual discount.
-            if custom_per_location_paise is not None:
-                return monthly * plan_config.ANNUAL_MONTHS
-            annual = monthly * plan_config.ANNUAL_MONTHS
-            return int(annual * (1 - plan_config.ANNUAL_DISCOUNT))
-        return monthly
+            # Negotiated custom rates are final — no annual discount on top (the rate
+            # you set IS the rate). Standard pricing uses the plan's annual bands.
+            per_month = PricingService.compute_monthly_price_paise(
+                location_count, plan_tier, custom_per_location_paise,
+                annual=custom_per_location_paise is None)
+            return per_month * plan_config.ANNUAL_MONTHS
+        return PricingService.compute_monthly_price_paise(location_count, plan_tier, custom_per_location_paise)
 
     @staticmethod
     def get_credits_for_locations(location_count: int, plan_tier: str = "basic",
@@ -63,9 +66,8 @@ class PricingService:
                                custom_per_location_paise: int | None = None) -> int:
         """Cost of going from current_quota -> current_quota + added.
 
-        Pricing is graduated, so the marginal cost is the DELTA of the two totals,
-        not a flat per-location price (the added locations sit in whatever band they
-        fall into). With a custom per-location rate it reduces to `added * rate`."""
+        Computed as the DELTA of the two totals so it stays correct even if banded
+        pricing ever returns. With flat pricing it reduces to `added * rate`."""
         if added <= 0:
             return 0
         new_total = current_quota + added

@@ -37,7 +37,7 @@ interface Scan {
 interface ScanSummary { id: number; tier: string; status: string; ai_visibility_score: number | null; score_delta: number | null; queries_tracked: number; error: string | null; created_at: string }
 const fmtDateTime = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 interface Quota { per_month: number; used_this_month: boolean; tier: string | null; in_trial: boolean; resets_on: string }
-interface Queries { auto: string[]; custom: string[]; auto_enabled: boolean; max_custom: number }
+interface Queries { auto: string[]; custom: string[]; auto_enabled: boolean; max_custom: number; max_queries: number }
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
@@ -188,7 +188,9 @@ function TrackedQueries({ locationId }: { locationId: number }) {
   const custom = data?.custom ?? []
   const autoEnabled = data?.auto_enabled ?? true
   const atMax = custom.length >= (data?.max_custom ?? 10)
-  const effectiveCount = (autoEnabled ? auto.length : 0) + custom.length
+  const maxQueries = data?.max_queries ?? 20
+  // Custom queries run first, autos fill the rest up to the plan's per-scan cap.
+  const effectiveCount = Math.min((autoEnabled ? auto.length : 0) + custom.length, maxQueries)
 
   const add = () => {
     const q = input.trim()
@@ -211,7 +213,7 @@ function TrackedQueries({ locationId }: { locationId: number }) {
           We check these searches against the AI engines. Fewer queries = lower cost.
         </p>
         <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
-          {effectiveCount} query{effectiveCount === 1 ? '' : 'ies'} / scan · {custom.length}/{data?.max_custom ?? 10} custom
+          {effectiveCount}/{maxQueries} quer{effectiveCount === 1 ? 'y' : 'ies'} / scan · {custom.length}/{data?.max_custom ?? 10} custom
         </span>
       </div>
 

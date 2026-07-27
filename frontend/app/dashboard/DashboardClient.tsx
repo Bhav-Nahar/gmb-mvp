@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { UpgradeModal } from '@/components/modals/UpgradeModal'
+import { ProfileStrengthRadar, DIMENSION_LABELS } from '@/components/ProfileStrengthRadar'
 import { RemandateBanner } from '@/components/billing/RemandateBanner'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 
@@ -103,6 +104,7 @@ interface OrganizationHealthSummaryOut {
   average_count: number
   poor_count: number
   critical_count: number
+  dimension_averages?: Record<string, number>
 }
 
 interface ReputationSummary {
@@ -1432,6 +1434,39 @@ function DashboardContent() {
               </div>
             )}
           </section>
+
+          {/* Profile Strength radar — org-wide per-dimension averages */}
+          {healthSummary?.dimension_averages && Object.keys(healthSummary.dimension_averages).length >= 3 && (
+            <section className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium text-foreground">Profile Strength</h3>
+                <span className="text-xs text-muted-foreground">Average across all locations</span>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
+                <div className="min-w-0">
+                <ProfileStrengthRadar
+                  data={Object.entries(healthSummary.dimension_averages)
+                    .filter(([k]) => DIMENSION_LABELS[k])
+                    .map(([k, pct]) => ({ label: DIMENSION_LABELS[k], value: Math.round(pct) / 10 }))}
+                  height={260}
+                />
+                </div>
+                <div className="space-y-2">
+                  {Object.entries(healthSummary.dimension_averages)
+                    .filter(([k]) => DIMENSION_LABELS[k])
+                    .map(([k, pct]) => {
+                      const v = Math.round(pct) / 10
+                      return (
+                        <div key={k} className="flex items-center justify-between px-4 py-2.5 rounded-lg border border-border/50 bg-muted/20">
+                          <span className="text-sm font-medium text-foreground">{DIMENSION_LABELS[k]} Strength</span>
+                          <span className={`text-sm font-bold ${v >= 7.5 ? 'text-emerald-500' : v >= 5 ? 'text-amber-500' : 'text-rose-500'}`}>{v.toFixed(1)}<span className="text-xs text-muted-foreground font-normal"> / 10</span></span>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            </section>
+          )}
         </main>
       </div>
 

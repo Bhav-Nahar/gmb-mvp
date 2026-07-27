@@ -49,6 +49,7 @@ import {
   Mic,
   Zap,
   History,
+  Store,
 } from 'lucide-react'
 import { useQuote } from '@/hooks/useBilling'
 import { INDIA_PATH, INDIA_PINS } from './indiaMap'
@@ -676,13 +677,14 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
   const [pricingLocations, setPricingLocations] = useState<number>(5)
   const [pricingInterval, setPricingInterval] = useState<'monthly' | 'annual'>('monthly')
   const [pricingUsd, setPricingUsd] = useState(false)
+  const { data: liteQuote } = useQuote(pricingLocations, pricingInterval, 'lite', true)
   const { data: basicQuote } = useQuote(pricingLocations, pricingInterval, 'basic', true)
   const { data: proQuote } = useQuote(pricingLocations, pricingInterval, 'pro', true)
 
   // Display-only FX (1 USD = 100 INR). Razorpay still charges/settles in INR; this just
   // shows US visitors a familiar number. ponytail: hardcoded peg, swap for live FX if it drifts.
-  // annual = 12 x monthly x 0.8 (plan_config.ANNUAL_DISCOUNT), so the amount saved is
-  // exactly a quarter of the annual price — no second quote fetch needed.
+  // Basic/Pro annual is 20% off monthly, so the amount saved is exactly a quarter of
+  // the annual price paid — no second quote fetch needed. (Lite's card is static.)
   const annualSaving = (paise?: number) => (paise ? Math.round((paise / 100) * 0.25) : 0)
   const fmtRupees = (r: number) =>
     pricingUsd ? '$' + Math.round(r / 100).toLocaleString('en-US') : '₹' + r.toLocaleString('en-IN')
@@ -1300,7 +1302,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
         <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
           <div className="flex items-center justify-center rounded-full bg-muted/40 p-1.5 backdrop-blur-md border border-border/50 shadow-inner">
             <button onClick={() => setPricingInterval('monthly')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'monthly' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Monthly</button>
-            <button onClick={() => setPricingInterval('annual')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'annual' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Yearly <span className={pricingInterval === 'annual' ? 'text-emerald-500' : 'text-emerald-500'}>· Save 20%</span></button>
+            <button onClick={() => setPricingInterval('annual')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'annual' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Yearly <span className="text-emerald-500">· Save up to 25%</span></button>
           </div>
 
           <div className="flex items-center justify-center rounded-full bg-muted/40 p-1.5 backdrop-blur-md border border-border/50 shadow-inner">
@@ -1318,7 +1320,37 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           </div>
         </div>
 
-        <div className="mx-auto grid max-w-6xl grid-cols-1 items-stretch gap-6 lg:grid-cols-3 pt-6">
+        <div className="mx-auto grid max-w-7xl grid-cols-1 items-stretch gap-6 md:grid-cols-2 xl:grid-cols-4 pt-6">
+          {/* LITE — per-location like Basic/Pro, driven by the shared slider */}
+          <div className="group flex flex-col gap-5 rounded-[2rem] border border-border/60 bg-card/40 backdrop-blur-xl p-8 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:border-primary/30 hover:shadow-xl hover:bg-card/80">
+            <div className="space-y-1">
+              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Store className="h-5 w-5" />
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Lite</span>
+              <p className="text-xs font-medium text-muted-foreground">The essentials at the lowest price: reviews & posts, AI-assisted.</p>
+              <div className="flex items-baseline gap-1 text-foreground">
+                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{liteQuote ? fmtRupees(Math.round(liteQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
+                <span className="text-sm font-semibold text-muted-foreground">/mo</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground">{liteQuote ? `≈ ${fmtRupees(Math.round(liteQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(liteQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(liteQuote.gst_rate * 100)}% GST`}` : ''}</p>
+              {pricingInterval === 'annual' && liteQuote && (
+                <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                  Save {fmtRupees((799 - 599) * 12 * pricingLocations)}/yr
+                </p>
+              )}
+            </div>
+            <button onClick={() => (paid ? openAudit('pricing') : handleContinueWithGoogle('pricing'))} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">{paid ? 'Request My Free Audit' : 'Start Free Trial'}</button>
+            <ul className="space-y-2.5 border-t border-border pt-5 text-xs font-semibold text-muted-foreground">
+              {['Unlimited locations', '10 AI credits per location / month', 'Unified review inbox with AI drafts', 'Google posts (post now)', 'AI credit top-ups'].map((t) => (
+                <PlanLine key={t} text={t} />
+              ))}
+              {['Post scheduling & auto-reply', 'AI Search Visibility', 'Team members & roles'].map((t) => (
+                <PlanLine key={t} text={t} missing />
+              ))}
+            </ul>
+          </div>
+
           {/* BASIC */}
           <div className="group flex flex-col gap-5 rounded-[2rem] border border-border/60 bg-card/40 backdrop-blur-xl p-8 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:border-primary/30 hover:shadow-xl hover:bg-card/80">
             <div className="space-y-1">
@@ -1328,13 +1360,13 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Basic</span>
               <p className="text-xs font-medium text-muted-foreground">Everything you need to manage Google reviews & posts.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{basicQuote ? fmtRupees(Math.round(basicQuote.price_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
+                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{basicQuote ? fmtRupees(Math.round(basicQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
                 <span className="text-sm font-semibold text-muted-foreground">/mo</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ${fmtRupees(Math.round(basicQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(basicQuote.price_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `+ ${Math.round(basicQuote.gst_rate * 100)}% GST`}` : ''}</p>
+              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ${fmtRupees(Math.round(basicQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(basicQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(basicQuote.gst_rate * 100)}% GST`}` : ''}</p>
               {pricingInterval === 'annual' && basicQuote && (
                 <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                  Save {fmtRupees(annualSaving(basicQuote.price_paise))}/yr
+                  Save {fmtRupees(annualSaving(basicQuote.total_paise))}/yr
                 </p>
               )}
             </div>
@@ -1374,13 +1406,13 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
               <p className="text-xs font-medium text-foreground/70">Rank higher on Maps & turn searches into leads.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{proQuote ? fmtRupees(Math.round(proQuote.price_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
+                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{proQuote ? fmtRupees(Math.round(proQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
                 <span className="text-sm font-semibold text-muted-foreground">/mo</span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ${fmtRupees(Math.round(proQuote.price_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(proQuote.price_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `+ ${Math.round(proQuote.gst_rate * 100)}% GST`}` : ''}</p>
+              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ${fmtRupees(Math.round(proQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(proQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(proQuote.gst_rate * 100)}% GST`}` : ''}</p>
               {pricingInterval === 'annual' && proQuote && (
                 <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                  Save {fmtRupees(annualSaving(proQuote.price_paise))}/yr
+                  Save {fmtRupees(annualSaving(proQuote.total_paise))}/yr
                 </p>
               )}
             </div>
@@ -1431,7 +1463,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
 
         <div className="flex justify-center">
           <a href="/pricing" className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
-            Compare all plans, including Lite <ArrowRight className="h-4 w-4" />
+            Compare all plans in detail <ArrowRight className="h-4 w-4" />
           </a>
         </div>
       </section>

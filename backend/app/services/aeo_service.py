@@ -111,12 +111,50 @@ def _loc_bits(location) -> tuple[str, str]:
     return cat, str(city)
 
 
-def auto_queries(location) -> list[str]:
-    """The system-generated queries for a location — category + city dropped into
-    templates. Capped at AEO_QUERIES_PER_SCAN."""
+def real_keywords(db, location_id: int, limit: int) -> list[str]:
+    """Top real search terms customers actually used to find this location, from the
+    stored GBP Performance keyword report (keyword_monthly_metrics). Summed across all
+    stored months and ranked by impressions. These beat generic templates because they
+    are the queries real customers type — exactly what AI-visibility should measure.
+    Light hygiene: drop the long tail / oversized noise GBP sometimes returns."""
+    if db is None or not location_id:
+        return []
+    from sqlalchemy import func
+    from app.models.keyword_monthly_metrics import KeywordMonthlyMetric
+    rows = (
+        db.query(KeywordMonthlyMetric.keyword, func.sum(KeywordMonthlyMetric.impressions))
+        .filter(KeywordMonthlyMetric.location_id == location_id)
+        .group_by(KeywordMonthlyMetric.keyword)
+        .order_by(func.sum(KeywordMonthlyMetric.impressions).desc())
+        .limit(limit * 3)  # over-fetch so hygiene trimming still leaves enough
+        .all()
+    )
+    out: list[str] = []
+    seen: set[str] = set()
+    for kw, _imp in rows:
+        k = (kw or "").strip()
+        if 3 <= len(k) <= 80 and k.lower() not in seen:
+            seen.add(k.lower())
+            out.append(k)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def auto_queries(location, db=None) -> list[str]:
+    """The system-generated queries for a location, capped at AEO_QUERIES_PER_SCAN.
+
+    Prefers the location's REAL GBP search keywords (when a db session is passed and any
+    are stored), topping up with category+city templates to fill the cap. Falls back to
+    templates only when no real keywords exist yet (e.g. a freshly-connected location)."""
     cat, city = _loc_bits(location)
-    out = [t.format(cat=cat, city=city) for t in _QUERY_TEMPLATES]
-    return out[: settings.AEO_QUERIES_PER_SCAN]
+    templates = [t.format(cat=cat, city=city) for t in _QUERY_TEMPLATES]
+    cap = settings.AEO_QUERIES_PER_SCAN
+    reals = real_keywords(db, getattr(location, "id", None), cap)
+    if not reals:
+        return templates[:cap]
+    # Real keywords first; templates fill any remaining slots. Dedupe preserves order.
+    return list(dict.fromkeys(reals + templates))[:cap]
 
 
 def clean_custom_queries(raw: list[str], max_n: int) -> list[str]:
@@ -137,14 +175,16 @@ def clean_custom_queries(raw: list[str], max_n: int) -> list[str]:
     return cleaned
 
 
-def build_queries(location) -> list[str]:
+def build_queries(location, max_queries: int | None = None, db=None) -> list[str]:
     """The effective query set a scan runs: the Owner/Admin's custom queries first,
-    then the auto-generated ones (unless auto is switched off for this location),
-    de-duplicated and capped at AEO_MAX_QUERIES."""
+    then the auto queries — real GBP search keywords when available, else category+city
+    templates (unless auto is switched off for this location) — de-duplicated and capped
+    at the plan's per-scan prompt cap (AEO_MAX_QUERIES remains the absolute ceiling)."""
     custom = [q.strip() for q in (getattr(location, "aeo_queries", None) or []) if q and q.strip()]
-    autos = auto_queries(location) if getattr(location, "aeo_auto_enabled", True) else []
+    autos = auto_queries(location, db) if getattr(location, "aeo_auto_enabled", True) else []
     merged = list(dict.fromkeys(custom + autos))
-    return merged[: settings.AEO_MAX_QUERIES]
+    cap = min(max_queries, settings.AEO_MAX_QUERIES) if max_queries else settings.AEO_MAX_QUERIES
+    return merged[:cap]
 
 
 def _mock_result(location, tier: str, queries: list[str]) -> dict:
@@ -244,7 +284,11 @@ def run_scan(db: Session, scan: AEOScan, location) -> AEOScan:
     """Fill a Pending scan with provider results. Never raises — on provider
     failure the scan is marked Failed (which refunds the monthly quota)."""
     try:
-        queries = build_queries(location)   # custom (Owner/Admin) + auto (category+city)
+        # custom (Owner/Admin) + auto (category+city), capped by the plan's prompt count
+        # Unknown tier -> smallest plan cap (never the absolute ceiling), so a bad tier
+        # value can only under-scan, not overrun provider cost.
+        queries = build_queries(location, plan_config.AEO_QUERIES_BY_DEPTH.get(
+            scan.tier, min(plan_config.AEO_QUERIES_BY_DEPTH.values())), db=db)
         if settings.AEO_PROVIDER == "mock":
             data = _mock_result(location, scan.tier, queries)
         elif settings.AEO_PROVIDER == "dataforseo":

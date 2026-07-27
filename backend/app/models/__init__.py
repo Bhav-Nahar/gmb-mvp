@@ -66,3 +66,4 @@ __all__ = [
 ]
 
 from app.models.app_setting import AppSetting
+from app.models.competitor import TrackedCompetitor, CompetitorSnapshot

@@ -1,6 +1,7 @@
 import React from "react"
 import { AlertCircle, CheckCircle2, ChevronRight, MessageSquare, ClipboardList, MapPin, Sparkles, Activity, ImageIcon } from "lucide-react"
 import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
+import { ProfileStrengthRadar, breakdownToRadar } from "@/components/ProfileStrengthRadar"
 
 interface OverviewTabProps {
   locationId: number;
@@ -153,6 +154,23 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
       {/* Breakdown Section */}
       {breakdown && (
         <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm">
+          <h3 className="text-sm font-medium text-foreground mb-4">Profile Strength</h3>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center mb-6">
+            <div className="min-w-0">
+              <ProfileStrengthRadar data={breakdownToRadar(breakdown as unknown as Record<string, { score: number; max_score: number }>)} height={260} />
+            </div>
+            <div className="space-y-2">
+              {breakdownToRadar(breakdown as unknown as Record<string, { score: number; max_score: number; detail?: string }>).map((d) => (
+                <div key={d.label} className="px-4 py-2.5 rounded-lg border border-border/50 bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-foreground">{d.label} Strength</span>
+                    <span className={`text-sm font-bold ${d.value >= 7.5 ? 'text-emerald-500' : d.value >= 5 ? 'text-amber-500' : 'text-red-500'}`}>{d.value.toFixed(1)}<span className="text-xs text-muted-foreground font-normal"> / 10</span></span>
+                  </div>
+                  {d.detail && <p className="text-xs text-muted-foreground mt-1">{d.detail}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
           <h3 className="text-sm font-medium text-foreground mb-4">Score Breakdown</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
 

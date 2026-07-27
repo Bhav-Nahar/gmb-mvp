@@ -61,17 +61,17 @@ def fixture_client(db):
 # --- pricing math ------------------------------------------------------------
 
 def test_custom_rate_overrides_tiers_flat_per_location():
-    # 20 locations: standard graduated = 10*250000 + 10*200000 = 4,500,000.
-    assert PricingService.compute_price_paise(20, "monthly", "basic") == 4_500_000
+    # 20 locations: flat ₹1,999/loc = 20 * 199,900.
+    assert PricingService.compute_price_paise(20, "monthly", "basic") == 20 * 199_900
     # Custom ₹1,300/loc (130000 paise) -> flat 20 * 130000 = 2,600,000.
     assert PricingService.compute_price_paise(20, "monthly", "basic", 130_000) == 2_600_000
 
 
 def test_custom_annual_has_no_discount():
-    # Standard annual applies the 20% discount; custom annual is exactly rate*12.
+    # Standard annual uses the plan's discounted annual bands; custom annual is exactly rate*12.
     assert PricingService.compute_price_paise(10, "annual", "basic", 130_000) == 10 * 130_000 * 12
-    std = PricingService.compute_price_paise(10, "annual", "basic")
-    assert std < 10 * 250_000 * 12   # discount applied for standard
+    # 10 locations annual = 10 * ₹1,599/mo * 12.
+    assert PricingService.compute_price_paise(10, "annual", "basic") == 10 * 159_900 * 12
 
 
 def test_custom_credits_override():

@@ -46,7 +46,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
     billing?.subscription_status === 'active' && (billing?.pending_location_count ?? 0) > 0;
   const { data: pending, isLoading: pendingLoading } = usePendingLocations(open && isUnlockMode);
 
-  // Price is computed server-side (graduated per-location tiers) so the UI and
+  // Price is computed server-side (flat per-location plan pricing) so the UI and
   // the charge can never drift apart.
   const { data: quote, isLoading: quoteLoading } = useQuote(
     locationCount,
@@ -54,13 +54,11 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
     planTier,
     open && !isUnlockMode
   );
-  // Headline shows the BASE price per the agreed convention (₹X/- with + GST beneath).
-  const baseRupees = quote ? Math.round(quote.price_paise / 100) : null;
+  // Prices are GST-INCLUSIVE: the headline is the total charged; GST beneath is the carve-out.
   const gstRupees = quote ? Math.round(quote.gst_paise / 100) : null;
   const totalRupees = quote ? Math.round(quote.total_paise / 100) : null;
   const gstPct = quote ? Math.round(quote.gst_rate * 100) : 18;
   const unlockRupees = pending?.quote ? Math.round(pending.quote.amount_paise / 100) : null; // GST-incl total
-  const unlockBaseRupees = pending?.quote?.base_paise != null ? Math.round(pending.quote.base_paise / 100) : null;
   const unlockGstRupees = pending?.quote?.gst_paise != null ? Math.round(pending.quote.gst_paise / 100) : null;
 
   // Non-India (non-IST) visitors see a USD estimate beside the real INR charge. The card
@@ -152,7 +150,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
     trackAddPaymentInfo({
       plan_name: planName,
       paymentTerm,
-      value: baseRupees ?? 0,
+      value: totalRupees ?? 0,
       locations_included: locationCount,
       user_id: user?.id,
       email: user?.email,
@@ -184,7 +182,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                 transaction_id: res.razorpay_payment_id,
                 plan_name: planName,
                 paymentTerm,
-                value: totalRupees ?? baseRupees ?? 0, // amount actually charged (incl. GST)
+                value: totalRupees ?? 0, // amount actually charged (incl. GST)
                 locations_included: locationCount,
                 user_id: user?.id,
                 email: user?.email,
@@ -259,14 +257,11 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
               <div>
                 <p className="text-sm text-muted-foreground">Prorated charge</p>
                 <p className="text-3xl font-bold">
-                  {unlockBaseRupees !== null
-                    ? `₹${unlockBaseRupees.toLocaleString('en-IN')}/-`
-                    : unlockRupees !== null ? `₹${unlockRupees.toLocaleString('en-IN')}` : '—'}
+                  {unlockRupees !== null ? `₹${unlockRupees.toLocaleString('en-IN')}/-` : '—'}
                 </p>
                 {unlockGstRupees !== null && unlockRupees !== null && (
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    + 18% GST (₹{unlockGstRupees.toLocaleString('en-IN')}) ={' '}
-                    <span className="font-medium text-foreground">₹{unlockRupees.toLocaleString('en-IN')}</span> total
+                    incl. 18% GST (₹{unlockGstRupees.toLocaleString('en-IN')})
                   </p>
                 )}
                 {showUsd && unlockRupees !== null && (
@@ -382,7 +377,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             size="sm"
             className="flex-1 min-h-[44px] sm:flex-none sm:min-h-0"
           >
-            Yearly (Save 20%)
+            Yearly (Save up to 25%)
           </Button>
         </div>
 
@@ -415,13 +410,12 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             <div>
               <p className="text-sm text-muted-foreground">Price</p>
               <p className="text-3xl font-bold">
-                {baseRupees !== null ? `₹${baseRupees.toLocaleString('en-IN')}/-` : '—'}{' '}
+                {totalRupees !== null ? `₹${totalRupees.toLocaleString('en-IN')}/-` : '—'}{' '}
                 <span className="text-sm font-normal text-muted-foreground">/{paymentTerm === 'monthly' ? 'mo' : 'yr'}</span>
               </p>
               {gstRupees !== null && totalRupees !== null && (
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  + {gstPct}% GST (₹{gstRupees.toLocaleString('en-IN')}) ={' '}
-                  <span className="font-medium text-foreground">₹{totalRupees.toLocaleString('en-IN')}</span> total
+                  incl. {gstPct}% GST (₹{gstRupees.toLocaleString('en-IN')})
                 </p>
               )}
               {showUsd && totalRupees !== null && (

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 
 import { resolveTemplateVariables } from '@/lib/utils/template-utils'
+import { AnalyticsTab } from './AnalyticsTab'
 
 interface ReplyTemplate {
   id: number;
@@ -77,6 +78,11 @@ interface ReviewSummary {
 
 export default function ReviewsPage(props: any) {
   const locationId = props.locationId;
+  const [view, setView] = useState<'inbox' | 'analytics'>('inbox')
+  // Read ?tab= after mount — reading the URL in the initializer breaks SSR hydration.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('tab') === 'analytics') setView('analytics')
+  }, [])
   const [reviews, setReviews] = useState<Review[]>([])
   const [locations, setLocations] = useState<Location[]>([])
   const [loading, setLoading] = useState(true)
@@ -423,6 +429,31 @@ export default function ReviewsPage(props: any) {
             )}
           </div>
 
+          {/* Inbox / Analytics view toggle */}
+          <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card p-1 text-sm">
+            <button onClick={() => setView('inbox')}
+              className={`rounded-full px-5 py-1.5 font-semibold transition ${view === 'inbox' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
+              Inbox
+            </button>
+            <button onClick={() => setView('analytics')}
+              className={`rounded-full px-5 py-1.5 font-semibold transition ${view === 'analytics' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
+              Analytics
+            </button>
+          </div>
+
+          {view === 'analytics' && (
+            <AnalyticsTab
+              locations={locations}
+              initialLocationId={filterLocation}
+              onDrillToUnreplied={(locId) => {
+                setFilterLocation(locId)
+                setFilterReplied('unreplied')
+                setView('inbox')
+              }}
+            />
+          )}
+
+          {view === 'inbox' && (<>
           {/* Reputation KPI row */}
           {reviewSummary && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -746,8 +777,8 @@ export default function ReviewsPage(props: any) {
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
                           Back to Inbox
                         </button>
-                        <div className="flex justify-between items-start gap-4 mb-6">
-                           <div className="flex items-center gap-4">
+                        <div className="flex flex-wrap justify-between items-start gap-4 mb-6">
+                           <div className="flex items-center gap-4 min-w-0">
                              {selectedReview.reviewer_profile_photo ? (
                                <img src={selectedReview.reviewer_profile_photo} alt={selectedReview.reviewer_name} className="w-14 h-14 rounded-full border-2 border-background shadow-md" referrerPolicy="no-referrer" />
                              ) : (
@@ -755,9 +786,9 @@ export default function ReviewsPage(props: any) {
                                  <UserIcon className="h-6 w-6 text-muted-foreground" />
                                </div>
                              )}
-                             <div>
+                             <div className="min-w-0">
                                <h2 className="text-xl font-bold text-foreground">{selectedReview.reviewer_name}</h2>
-                               <div className="flex items-center gap-2 mt-1">
+                               <div className="flex flex-wrap items-center gap-2 mt-1">
                                  <span className="text-xs font-medium text-muted-foreground bg-background border border-border px-2 py-0.5 rounded-full">
                                    {locations.find(l => l.id === selectedReview.location_id)?.location_name || 'Unknown Location'}
                                  </span>
@@ -1095,6 +1126,7 @@ export default function ReviewsPage(props: any) {
               </div>
             </div>
           )}
+          </>)}
 
       </main>
     </div>

@@ -210,7 +210,8 @@ export default function LocationProfilePage() {
               }} 
               className="w-full flex flex-col"
             >
-              <TabsList className="w-full flex flex-wrap justify-start bg-transparent border-b border-border/50 rounded-none p-0 h-auto gap-x-4 gap-y-1 sm:gap-x-6 pb-2 mb-6">
+              {/* Mobile: one horizontally-scrollable row (saves ~300px of stacked tabs); sm+: wraps as before */}
+              <TabsList className="w-full flex flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-x-visible justify-start bg-transparent border-b border-border/50 rounded-none p-0 h-auto gap-x-4 gap-y-1 sm:gap-x-6 pb-2 mb-6">
                 <TabsTrigger value="overview" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 py-3 sm:pb-2 sm:pt-1 text-muted-foreground data-[state=active]:text-primary whitespace-nowrap shrink-0">
                   <LayoutDashboard className="w-4 h-4 mr-2" />
                   Overview

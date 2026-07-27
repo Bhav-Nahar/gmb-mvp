@@ -48,11 +48,14 @@ def get_queries(
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required),
 ):
+    org = _org(db, current_user.organization_id)
+    cap = plan_config.aeo_queries_cap(org.plan_tier if org else None)
     return AEOQueriesOut(
-        auto=aeo_service.auto_queries(location),
+        auto=aeo_service.auto_queries(location, db),
         custom=list(location.aeo_queries or []),
         auto_enabled=bool(location.aeo_auto_enabled),
-        max_custom=settings.AEO_MAX_CUSTOM_QUERIES,
+        max_custom=min(settings.AEO_MAX_CUSTOM_QUERIES, cap or settings.AEO_MAX_CUSTOM_QUERIES),
+        max_queries=cap or settings.AEO_MAX_QUERIES,
     )
 
 
@@ -65,8 +68,11 @@ def set_queries(
 ):
     """Replace this location's custom AEO queries. Auto queries are always added on
     top at scan time, so we only store the user's own list."""
+    org = _org(db, current_user.organization_id)
+    cap = plan_config.aeo_queries_cap(org.plan_tier if org else None)
+    max_custom = min(settings.AEO_MAX_CUSTOM_QUERIES, cap or settings.AEO_MAX_CUSTOM_QUERIES)
     try:
-        cleaned = aeo_service.clean_custom_queries(body.custom, settings.AEO_MAX_CUSTOM_QUERIES)
+        cleaned = aeo_service.clean_custom_queries(body.custom, max_custom)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not body.auto_enabled and not cleaned:
@@ -76,10 +82,11 @@ def set_queries(
     location.aeo_auto_enabled = body.auto_enabled
     db.commit()
     return AEOQueriesOut(
-        auto=aeo_service.auto_queries(location),
+        auto=aeo_service.auto_queries(location, db),
         custom=cleaned,
         auto_enabled=bool(location.aeo_auto_enabled),
-        max_custom=settings.AEO_MAX_CUSTOM_QUERIES,
+        max_custom=max_custom,
+        max_queries=cap or settings.AEO_MAX_QUERIES,
     )
 
 
@@ -108,7 +115,7 @@ def run_aeo_scan(
 
     assert_location_active(db, location.id)
 
-    queries = aeo_service.build_queries(location)
+    queries = aeo_service.build_queries(location, plan_config.aeo_queries_cap(org.plan_tier if org else None), db=db)
     if not queries:
         raise HTTPException(status_code=400,
                             detail="No queries to check. Enable auto queries or add a custom one first.")
