@@ -8,6 +8,7 @@ from app.api.deps import get_current_user, admin_required
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.review import Review
+from app.models.location import Location
 from app.models.activity_log import ActivityLog
 from app.schemas.reply_template import ReplyTemplateCreate, ReplyTemplateUpdate, ReplyTemplateResponse
 from app.services.reply_template_service import ReplyTemplateService, MIN_TEMPLATES_FOR_AUTO_REPLY
@@ -95,6 +96,124 @@ def disable_auto_reply(
     )
     db.commit()
     return {"status": "disabled"}
+
+@router.get("/auto-reply/locations", status_code=status.HTTP_200_OK)
+def list_auto_reply_locations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required)
+):
+    """Per-location auto-reply state + how much it actually did in the last 30 days."""
+    org_id = current_user.organization_id
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+    counts = dict(
+        db.query(ActivityLog.location_id, func.count(ActivityLog.id))
+        .filter(
+            ActivityLog.organization_id == org_id,
+            ActivityLog.action == "review_auto_replied",
+            ActivityLog.created_at >= cutoff,
+        ).group_by(ActivityLog.location_id).all()
+    )
+    last_run = dict(
+        db.query(ActivityLog.location_id, func.max(ActivityLog.created_at))
+        .filter(
+            ActivityLog.organization_id == org_id,
+            ActivityLog.action == "review_auto_reply_run",
+        ).group_by(ActivityLog.location_id).all()
+    )
+    # What the automation would actually have to work on. Without this, "0 replies"
+    # is ambiguous between broken and nothing-to-do — the case that had us auditing.
+    from app.services.review_auto_reply_service import (
+        MIN_AI_AUTO_REPLY_RATING, MIN_AUTO_REPLY_RATING, MAX_AUTO_REPLY_ATTEMPTS,
+    )
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    min_rating = MIN_AI_AUTO_REPLY_RATING if (org and org.auto_reply_mode == "ai") else MIN_AUTO_REPLY_RATING
+    waiting = dict(
+        db.query(Review.location_id, func.count(Review.id))
+        .filter(
+            Review.organization_id == org_id,
+            Review.is_deleted == False,  # noqa: E712
+            Review.is_replied == False,  # noqa: E712
+            Review.rating >= min_rating,
+            Review.auto_reply_attempts < MAX_AUTO_REPLY_ATTEMPTS,
+        ).group_by(Review.location_id).all()
+    )
+
+    locations = db.query(Location).filter(
+        Location.organization_id == org_id,
+        Location.billing_status == "active",
+    ).order_by(Location.location_name).all()
+    return [
+        {
+            "id": loc.id,
+            "location_name": loc.location_name,
+            "city": loc.city,
+            "enabled": loc.auto_reply_enabled,
+            "replies_30d": counts.get(loc.id, 0),
+            "waiting": waiting.get(loc.id, 0),
+            "last_run_at": last_run.get(loc.id),
+        }
+        for loc in locations
+    ]
+
+
+@router.post("/auto-reply/locations/{location_id}", status_code=status.HTTP_200_OK)
+def set_location_auto_reply(
+    location_id: int,
+    enabled: bool,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required)
+):
+    """Include/exclude one location from the org's auto-reply automation."""
+    updated = db.execute(
+        update(Location)
+        .where(Location.id == location_id)
+        .where(Location.organization_id == current_user.organization_id)
+        .values(auto_reply_enabled=enabled)
+    ).rowcount
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+    db.commit()
+    return {"id": location_id, "enabled": enabled}
+
+
+@router.get("/auto-reply/logs", status_code=status.HTTP_200_OK)
+def get_auto_reply_logs(
+    location_id: int | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required)
+):
+    """Recent auto-reply activity — one row per run, plus each posted reply.
+
+    This is the 'is the automation actually running' view: runs that replied,
+    failed, skipped for human review, or stopped for want of credits.
+    """
+    q = db.query(ActivityLog).filter(
+        ActivityLog.organization_id == current_user.organization_id,
+        ActivityLog.action.in_(["review_auto_reply_run", "review_auto_replied"]),
+    )
+    if location_id is not None:
+        q = q.filter(ActivityLog.location_id == location_id)
+    rows = q.order_by(ActivityLog.created_at.desc()).limit(min(limit, 200)).all()
+
+    names = dict(
+        db.query(Location.id, Location.location_name)
+        .filter(Location.organization_id == current_user.organization_id).all()
+    )
+    return [
+        {
+            "id": r.id,
+            "created_at": r.created_at,
+            "action": r.action,
+            "location_id": r.location_id,
+            "location_name": names.get(r.location_id),
+            "review_id": r.entity_id if r.action == "review_auto_replied" else None,
+            "payload": r.payload or {},
+        }
+        for r in rows
+    ]
+
 
 @router.get("/analytics", status_code=status.HTTP_200_OK)
 def get_template_analytics(

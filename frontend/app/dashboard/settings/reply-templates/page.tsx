@@ -17,6 +17,11 @@ import {
   setAutoReply,
   type AutoReplyMode,
   getTemplateAnalytics,
+  getAutoReplyLocations,
+  setLocationAutoReply,
+  getAutoReplyLogs,
+  type AutoReplyLocation,
+  type AutoReplyLogEntry,
 } from '@/lib/api/reply-templates'
 import { resolveTemplateVariables } from '@/lib/utils/template-utils'
 import { Plus, Edit2, Trash2, Save, X, Star, Sparkles } from 'lucide-react'
@@ -71,10 +76,16 @@ export default function ReplyTemplatesSettingsPage() {
   const [autoReplyEnabledAt, setAutoReplyEnabledAt] = useState<string | null>(null)
   const [autoReplyBusy, setAutoReplyBusy] = useState(false)
   const [autoReplyMode, setAutoReplyMode] = useState<AutoReplyMode>('template')
+  const [aiCredits, setAiCredits] = useState<number | null>(null)
 
   // Analytics
   const [lastUsed, setLastUsed] = useState<Record<string, string>>({})
   const [autoReplies30d, setAutoReplies30d] = useState(0)
+
+  // Per-location auto-reply + run log
+  const [arLocations, setArLocations] = useState<AutoReplyLocation[]>([])
+  const [arLogs, setArLogs] = useState<AutoReplyLogEntry[]>([])
+  const [showLogs, setShowLogs] = useState(false)
 
   useEffect(() => {
     if (['Owner', 'Admin'].includes(userRole)) {
@@ -100,6 +111,7 @@ export default function ReplyTemplatesSettingsPage() {
       const status = await getAutoReplyStatus()
       setAutoReplyEnabledAt(status.enabled_at)
       setAutoReplyMode(status.mode ?? 'template')
+      setAiCredits(status.ai_credits ?? null)
     } catch (e: any) {
       console.error('Failed to load auto-reply status', e)
     }
@@ -110,10 +122,38 @@ export default function ReplyTemplatesSettingsPage() {
     } catch (e: any) {
       console.error('Failed to load template analytics', e)
     }
+    try {
+      setArLocations(await getAutoReplyLocations())
+    } catch (e: any) {
+      console.error('Failed to load auto-reply locations', e)
+    }
   }
 
-  const handleToggleAutoReply = async (mode: AutoReplyMode = autoReplyMode) => {
-    const turningOn = !autoReplyEnabledAt || mode !== autoReplyMode
+  const loadLogs = async () => {
+    try {
+      setArLogs(await getAutoReplyLogs())
+    } catch (e: any) {
+      console.error('Failed to load auto-reply logs', e)
+    }
+  }
+
+  const handleToggleLocation = async (loc: AutoReplyLocation) => {
+    // Optimistic: a checkbox that waits for a round-trip reads as broken.
+    setArLocations(prev => prev.map(l => (l.id === loc.id ? { ...l, enabled: !l.enabled } : l)))
+    try {
+      await setLocationAutoReply(loc.id, !loc.enabled)
+    } catch (e: any) {
+      setArLocations(prev => prev.map(l => (l.id === loc.id ? { ...l, enabled: loc.enabled } : l)))
+      setErrorAlert(e.message || 'Failed to update this location.')
+    }
+  }
+
+  // `enabled` is always explicit. It used to be derived (turningOn = !enabledAt || mode
+  // !== autoReplyMode), which meant clicking the ALREADY-ACTIVE mode card silently
+  // disabled auto-reply — the org kept auto_reply_mode='ai' with enabled_at NULL and
+  // answered nothing.
+  const handleSetAutoReply = async (enabled: boolean, mode: AutoReplyMode = autoReplyMode) => {
+    const turningOn = enabled
     setAutoReplyBusy(true)
     setErrorAlert('')
     setSuccessAlert('')
@@ -288,7 +328,7 @@ export default function ReplyTemplatesSettingsPage() {
               </div>
             </div>
             <button
-              onClick={() => handleToggleAutoReply()}
+              onClick={() => handleSetAutoReply(!autoReplyEnabledAt)}
               disabled={autoReplyBusy || (!autoReplyEnabledAt && !canEnableAutoReply)}
               className={`w-full sm:w-auto shrink-0 min-h-[44px] sm:min-h-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
                 autoReplyEnabledAt
@@ -307,7 +347,10 @@ export default function ReplyTemplatesSettingsPage() {
               return (
                 <button
                   key={key}
-                  onClick={() => (autoReplyEnabledAt ? handleToggleAutoReply(key) : setAutoReplyMode(key))}
+                  onClick={() => {
+                    if (!autoReplyEnabledAt) return setAutoReplyMode(key)
+                    if (key !== autoReplyMode) handleSetAutoReply(true, key)  // active card: no-op
+                  }}
                   disabled={autoReplyBusy}
                   aria-pressed={active}
                   className={`text-left p-3 rounded-lg border transition-colors disabled:opacity-50 ${
@@ -343,11 +386,77 @@ export default function ReplyTemplatesSettingsPage() {
                   No {r}★ template — {r}★ reviews won’t be auto-answered.
                 </p>
               ))}
+              {autoReplyMode === 'ai' && aiCredits !== null && aiCredits < 20 && (
+                <p className="text-amber-500">
+                  {aiCredits === 0
+                    ? 'No AI credits left — AI auto-reply is on but can’t post until you top up.'
+                    : `Only ${aiCredits} AI credits left (1 per reply, up to 20 a day per location).`}
+                </p>
+              )}
               {autoReplyEnabledAt && (
                 <p className="text-muted-foreground">
                   <span className="font-semibold text-green-600">{autoReplies30d}</span> auto-
                   {autoReplies30d === 1 ? 'reply' : 'replies'} in the last 30 days.
                 </p>
+              )}
+            </div>
+          )}
+
+          {/* Which locations it runs on + proof that it ran */}
+          {arLocations.length > 0 && (
+            <div className="border-t border-border">
+              <div className="px-4 py-2.5 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-foreground">Locations</span>
+                <button
+                  onClick={() => { setShowLogs(v => !v); if (!showLogs) loadLogs() }}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  {showLogs ? 'Hide activity log' : 'View activity log'}
+                </button>
+              </div>
+              <div className="divide-y divide-border">
+                {arLocations.map(loc => (
+                  <label
+                    key={loc.id}
+                    className="flex items-center justify-between gap-3 px-4 py-2.5 cursor-pointer hover:bg-muted/40"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm text-foreground truncate">{loc.location_name}</span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        {loc.city ? loc.city + ' · ' : ''}
+                        {loc.replies_30d} replied in 30 days · {loc.waiting} waiting
+                        {loc.last_run_at ? ' · last run ' + new Date(loc.last_run_at).toLocaleString() : ' · not run yet'}
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={loc.enabled}
+                      onChange={() => handleToggleLocation(loc)}
+                      className="w-4 h-4 shrink-0 accent-primary"
+                      aria-label={'Auto-reply for ' + loc.location_name}
+                    />
+                  </label>
+                ))}
+              </div>
+
+              {showLogs && (
+                <div className="px-4 py-3 border-t border-border bg-muted/20 max-h-72 overflow-y-auto space-y-1.5">
+                  {arLogs.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Nothing yet. Runs appear here once auto-reply posts a reply or hits a problem.
+                    </p>
+                  ) : arLogs.map(l => (
+                    <p key={l.id} className="text-[11px] text-muted-foreground font-mono">
+                      {new Date(l.created_at).toLocaleString()} · {l.location_name || '—'} ·{' '}
+                      {l.action === 'review_auto_replied'
+                        ? 'replied to review #' + l.review_id + ' (' + (l.payload.source || 'template') + ')'
+                        : l.payload.status === 'completed'
+                          ? 'run: ' + l.payload.replied + ' replied, ' + l.payload.failed + ' failed, '
+                            + l.payload.needs_human + ' left for you'
+                          : 'run skipped: ' + l.payload.reason}
+                    </p>
+                  ))}
+                </div>
               )}
             </div>
           )}

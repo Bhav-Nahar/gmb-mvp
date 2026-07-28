@@ -102,6 +102,27 @@ def test_disabled_location_is_skipped(db: Session, monkeypatch):
     assert result["status"] == "skipped"
 
 
+def test_location_opt_out_is_skipped_and_a_run_is_logged(db: Session, monkeypatch):
+    from app.models.activity_log import ActivityLog
+
+    t0 = datetime.now(timezone.utc) - timedelta(days=1)
+    _seed(db, enabled_at=t0)
+    db.add(_make_review("ok", 5, t0 + timedelta(hours=1)))
+    loc = db.query(Location).get(1)
+    loc.auto_reply_enabled = False
+    db.commit()
+
+    provider = _FakeProvider()
+    assert _run(db, provider, monkeypatch)["reason"] == "auto-reply off for this location"
+    assert provider.calls == []
+
+    loc.auto_reply_enabled = True
+    db.commit()
+    assert _run(db, provider, monkeypatch)["replied"] == 1
+    run_logs = db.query(ActivityLog).filter(ActivityLog.action == "review_auto_reply_run").all()
+    assert len(run_logs) == 1 and run_logs[0].payload["replied"] == 1
+
+
 def test_resolve_variables_aliases_and_rating():
     body = "{{customer}} / {{reviewer_name}} / {{business}} / {{location}} / {{rating}} stars"
     out = ReplyTemplateService.resolve_variables(body, "Sam", "Acme", rating=5)
@@ -259,16 +280,18 @@ def test_daily_quota_is_stable_within_a_day_and_in_range(db: Session):
     assert svc._daily_quota(7) == q          # same day, same number across runs
 
 
-def test_backlog_drip_is_paced_across_the_day(db: Session):
-    """Nothing due at midnight, the whole quota due by the end of the day, monotonic."""
+def test_backlog_drip_is_paced_across_business_hours(db: Session):
+    """Nothing due before 9am IST, whole quota due by 9pm IST, monotonic in between."""
     due = ReviewAutoReplyService._due_by_now
-    midnight = datetime(2026, 7, 26, 0, 0, tzinfo=timezone.utc)
-    assert due(20, midnight) == 0
-    assert due(20, midnight.replace(hour=12)) == 10
-    assert due(20, midnight.replace(hour=23, minute=59)) == 20
-    assert due(10, midnight.replace(hour=12)) == 5
-    hourly = [due(15, midnight.replace(hour=h)) for h in range(24)]
-    assert hourly == sorted(hourly) and max(hourly) <= 15
+    utc = lambda h, m=0: datetime(2026, 7, 26, h, m, tzinfo=timezone.utc)
+    assert due(20, utc(0)) == 0          # 05:30 IST — before the window
+    assert due(20, utc(3, 29)) == 0      # 08:59 IST
+    assert due(20, utc(9, 30)) == 10     # 15:00 IST — halfway through 9am-9pm
+    assert due(20, utc(15, 30)) == 20    # 21:00 IST — window closed, all due
+    assert due(10, utc(9, 30)) == 5
+    window = [due(15, utc(h)) for h in range(4, 16)]   # 09:30-20:30 IST
+    assert window == sorted(window) and max(window) <= 15
+    assert due(20, utc(19)) == 0         # 00:30 IST — never drips overnight
 
 
 def test_backlog_run_is_ai_mode_only(db: Session, monkeypatch):

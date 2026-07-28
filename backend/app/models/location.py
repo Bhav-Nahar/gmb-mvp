@@ -47,6 +47,9 @@ class Location(Base):
     # When False, a scan runs ONLY the custom queries above (no auto-generated ones),
     # giving the owner exact control over query count and therefore cost.
     aeo_auto_enabled = Column(Boolean, default=True, server_default=text("true"), nullable=False)
+    # Per-location opt-out for auto-reply. The org toggle is the master switch; this
+    # only lets an org exclude specific locations from it.
+    auto_reply_enabled = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Additional rich GBP fields — captured for full parity with what Google returns.
     additional_phones = Column(JSONB, default=list, server_default='[]', nullable=False)  # list of strings
     special_hours = Column(JSONB, nullable=True)      # holiday / one-off hours
