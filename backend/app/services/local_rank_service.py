@@ -24,6 +24,26 @@ _DEPTH = 20     # how many results to pull per point (rank window: top 20)
 _MILES_PER_DEG_LAT = 69.0
 _TASK_POLL_INTERVAL = 5.0   # seconds between tasks_ready polls
 _TASK_MAX_WAIT = 540.0      # give up waiting on queued tasks (under the 600s scan lock)
+_RETRY_STATUS = {403, 429, 500, 502, 503, 504}  # DataForSEO edge throttles bursts with 403
+
+
+async def _request(client, method: str, url: str, **kw):
+    """One DataForSEO call with retry+backoff on transient edge errors.
+
+    ponytail: DataForSEO's CDN returns intermittent 403/429 under rapid task_get bursts
+    (same auth, back-to-back: one 200, next 403). Retry a few times before failing the
+    whole scan. Bump attempts/backoff if throttling persists.
+    """
+    delay = 1.0
+    for attempt in range(4):
+        resp = await client.request(method, url, **kw)
+        if resp.status_code in _RETRY_STATUS and attempt < 3:
+            await asyncio.sleep(delay)
+            delay *= 2
+            continue
+        resp.raise_for_status()
+        return resp
+    return resp  # unreachable; loop either returns or raises
 
 
 def scan_price(grid_size: int) -> int:
@@ -121,8 +141,7 @@ async def _post_tasks(client, base: str, keyword: str, points: list[dict],
             "depth": _DEPTH,
             "tag": f"{p['row']}_{p['col']}",
         } for p in chunk]
-        resp = await client.post(f"{base}/v3/serp/google/maps/task_post", json=payload)
-        resp.raise_for_status()
+        resp = await _request(client, "POST", f"{base}/v3/serp/google/maps/task_post", json=payload)
         for task in (resp.json().get("tasks") or []):
             # 20100 = "Task Created", 20000 = OK. Anything else is a hard failure.
             if task.get("status_code") not in (20000, 20100):
@@ -136,8 +155,7 @@ async def _post_tasks(client, base: str, keyword: str, points: list[dict],
 
 async def _get_task_items(client, base: str, task_id: str) -> list[dict]:
     """Fetch one completed task's result rows."""
-    resp = await client.get(f"{base}/v3/serp/google/maps/task_get/advanced/{task_id}")
-    resp.raise_for_status()
+    resp = await _request(client, "GET", f"{base}/v3/serp/google/maps/task_get/advanced/{task_id}")
     tasks = resp.json().get("tasks") or []
     task = tasks[0] if tasks else {}
     if task.get("status_code") != 20000:
@@ -157,8 +175,7 @@ async def _collect_tasks(client, base: str, id_to_point: dict[str, dict]) -> lis
     while pending and waited < _TASK_MAX_WAIT:
         await asyncio.sleep(_TASK_POLL_INTERVAL)
         waited += _TASK_POLL_INTERVAL
-        resp = await client.get(f"{base}/v3/serp/google/maps/tasks_ready")
-        resp.raise_for_status()
+        resp = await _request(client, "GET", f"{base}/v3/serp/google/maps/tasks_ready")
         ready_ids = {
             r.get("id")
             for t in (resp.json().get("tasks") or [])
@@ -186,7 +203,11 @@ async def run_scan(*, lat: float, lng: float, keyword: str, grid_size: int,
     points = build_grid(lat, lng, grid_size, radius_miles)
     base = settings.DATAFORSEO_BASE_URL.rstrip("/")
 
-    async with httpx.AsyncClient(timeout=90.0, auth=(login, password)) as client:
+    # Explicit UA + Accept: the raw HTTP 403s are an edge/WAF block (DataForSEO's own
+    # errors come back HTTP 200 w/ a status_code), and httpx's default "python-httpx/*"
+    # UA is a common WAF bot-trigger. ponytail: real UA first, retry backstop second.
+    headers = {"User-Agent": "pinzo-localrank/1.0", "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=90.0, auth=(login, password), headers=headers) as client:
         id_to_point = await _post_tasks(client, base, keyword, points, language_code)
         collected = await _collect_tasks(client, base, id_to_point)
 
