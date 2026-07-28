@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import update, func
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.api.deps import get_current_user, admin_required
+from app.api.deps import (get_current_user, admin_required, require_feature,
+                          require_location_access, get_user_location_ids)
+from app.core import plan_config
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.review import Review
@@ -43,9 +45,13 @@ def get_auto_reply_status(
         "mode": org.auto_reply_mode if org else "template",
         "positive_template_count": count,
         "min_required": MIN_TEMPLATES_FOR_AUTO_REPLY,
+        # AI mode spends a credit per reply and silently stops at zero — show the
+        # balance on the same screen as the toggle.
+        "ai_credits": ((org.monthly_ai_credits_balance or 0) + (org.topup_ai_credits_balance or 0)) if org else 0,
     }
 
-@router.post("/auto-reply/enable", status_code=status.HTTP_200_OK)
+@router.post("/auto-reply/enable", status_code=status.HTTP_200_OK,
+             dependencies=[Depends(require_feature(plan_config.FEATURE_AUTO_REPLY))])
 def enable_auto_reply(
     mode: str = "template",
     db: Session = Depends(get_db),
@@ -139,10 +145,14 @@ def list_auto_reply_locations(
         ).group_by(Review.location_id).all()
     )
 
-    locations = db.query(Location).filter(
+    q = db.query(Location).filter(
         Location.organization_id == org_id,
         Location.billing_status == "active",
-    ).order_by(Location.location_name).all()
+    )
+    allowed = get_user_location_ids(current_user, db)   # None = org-wide role
+    if allowed is not None:
+        q = q.filter(Location.id.in_(allowed))
+    locations = q.order_by(Location.location_name).all()
     return [
         {
             "id": loc.id,
@@ -159,22 +169,25 @@ def list_auto_reply_locations(
 
 @router.post("/auto-reply/locations/{location_id}", status_code=status.HTTP_200_OK)
 def set_location_auto_reply(
-    location_id: int,
     enabled: bool,
+    location: Location = Depends(require_location_access),
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required)
 ):
-    """Include/exclude one location from the org's auto-reply automation."""
-    updated = db.execute(
+    """Include/exclude one location from the org's auto-reply automation.
+
+    location comes from require_location_access, which enforces BOTH the org boundary
+    and the caller's location scope — the codebase convention for any route carrying a
+    location_id. A hand-rolled org filter here would pass today (admin-only) and become
+    an authz hole the moment this page opens to a location-restricted role.
+    """
+    db.execute(
         update(Location)
-        .where(Location.id == location_id)
-        .where(Location.organization_id == current_user.organization_id)
+        .where(Location.id == location.id)
         .values(auto_reply_enabled=enabled)
-    ).rowcount
-    if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+    )
     db.commit()
-    return {"id": location_id, "enabled": enabled}
+    return {"id": location.id, "enabled": enabled}
 
 
 @router.get("/auto-reply/logs", status_code=status.HTTP_200_OK)
@@ -195,6 +208,9 @@ def get_auto_reply_logs(
     )
     if location_id is not None:
         q = q.filter(ActivityLog.location_id == location_id)
+    allowed = get_user_location_ids(current_user, db)   # None = org-wide role
+    if allowed is not None:
+        q = q.filter(ActivityLog.location_id.in_(allowed))
     rows = q.order_by(ActivityLog.created_at.desc()).limit(min(limit, 200)).all()
 
     names = dict(
