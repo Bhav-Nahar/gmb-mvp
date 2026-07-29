@@ -8,7 +8,10 @@ from app.models.location import Location
 from app.models.review import Review
 from app.models.reply_template import ReplyTemplate
 from app.services.reply_template_service import ReplyTemplateService
-from app.services.review_auto_reply_service import ReviewAutoReplyService
+from app.services.review_auto_reply_service import (
+    ReviewAutoReplyService, AI_DAILY_MIN, AI_DAILY_MAX,
+)
+from app.llm.exceptions import LLMProviderError
 
 
 class _FakeProvider:
@@ -158,9 +161,14 @@ def test_review_id_filter_is_scoped_to_the_callers_org(db: Session, fake_admin_u
     db.add_all([mine, theirs])
     db.commit()
 
-    assert get_reviews(review_id=mine.id, db=db, current_user=fake_admin_user).total == 1
+    # page/size passed explicitly: called directly, FastAPI's Query() defaults are not
+    # resolved and arrive as Query objects.
+    def _fetch(rid):
+        return get_reviews(review_id=rid, page=1, size=20, db=db, current_user=fake_admin_user)
+
+    assert _fetch(mine.id).total == 1
     # Another tenant's id resolves to nothing, not to their review.
-    assert get_reviews(review_id=theirs.id, db=db, current_user=fake_admin_user).total == 0
+    assert _fetch(theirs.id).total == 0
 
 
 def test_resolve_variables_aliases_and_rating():
@@ -265,6 +273,78 @@ def test_ai_mode_replies_to_backlog_without_templates(db: Session, monkeypatch):
     assert all(r.reply_template_id is None for r in replied)
     org = db.query(Organization).filter(Organization.id == 1).first()
     assert org.monthly_ai_credits_balance == 50 - 12  # one credit per generated reply
+
+
+def test_a_large_backlog_still_gets_its_quota_today(db: Session, monkeypatch):
+    """The production case: 1250 old reviews, AI mode, and the drip delivering nothing.
+
+    Every other backlog test stubs _backlog_room, so none of them prove the unstubbed
+    gate chain — has_backlog -> _backlog_room -> _find_backlog_targets -> posted reply —
+    actually fires on a real backlog at a real time of day. This runs it with the clock
+    frozen mid-window (15:30 IST) and asserts replies come out the other end.
+    """
+    import app.services.review_auto_reply_service as svc_mod
+
+    _ai_seed(db, credits=500)
+    _stub_ai(monkeypatch)
+    frozen = datetime(2026, 7, 29, 10, 0, tzinfo=timezone.utc)   # 15:30 IST, mid-window
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen
+    monkeypatch.setattr(svc_mod, "datetime", _Clock)
+
+    db.add_all([_ai_review(f"b{i}", 5, frozen - timedelta(days=200)) for i in range(1250)])
+    db.commit()
+
+    svc = ReviewAutoReplyService(db)
+    loc = db.query(Location).get(1)
+    quota = svc._daily_quota(1)
+    assert svc.has_backlog(loc) is True
+    assert AI_DAILY_MIN <= quota <= AI_DAILY_MAX
+    room = svc._backlog_room(loc)
+    assert room > 0, f"drip owes nothing at 15:30 IST with a 1250 backlog (quota={quota})"
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch, backlog=True)
+    assert result["replied"] == room, result
+    assert len(provider.calls) == room
+    # And it stops there — the pace is the feature, not a bug.
+    assert result["replied"] < 1250
+
+
+def test_llm_outage_stops_the_run_visibly_instead_of_killing_the_task(db: Session, monkeypatch):
+    """Production incident 2026-07-29: GEMINI_API_KEY was empty on the worker, so every
+    generation raised LLMProviderError. It was uncaught, so run() died mid-loop and wrote
+    no activity row — the panel showed "no runs" and a 1250 backlog for weeks while the
+    worker logged the same traceback hourly. A provider failure must be VISIBLE."""
+    import app.services.ai_reply_service as ai
+    from app.models.activity_log import ActivityLog
+
+    _ai_seed(db)
+    old = datetime.now(timezone.utc) - timedelta(days=200)
+    db.add_all([_ai_review(f"b{i}", 5, old) for i in range(5)])
+    db.commit()
+
+    async def dead_llm(review, location, db=None):
+        raise LLMProviderError("Gemini AI service temporarily unavailable: "
+                               "Error code: 400 - Please pass a valid API key")
+    monkeypatch.setattr(ai, "generate_reply", dead_llm)
+    monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, loc: 5)
+
+    provider = _FakeProvider()
+    result = _run(db, provider, monkeypatch, backlog=True)   # must NOT raise
+
+    assert result["replied"] == 0
+    assert "valid API key" in result["stopped"]
+    assert provider.calls == []                      # nothing posted to Google
+    run_log = db.query(ActivityLog).filter(
+        ActivityLog.action == "review_auto_reply_run").one()
+    assert "valid API key" in run_log.payload["stopped"]
+    # The credit is refunded, so an outage doesn't quietly drain the balance.
+    org = db.query(Organization).filter(Organization.id == 1).first()
+    assert org.monthly_ai_credits_balance == 50
 
 
 def test_ai_mode_prioritises_new_reviews_over_backlog(db: Session, monkeypatch):

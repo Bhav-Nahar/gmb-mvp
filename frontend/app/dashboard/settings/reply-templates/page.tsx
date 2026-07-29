@@ -461,6 +461,9 @@ export default function ReplyTemplatesSettingsPage() {
                         : l.payload.status === 'completed'
                           ? 'run: ' + l.payload.replied + ' replied, ' + l.payload.failed + ' failed, '
                             + l.payload.needs_human + ' left for you'
+                            // An LLM outage or a bad API key stops the run early. Without
+                            // this the row reads "0 replied" and looks like idleness.
+                            + (l.payload.stopped ? ' — STOPPED: ' + l.payload.stopped : '')
                           : 'run skipped: ' + l.payload.reason}
                     </p>
                   ))}
