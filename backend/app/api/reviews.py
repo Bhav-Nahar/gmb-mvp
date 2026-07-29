@@ -30,6 +30,7 @@ router = APIRouter()
 @router.get("/", response_model=ReviewListResponse)
 def get_reviews(
     location_id: Optional[int] = None,
+    review_id: Optional[int] = None,
     is_replied: Optional[bool] = None,
     rating: Optional[int] = None,
     sentiment: Optional[str] = None,
@@ -65,6 +66,14 @@ def get_reviews(
         query = query.filter(Review.location_id == location_id)
     elif allowed_location_ids is not None:
         query = query.filter(Review.location_id.in_(allowed_location_ids))
+
+    # Deep link to one review (the auto-reply activity log links here). A filter on the
+    # existing list endpoint rather than a GET /reviews/{id}: the org and location-scope
+    # filters above already apply, so an id from another tenant returns an empty list
+    # instead of needing its own authz — and the client renders the same shape it already
+    # knows. ponytail: no new endpoint, no new response model.
+    if review_id:
+        query = query.filter(Review.id == review_id)
 
     if is_replied is not None:
         query = query.filter(Review.is_replied == is_replied)

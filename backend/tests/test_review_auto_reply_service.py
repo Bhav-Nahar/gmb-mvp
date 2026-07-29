@@ -142,6 +142,27 @@ def test_waiting_count_matches_what_template_mode_would_actually_reply_to(db: Se
     assert [r["waiting"] for r in rows] == [1]
 
 
+def test_review_id_filter_is_scoped_to_the_callers_org(db: Session, fake_admin_user):
+    """The activity log links to /reviews?review=<id>. The id is a raw DB id straight off
+    an ActivityLog row, so the filter must never widen the org boundary."""
+    from app.api.reviews import get_reviews
+
+    _seed(db, enabled_at=None)
+    db.add(Organization(id=2, name="Other", subscription_status="active"))
+    db.add(Location(id=2, organization_id=2, google_location_id="locations/2",
+                    location_name="Rival", billing_status="active"))
+    db.commit()
+    mine = _make_review("mine", 5, datetime.now(timezone.utc))
+    theirs = _make_review("theirs", 5, datetime.now(timezone.utc))
+    theirs.organization_id, theirs.location_id = 2, 2
+    db.add_all([mine, theirs])
+    db.commit()
+
+    assert get_reviews(review_id=mine.id, db=db, current_user=fake_admin_user).total == 1
+    # Another tenant's id resolves to nothing, not to their review.
+    assert get_reviews(review_id=theirs.id, db=db, current_user=fake_admin_user).total == 0
+
+
 def test_resolve_variables_aliases_and_rating():
     body = "{{customer}} / {{reviewer_name}} / {{business}} / {{location}} / {{rating}} stars"
     out = ReplyTemplateService.resolve_variables(body, "Sam", "Acme", rating=5)
