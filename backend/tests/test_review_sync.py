@@ -164,6 +164,39 @@ class ReviewSyncArchitectureTests(unittest.TestCase):
 
     @patch("app.providers.factory.ProviderFactory.get_provider")
     @patch("app.worker.celery.send_task")
+    def test_sync_never_clears_a_reply_google_has_not_propagated_yet(self, mock_send_task, mock_get_provider):
+        """Our auto-reply must survive a payload that Google returns without it —
+        otherwise the review looks unanswered and gets a second (paid) AI reply."""
+        t = datetime.datetime(2026, 6, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        self.db.add(Review(
+            organization_id=self.org.id, location_id=self.location.id, provider="gbp",
+            provider_review_id="rev-1", reviewer_name="User A", rating=5, comment="Awesome!",
+            is_replied=True, reply_text="Thanks so much!", reply_created_at=t,
+            review_created_at=t, review_updated_at=t,
+            content_hash=generate_content_hash(5, "Awesome!", None, t),
+        ))
+        self.db.commit()
+
+        mock_provider = AsyncMock()
+        mock_get_provider.return_value = mock_provider
+        # Same review, edited body, still no reply visible on Google's side.
+        mock_provider.get_reviews.return_value = [ReviewModel(
+            id="rev-1", location_id="locations/12345", reviewer_name="User A", rating=5,
+            body="Awesome place, edited!", reply=None, created_at=t,
+            updated_at=t + datetime.timedelta(hours=1), provider="gbp",
+        )]
+
+        import asyncio
+        asyncio.run(ReviewSyncService.sync_location_reviews(self.db, self.location.id, "Scheduled"))
+
+        rev = self.db.query(Review).filter(Review.provider_review_id == "rev-1").one()
+        self.assertEqual(rev.comment, "Awesome place, edited!")  # other fields still sync
+        self.assertTrue(rev.is_replied)
+        self.assertEqual(rev.reply_text, "Thanks so much!")
+        self.assertIsNotNone(rev.reply_created_at)
+
+    @patch("app.providers.factory.ProviderFactory.get_provider")
+    @patch("app.worker.celery.send_task")
     def test_sync_delta_updates_only_changed_reviews(self, mock_send_task, mock_get_provider):
         # Setup DB with 2 existing reviews
         review_time_1 = datetime.datetime(2026, 6, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)

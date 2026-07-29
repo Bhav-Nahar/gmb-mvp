@@ -4,7 +4,7 @@ import json
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import func
+from sqlalchemy import case, func
 from app.models.review import Review
 from app.models.location import Location
 from app.models.sync_log import SyncLog
@@ -188,9 +188,24 @@ class ReviewSyncService:
                             "reviewer_profile_photo": stmt.excluded.reviewer_profile_photo,
                             "rating": stmt.excluded.rating,
                             "comment": stmt.excluded.comment,
-                            "is_replied": stmt.excluded.is_replied,
-                            "reply_text": stmt.excluded.reply_text,
-                            "reply_created_at": stmt.excluded.reply_created_at,
+                            # A reply is never CLEARED by a sync, only set. Google's
+                            # reviews endpoint lags behind a reply we just posted, so a
+                            # payload with reply=NULL plus any other changed field used to
+                            # write the row back as unreplied — which made an already
+                            # answered review eligible for auto-reply again, paying for a
+                            # second AI generation and overwriting the live reply.
+                            # ponytail: means a reply DELETED on Google stops clearing
+                            # here too — accepted; deletion is rare, propagation lag isn't.
+                            "is_replied": case(
+                                (stmt.excluded.reply_text.isnot(None), True),
+                                else_=Review.__table__.c.is_replied,
+                            ),
+                            "reply_text": func.coalesce(
+                                stmt.excluded.reply_text, Review.__table__.c.reply_text
+                            ),
+                            "reply_created_at": func.coalesce(
+                                stmt.excluded.reply_created_at, Review.__table__.c.reply_created_at
+                            ),
                             "review_updated_at": stmt.excluded.review_updated_at,
                             "raw_payload": stmt.excluded.raw_payload,
                             "updated_at": func.now(),

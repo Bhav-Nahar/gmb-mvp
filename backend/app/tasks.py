@@ -1333,6 +1333,7 @@ def drip_ai_backlog_replies_beat_task(self) -> dict:
                 Organization.auto_reply_mode == "ai",
                 Organization.auto_reply_enabled_at.isnot(None),
                 Location.billing_status == "active",
+                Location.auto_reply_enabled == True,  # noqa: E712
             )
             .all()
         )

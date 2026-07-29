@@ -61,6 +61,7 @@ export interface AutoReplyStatus {
   mode: AutoReplyMode;
   positive_template_count: number;
   min_required: number;
+  ai_credits: number;
 }
 
 export async function getAutoReplyStatus(): Promise<AutoReplyStatus> {
@@ -86,4 +87,41 @@ export interface TemplateAnalytics {
 
 export async function getTemplateAnalytics(): Promise<TemplateAnalytics> {
   return api.get<TemplateAnalytics>('/reply-templates/analytics');
+}
+
+// Per-location control + run log, so an owner can see which locations are automated
+// and whether the automation is actually posting.
+export interface AutoReplyLocation {
+  id: number;
+  location_name: string;
+  city: string | null;
+  enabled: boolean;
+  replies_30d: number;
+  waiting: number;   // eligible reviews still unanswered right now
+  last_run_at: string | null;
+}
+
+export interface AutoReplyLogEntry {
+  id: number;
+  created_at: string;
+  action: 'review_auto_reply_run' | 'review_auto_replied';
+  location_id: number | null;
+  location_name: string | null;
+  review_id: number | null;
+  payload: Record<string, any>;
+}
+
+export async function getAutoReplyLocations(): Promise<AutoReplyLocation[]> {
+  return api.get<AutoReplyLocation[]>('/reply-templates/auto-reply/locations');
+}
+
+export async function setLocationAutoReply(locationId: number, enabled: boolean) {
+  return api.post<{ id: number; enabled: boolean }>(
+    `/reply-templates/auto-reply/locations/${locationId}?enabled=${enabled}`,
+  );
+}
+
+export async function getAutoReplyLogs(locationId?: number): Promise<AutoReplyLogEntry[]> {
+  const qs = locationId ? `?location_id=${locationId}` : '';
+  return api.get<AutoReplyLogEntry[]>(`/reply-templates/auto-reply/logs${qs}`);
 }

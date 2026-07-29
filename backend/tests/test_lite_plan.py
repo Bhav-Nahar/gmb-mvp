@@ -61,7 +61,9 @@ def test_lite_has_no_premium_features_and_tight_limits():
               plan_config.FEATURE_LOCAL_RANK, plan_config.FEATURE_MICROSITE):
         assert not plan_config.plan_has_feature("lite", f)
         assert plan_config.plan_has_feature("pro", f)
-    assert plan_config.plan_limit("lite", plan_config.LIMIT_MAX_LOCATIONS) == 1
+    # Lite went unlimited-locations with the July 2026 flat pricing — the upsell to
+    # Basic rests on the feature gap above, not on a location cap.
+    assert plan_config.plan_limit("lite", plan_config.LIMIT_MAX_LOCATIONS) is None
     assert plan_config.plan_limit("lite", plan_config.LIMIT_INSIGHTS_DAYS) == 7
     assert plan_config.plan_limit("lite", plan_config.LIMIT_SEARCH_QUERIES) == 10
     assert plan_config.plan_limit("basic", plan_config.LIMIT_MAX_LOCATIONS) is None
@@ -83,18 +85,6 @@ def test_require_feature_blocks_lite_allows_basic(db):
 
     _, basic_user = _org_user(db, "basic")
     assert gate(request=_req(), db=db, current_user=basic_user) is None   # allowed
-
-
-# --- 1-location cap (anti-cannibalization) -----------------------------------
-
-def test_lite_checkout_rejects_more_than_one_location(db):
-    from app.services.billing.subscription_service import SubscriptionService
-    o, _ = _org_user(db, "lite")
-    with pytest.raises(HTTPException) as exc:
-        SubscriptionService.create_subscription_checkout(
-            db, o.id, "Lite", "e@e.com", location_count=2, interval="monthly", plan_tier="lite")
-    assert exc.value.status_code == 400
-    assert "tier_location_limit" in exc.value.detail
 
 
 # --- scheduler gate ----------------------------------------------------------

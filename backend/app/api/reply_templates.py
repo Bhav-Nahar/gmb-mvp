@@ -4,10 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import update, func
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.api.deps import get_current_user, admin_required
+from app.api.deps import (get_current_user, admin_required, require_feature,
+                          require_location_access, get_user_location_ids)
+from app.core import plan_config
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.review import Review
+from app.models.location import Location
 from app.models.activity_log import ActivityLog
 from app.schemas.reply_template import ReplyTemplateCreate, ReplyTemplateUpdate, ReplyTemplateResponse
 from app.services.reply_template_service import ReplyTemplateService, MIN_TEMPLATES_FOR_AUTO_REPLY
@@ -42,9 +45,13 @@ def get_auto_reply_status(
         "mode": org.auto_reply_mode if org else "template",
         "positive_template_count": count,
         "min_required": MIN_TEMPLATES_FOR_AUTO_REPLY,
+        # AI mode spends a credit per reply and silently stops at zero — show the
+        # balance on the same screen as the toggle.
+        "ai_credits": ((org.monthly_ai_credits_balance or 0) + (org.topup_ai_credits_balance or 0)) if org else 0,
     }
 
-@router.post("/auto-reply/enable", status_code=status.HTTP_200_OK)
+@router.post("/auto-reply/enable", status_code=status.HTTP_200_OK,
+             dependencies=[Depends(require_feature(plan_config.FEATURE_AUTO_REPLY))])
 def enable_auto_reply(
     mode: str = "template",
     db: Session = Depends(get_db),
@@ -95,6 +102,144 @@ def disable_auto_reply(
     )
     db.commit()
     return {"status": "disabled"}
+
+@router.get("/auto-reply/locations", status_code=status.HTTP_200_OK)
+def list_auto_reply_locations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required)
+):
+    """Per-location auto-reply state + how much it actually did in the last 30 days."""
+    org_id = current_user.organization_id
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+    counts = dict(
+        db.query(ActivityLog.location_id, func.count(ActivityLog.id))
+        .filter(
+            ActivityLog.organization_id == org_id,
+            ActivityLog.action == "review_auto_replied",
+            ActivityLog.created_at >= cutoff,
+        ).group_by(ActivityLog.location_id).all()
+    )
+    last_run = dict(
+        db.query(ActivityLog.location_id, func.max(ActivityLog.created_at))
+        .filter(
+            ActivityLog.organization_id == org_id,
+            ActivityLog.action == "review_auto_reply_run",
+            # Same 30-day bound as the count above: unbounded, this scans the org's whole
+            # activity_log (the busiest table) on every page load, and a run older than a
+            # month tells the owner nothing anyway.
+            ActivityLog.created_at >= cutoff,
+        ).group_by(ActivityLog.location_id).all()
+    )
+    # What the automation would actually have to work on. Without this, "0 replies"
+    # is ambiguous between broken and nothing-to-do — the case that had us auditing.
+    from app.services.review_auto_reply_service import (
+        MIN_AI_AUTO_REPLY_RATING, MIN_AUTO_REPLY_RATING, MAX_AUTO_REPLY_ATTEMPTS,
+    )
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    min_rating = MIN_AI_AUTO_REPLY_RATING if (org and org.auto_reply_mode == "ai") else MIN_AUTO_REPLY_RATING
+    waiting_q = db.query(Review.location_id, func.count(Review.id)).filter(
+        Review.organization_id == org_id,
+        Review.is_deleted == False,  # noqa: E712
+        Review.is_replied == False,  # noqa: E712
+        Review.rating >= min_rating,
+        Review.auto_reply_attempts < MAX_AUTO_REPLY_ATTEMPTS,
+    )
+    # Template mode only ever answers reviews created AFTER the org enabled auto-reply
+    # (see _find_targets). Without the same cutoff here, every older unanswered review
+    # counts as "waiting" forever and the number never drains — which reads exactly like
+    # the broken automation this column exists to rule out. AI mode has no such window:
+    # fresh + backlog between them cover everything eligible.
+    if org and org.auto_reply_mode != "ai" and org.auto_reply_enabled_at:
+        waiting_q = waiting_q.filter(Review.review_created_at > org.auto_reply_enabled_at)
+    waiting = dict(waiting_q.group_by(Review.location_id).all())
+
+    q = db.query(Location).filter(
+        Location.organization_id == org_id,
+        Location.billing_status == "active",
+    )
+    allowed = get_user_location_ids(current_user, db)   # None = org-wide role
+    if allowed is not None:
+        q = q.filter(Location.id.in_(allowed))
+    locations = q.order_by(Location.location_name).all()
+    return [
+        {
+            "id": loc.id,
+            "location_name": loc.location_name,
+            "city": loc.city,
+            "enabled": loc.auto_reply_enabled,
+            "replies_30d": counts.get(loc.id, 0),
+            "waiting": waiting.get(loc.id, 0),
+            "last_run_at": last_run.get(loc.id),
+        }
+        for loc in locations
+    ]
+
+
+@router.post("/auto-reply/locations/{location_id}", status_code=status.HTTP_200_OK)
+def set_location_auto_reply(
+    enabled: bool,
+    location: Location = Depends(require_location_access),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required)
+):
+    """Include/exclude one location from the org's auto-reply automation.
+
+    location comes from require_location_access, which enforces BOTH the org boundary
+    and the caller's location scope — the codebase convention for any route carrying a
+    location_id. A hand-rolled org filter here would pass today (admin-only) and become
+    an authz hole the moment this page opens to a location-restricted role.
+    """
+    db.execute(
+        update(Location)
+        .where(Location.id == location.id)
+        .values(auto_reply_enabled=enabled)
+    )
+    db.commit()
+    return {"id": location.id, "enabled": enabled}
+
+
+@router.get("/auto-reply/logs", status_code=status.HTTP_200_OK)
+def get_auto_reply_logs(
+    location_id: int | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required)
+):
+    """Recent auto-reply activity — one row per run, plus each posted reply.
+
+    This is the 'is the automation actually running' view: runs that replied,
+    failed, skipped for human review, or stopped for want of credits.
+    """
+    q = db.query(ActivityLog).filter(
+        ActivityLog.organization_id == current_user.organization_id,
+        ActivityLog.action.in_(["review_auto_reply_run", "review_auto_replied"]),
+    )
+    if location_id is not None:
+        q = q.filter(ActivityLog.location_id == location_id)
+    allowed = get_user_location_ids(current_user, db)   # None = org-wide role
+    if allowed is not None:
+        q = q.filter(ActivityLog.location_id.in_(allowed))
+    # Floor as well as ceiling: a negative LIMIT is a Postgres error, not an empty page.
+    rows = q.order_by(ActivityLog.created_at.desc()).limit(max(1, min(limit, 200))).all()
+
+    names = dict(
+        db.query(Location.id, Location.location_name)
+        .filter(Location.organization_id == current_user.organization_id).all()
+    )
+    return [
+        {
+            "id": r.id,
+            "created_at": r.created_at,
+            "action": r.action,
+            "location_id": r.location_id,
+            "location_name": names.get(r.location_id),
+            "review_id": r.entity_id if r.action == "review_auto_replied" else None,
+            "payload": r.payload or {},
+        }
+        for r in rows
+    ]
+
 
 @router.get("/analytics", status_code=status.HTTP_200_OK)
 def get_template_analytics(
