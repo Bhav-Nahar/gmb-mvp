@@ -123,6 +123,25 @@ def test_location_opt_out_is_skipped_and_a_run_is_logged(db: Session, monkeypatc
     assert len(run_logs) == 1 and run_logs[0].payload["replied"] == 1
 
 
+def test_waiting_count_matches_what_template_mode_would_actually_reply_to(db: Session,
+                                                                         fake_admin_user):
+    """The 'waiting' column exists to tell a stalled automation from an idle one, so it
+    must count the same rows _find_targets does. Template mode ignores anything created
+    before auto-reply was switched on; counting those made the number never drain."""
+    from app.api.reply_templates import list_auto_reply_locations
+
+    t0 = datetime.now(timezone.utc) - timedelta(days=1)
+    _seed(db, enabled_at=t0)
+    db.add_all([
+        _make_review("after", 5, t0 + timedelta(hours=1)),   # eligible
+        _make_review("before", 5, t0 - timedelta(days=30)),  # predates enablement
+    ])
+    db.commit()
+
+    rows = list_auto_reply_locations(db=db, current_user=fake_admin_user)
+    assert [r["waiting"] for r in rows] == [1]
+
+
 def test_resolve_variables_aliases_and_rating():
     body = "{{customer}} / {{reviewer_name}} / {{business}} / {{location}} / {{rating}} stars"
     out = ReplyTemplateService.resolve_variables(body, "Sam", "Acme", rating=5)

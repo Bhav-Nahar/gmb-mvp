@@ -67,7 +67,7 @@ class ReviewAutoReplyService:
         if not location:
             return {"status": "skipped", "reason": "location not found"}
         if location.billing_status != "active":
-            return self._log_run(location, {"status": "skipped", "reason": "location not active"}, backlog)
+            return {"status": "skipped", "reason": "location not active"}
         if not location.auto_reply_enabled:
             return {"status": "skipped", "reason": "auto-reply off for this location"}
 
@@ -132,8 +132,9 @@ class ReviewAutoReplyService:
         """Write one activity row per run that actually did (or failed to do) something,
         so the owner can see the automation working instead of guessing.
 
-        ponytail: deliberately NOT logged when a run finds nothing eligible — that is
-        the steady state on every sync and would bury the real rows.
+        ponytail: deliberately NOT logged for the states that repeat on every single sync
+        forever — nothing eligible, location not billed, location opted out. Those are
+        steady states, not events, and they would bury the rows that matter.
         """
         try:
             ActivityLogService.log(

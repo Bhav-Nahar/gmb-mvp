@@ -125,6 +125,10 @@ def list_auto_reply_locations(
         .filter(
             ActivityLog.organization_id == org_id,
             ActivityLog.action == "review_auto_reply_run",
+            # Same 30-day bound as the count above: unbounded, this scans the org's whole
+            # activity_log (the busiest table) on every page load, and a run older than a
+            # month tells the owner nothing anyway.
+            ActivityLog.created_at >= cutoff,
         ).group_by(ActivityLog.location_id).all()
     )
     # What the automation would actually have to work on. Without this, "0 replies"
@@ -134,16 +138,21 @@ def list_auto_reply_locations(
     )
     org = db.query(Organization).filter(Organization.id == org_id).first()
     min_rating = MIN_AI_AUTO_REPLY_RATING if (org and org.auto_reply_mode == "ai") else MIN_AUTO_REPLY_RATING
-    waiting = dict(
-        db.query(Review.location_id, func.count(Review.id))
-        .filter(
-            Review.organization_id == org_id,
-            Review.is_deleted == False,  # noqa: E712
-            Review.is_replied == False,  # noqa: E712
-            Review.rating >= min_rating,
-            Review.auto_reply_attempts < MAX_AUTO_REPLY_ATTEMPTS,
-        ).group_by(Review.location_id).all()
+    waiting_q = db.query(Review.location_id, func.count(Review.id)).filter(
+        Review.organization_id == org_id,
+        Review.is_deleted == False,  # noqa: E712
+        Review.is_replied == False,  # noqa: E712
+        Review.rating >= min_rating,
+        Review.auto_reply_attempts < MAX_AUTO_REPLY_ATTEMPTS,
     )
+    # Template mode only ever answers reviews created AFTER the org enabled auto-reply
+    # (see _find_targets). Without the same cutoff here, every older unanswered review
+    # counts as "waiting" forever and the number never drains — which reads exactly like
+    # the broken automation this column exists to rule out. AI mode has no such window:
+    # fresh + backlog between them cover everything eligible.
+    if org and org.auto_reply_mode != "ai" and org.auto_reply_enabled_at:
+        waiting_q = waiting_q.filter(Review.review_created_at > org.auto_reply_enabled_at)
+    waiting = dict(waiting_q.group_by(Review.location_id).all())
 
     q = db.query(Location).filter(
         Location.organization_id == org_id,
@@ -211,7 +220,8 @@ def get_auto_reply_logs(
     allowed = get_user_location_ids(current_user, db)   # None = org-wide role
     if allowed is not None:
         q = q.filter(ActivityLog.location_id.in_(allowed))
-    rows = q.order_by(ActivityLog.created_at.desc()).limit(min(limit, 200)).all()
+    # Floor as well as ceiling: a negative LIMIT is a Postgres error, not an empty page.
+    rows = q.order_by(ActivityLog.created_at.desc()).limit(max(1, min(limit, 200))).all()
 
     names = dict(
         db.query(Location.id, Location.location_name)

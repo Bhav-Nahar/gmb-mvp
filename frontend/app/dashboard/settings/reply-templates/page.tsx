@@ -425,7 +425,7 @@ export default function ReplyTemplatesSettingsPage() {
                       <span className="block text-[11px] text-muted-foreground">
                         {loc.city ? loc.city + ' · ' : ''}
                         {loc.replies_30d} replied in 30 days · {loc.waiting} waiting
-                        {loc.last_run_at ? ' · last run ' + new Date(loc.last_run_at).toLocaleString() : ' · not run yet'}
+                        {loc.last_run_at ? ' · last run ' + new Date(loc.last_run_at).toLocaleString() : ' · no runs in 30 days'}
                       </span>
                     </span>
                     <input
