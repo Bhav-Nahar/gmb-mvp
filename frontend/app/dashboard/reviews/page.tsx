@@ -79,9 +79,15 @@ interface ReviewSummary {
 export default function ReviewsPage(props: any) {
   const locationId = props.locationId;
   const [view, setView] = useState<'inbox' | 'analytics'>('inbox')
-  // Read ?tab= after mount — reading the URL in the initializer breaks SSR hydration.
+  // Deep link to a single review: /dashboard/reviews?review=123. The auto-reply activity
+  // log links here, so "replied to review #123" is reachable instead of just an id.
+  const [focusReviewId, setFocusReviewId] = useState<number | null>(null)
+  // Read ?tab= / ?review= after mount — reading the URL in the initializer breaks SSR hydration.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('tab') === 'analytics') setView('analytics')
+    const qs = new URLSearchParams(window.location.search)
+    if (qs.get('tab') === 'analytics') setView('analytics')
+    const focus = Number(qs.get('review'))
+    if (focus > 0) setFocusReviewId(focus)
   }, [])
   const [reviews, setReviews] = useState<Review[]>([])
   const [locations, setLocations] = useState<Location[]>([])
@@ -174,11 +180,11 @@ export default function ReviewsPage(props: any) {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [filterRating, filterReplied, filterLocation, filterSentiment, filterCategory, filterSlaTier, filterOverdue])
+  }, [filterRating, filterReplied, filterLocation, filterSentiment, filterCategory, filterSlaTier, filterOverdue, focusReviewId])
 
   useEffect(() => {
     loadReviews()
-  }, [currentPage, filterRating, filterReplied, filterLocation, filterSentiment, filterCategory, filterSlaTier, filterOverdue])
+  }, [currentPage, filterRating, filterReplied, filterLocation, filterSentiment, filterCategory, filterSlaTier, filterOverdue, focusReviewId])
 
   const loadSlaMetrics = async (locId: number) => {
     try {
@@ -203,6 +209,7 @@ export default function ReviewsPage(props: any) {
     try {
       const params = new URLSearchParams()
       params.append('page', currentPage.toString())
+      if (focusReviewId) params.append('review_id', focusReviewId.toString())
       if (filterRating !== '') params.append('rating', filterRating.toString())
       if (filterReplied === 'replied') params.append('is_replied', 'true')
       if (filterReplied === 'unreplied') params.append('is_replied', 'false')
@@ -223,12 +230,15 @@ export default function ReviewsPage(props: any) {
     }
   }
 
-  // Auto-select first review on load
+  // Select the first review, and re-select whenever the current one is no longer in the
+  // list — a filter change, or a ?review= deep link that resolves after the first fetch.
+  // (Only selecting when nothing was selected left the detail pane showing a review the
+  // list no longer contains.)
   useEffect(() => {
-    if (reviews.length > 0 && !selectedReviewId) {
-      setSelectedReviewId(reviews[0].id)
-    } else if (reviews.length === 0) {
+    if (reviews.length === 0) {
       setSelectedReviewId(null)
+    } else if (!reviews.some(r => r.id === selectedReviewId)) {
+      setSelectedReviewId(reviews[0].id)
     }
   }, [reviews])
 
@@ -654,6 +664,22 @@ export default function ReviewsPage(props: any) {
                      </div>
                    )}
                 </div>
+
+                {/* A deep link filters the queue to one review — say so, and offer the way out. */}
+                {focusReviewId && (
+                  <div className="px-3 py-2 flex items-center justify-between gap-2 bg-primary/5 border-b border-border">
+                    <span className="text-xs text-muted-foreground">Showing one review (#{focusReviewId})</span>
+                    <button
+                      onClick={() => {
+                        setFocusReviewId(null)
+                        window.history.replaceState(null, '', window.location.pathname)
+                      }}
+                      className="text-xs font-semibold text-primary hover:underline shrink-0"
+                    >
+                      Show all reviews
+                    </button>
+                  </div>
+                )}
 
                 {/* Queue List */}
                 <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-muted/10">

@@ -15,6 +15,7 @@ from app.services.reply_template_service import ReplyTemplateService
 from app.services.billing.entitlement_service import EntitlementService
 from app.services.billing.credit_service import CreditService
 from app.services.activity_log_service import ActivityLogService
+from app.llm.exceptions import LLMProviderError
 from app.providers.factory import ProviderFactory
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ class ReviewAutoReplyService:
                 return self._log_run(location, {"status": "skipped", "reason": "no AI credits"}, backlog)
 
         replied = failed = no_template = skipped = 0
+        stopped = None
         # Ratings with no template, remembered for this run only. Deliberately not
         # persisted on the review: adding the missing template must make the next sync
         # answer these, so they stay eligible — this only stops one pick_least_used
@@ -106,10 +108,19 @@ class ReviewAutoReplyService:
         for review in targets:
             try:
                 outcome = await self._reply_one(review, location, ai_mode)
-            except HTTPException as e:
-                # Out of AI credits / org locked (402). Nothing later in this batch can
-                # succeed either, so stop instead of burning the whole backlog on 402s.
-                logger.warning("Auto-reply run stopped for location %s: %s", location.id, e.detail)
+            except (HTTPException, LLMProviderError) as e:
+                # Out of AI credits / org locked (402), or the LLM provider itself is
+                # refusing us (a bad API key 400s on every single call). Nothing later in
+                # this batch can succeed either, so stop instead of burning the whole
+                # backlog on it — but BREAK, so the run still reaches _log_run below.
+                #
+                # LLMProviderError used to be uncaught: it escaped run() entirely, the
+                # Celery task died mid-loop, and no activity row was ever written. The
+                # panel showed "no runs" and a 1250 backlog while the worker logged the
+                # same traceback every hour — invisible from the product, which is exactly
+                # what the run log exists to prevent.
+                stopped = getattr(e, "detail", None) or str(e)
+                logger.warning("Auto-reply run stopped for location %s: %s", location.id, stopped)
                 break
             if outcome == "replied":
                 replied += 1
@@ -126,6 +137,7 @@ class ReviewAutoReplyService:
             "failed": failed,
             "no_template": no_template,
             "needs_human": skipped,
+            "stopped": stopped,
         }, backlog)
 
     def _log_run(self, location: Location, result: dict, backlog: bool) -> dict:

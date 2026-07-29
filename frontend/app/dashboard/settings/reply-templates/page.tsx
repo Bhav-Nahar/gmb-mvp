@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 import {
   ReplyTemplate,
@@ -449,10 +450,20 @@ export default function ReplyTemplatesSettingsPage() {
                     <p key={l.id} className="text-[11px] text-muted-foreground font-mono">
                       {new Date(l.created_at).toLocaleString()} · {l.location_name || '—'} ·{' '}
                       {l.action === 'review_auto_replied'
-                        ? 'replied to review #' + l.review_id + ' (' + (l.payload.source || 'template') + ')'
+                        ? <>
+                            replied to{' '}
+                            <Link href={`/dashboard/reviews?review=${l.review_id}`}
+                                  className="text-primary hover:underline">
+                              review #{l.review_id}
+                            </Link>
+                            {' (' + (l.payload.source || 'template') + ')'}
+                          </>
                         : l.payload.status === 'completed'
                           ? 'run: ' + l.payload.replied + ' replied, ' + l.payload.failed + ' failed, '
                             + l.payload.needs_human + ' left for you'
+                            // An LLM outage or a bad API key stops the run early. Without
+                            // this the row reads "0 replied" and looks like idleness.
+                            + (l.payload.stopped ? ' — STOPPED: ' + l.payload.stopped : '')
                           : 'run skipped: ' + l.payload.reason}
                     </p>
                   ))}
