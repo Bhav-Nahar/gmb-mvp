@@ -60,45 +60,50 @@ export default function ChangesPage() {
   const hasMore = (changes?.length ?? 0) === PAGE_SIZE
 
   return (
-    <div className="space-y-6">
+    // Same container as every other dashboard page — the shell adds no padding of its own.
+    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Unauthorised Changes</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
           Edits to your listings that did not go through this app — made by Google, or by
           someone with direct access to your profile. We can tell you what changed, but
           Google never reports who.
         </p>
       </div>
 
-      <div className="max-w-sm space-y-1">
-        <label htmlFor="changes-location" className="text-xs font-medium text-muted-foreground">
-          Location
-        </label>
-        <select
-          id="changes-location"
-          value={locationId ?? ''}
-          onChange={e => setFilter(() => setLocationId(e.target.value ? Number(e.target.value) : null))}
-          disabled={!locations.length}
-          className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-        >
-          <option value="">All locations</option>
-          {locations.map(l => (
-            <option key={l.id} value={l.id}>{l.location_name}</option>
-          ))}
-        </select>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        {FILTERS.map(f => (
-          <Badge
-            key={f.label}
-            variant={source === f.key ? 'default' : 'outline'}
-            className="cursor-pointer h-auto py-2 px-3 text-xs sm:h-5 sm:py-0.5 sm:px-2"
-            onClick={() => setFilter(() => setSource(f.key))}
+      {/* Both filters on one row from sm up — they belong together and the page was
+          spending three stacked blocks on them. */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
+        <div className="w-full sm:max-w-xs space-y-1">
+          <label htmlFor="changes-location" className="text-xs font-medium text-muted-foreground">
+            Location
+          </label>
+          <select
+            id="changes-location"
+            value={locationId ?? ''}
+            onChange={e => setFilter(() => setLocationId(e.target.value ? Number(e.target.value) : null))}
+            disabled={!locations.length}
+            className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
           >
-            {f.label}
-          </Badge>
-        ))}
+            <option value="">All locations</option>
+            {locations.map(l => (
+              <option key={l.id} value={l.id}>{l.location_name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-wrap gap-2 sm:pt-5">
+          {FILTERS.map(f => (
+            <Badge
+              key={f.label}
+              variant={source === f.key ? 'default' : 'outline'}
+              className="cursor-pointer h-auto py-2 px-3 text-xs sm:h-7 sm:py-1 sm:px-3"
+              onClick={() => setFilter(() => setSource(f.key))}
+            >
+              {f.label}
+            </Badge>
+          ))}
+        </div>
       </div>
 
       {isLoading && <div className="text-muted-foreground py-8 text-center">Loading…</div>}
@@ -119,7 +124,7 @@ export default function ChangesPage() {
         {changes?.map(change => (
           <div
             key={change.id}
-            className="p-4 border border-border/50 bg-card rounded-lg shadow-sm hover:shadow-md transition-shadow"
+            className="p-4 sm:p-5 border border-border/50 bg-card rounded-lg shadow-sm hover:shadow-md transition-shadow"
           >
             <div className="flex justify-between items-start gap-4">
               <div className="space-y-1 min-w-0">
@@ -170,6 +175,6 @@ export default function ChangesPage() {
           </button>
         </div>
       )}
-    </div>
+    </main>
   )
 }
