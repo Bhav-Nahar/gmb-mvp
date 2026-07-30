@@ -58,6 +58,18 @@ def test_list_reordering_is_not_a_change():
     assert pcs.detect(db, loc, reordered) == []
 
 
+def test_our_own_published_edit_is_not_an_unauthorised_change():
+    # Publishing patches Google without writing the value back onto our row, so the
+    # next sync sees a difference. It is ours, and must not be reported.
+    db = FakeDB()
+    assert pcs.detect(db, _location(), {"phone": "+912222222222"},
+                      skip_fields={"phone"}) == []
+    assert db.added == []
+    # A different field still gets reported while that edit is in the window.
+    assert [c["field"] for c in pcs.detect(db, _location(), {"website": "https://b.example"},
+                                           skip_fields={"phone"})] == ["website"]
+
+
 def test_unwatched_and_absent_fields_are_ignored():
     db = FakeDB()
     # average_rating is not watched; store_code is absent from the payload entirely.
@@ -86,7 +98,9 @@ class FakeQueryDB(FakeDB):
         return self
 
     def all(self):
-        return self.history
+        # filter() above is a no-op, so emulate the one filter whose behaviour the
+        # dedup logic depends on: resolved entries are excluded in SQL.
+        return [r for r in self.history if not (r.payload or {}).get("resolved")]
 
 
 def _logged(field, new):
@@ -119,6 +133,17 @@ def test_divergence_changing_value_is_relogged():
     changes = pcs.detect_google_updates(
         db, _location(), _blob("phoneNumbers", {"phoneNumbers": {"primaryPhone": "+914444444444"}}))
     assert len(changes) == 1
+
+
+def test_google_reapplying_a_resolved_change_is_reported_again():
+    # The user already accepted/rejected this one. If Google does it again, it is new.
+    live = {"primaryPhone": "+913333333333"}
+    resolved = _logged("phoneNumbers", live)
+    resolved.payload["resolved"] = "accepted"
+    db = FakeQueryDB([resolved])
+    changes = pcs.detect_google_updates(db, _location(), _blob("phoneNumbers", {"phoneNumbers": live}))
+    assert len(changes) == 1
+    assert len(db.added) == 1
 
 
 def test_no_diffmask_means_google_agrees():

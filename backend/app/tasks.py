@@ -471,6 +471,11 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             quota = org.location_quota if (org and org.location_quota is not None) else plan_config.TRIAL_LOCATION_QUOTA
         active_count = sum(1 for loc in existing_locations if loc.billing_status == "active")
 
+        # Fields this org published through us in the last few days — Google reports
+        # them as differing from our stored row, and they are not third-party edits.
+        # One query for the whole org, not one per location.
+        own_edits = profile_change_service.recently_published_fields(db, organization_id)
+
         synced_count = 0
         locked_count = 0
         sync_jobs = []
@@ -506,7 +511,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                             **({"is_verified": p_loc.is_verified,
                                 "is_suspended": p_loc.is_suspended}
                                if p_loc.is_verified is not None else {}),
-                        })
+                        }, skip_fields=own_edits.get(existing_loc.id))
                 except Exception:
                     # Change detection is informational — never fail a sync over it.
                     logger.exception("profile change detection failed for location %s", existing_loc.id)
