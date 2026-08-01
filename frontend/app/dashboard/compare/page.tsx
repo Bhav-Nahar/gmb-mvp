@@ -23,6 +23,8 @@ import {
 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP } from '@/lib/metric-help'
 import { Skeleton } from '@/components/ui/skeleton'
 
 interface LocationSnapshot {
@@ -362,7 +364,10 @@ export default function LeaderboardPage() {
                 <Activity className="h-7 w-7 text-indigo-500" />
               </div>
               <div>
-                <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Org Health Score</p>
+                <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                  Org Health Score
+                  <InfoHint text={METRIC_HELP['Health Score']} />
+                </p>
                 <p className="text-3xl font-black text-foreground mt-1">
                   {data.organization_benchmark.health_score_raw != null ? <AnimatedNumber value={data.organization_benchmark.health_score_raw} isFloat formatter={(v) => v.toFixed(1)} /> : 'N/A'}
                 </p>
@@ -378,7 +383,10 @@ export default function LeaderboardPage() {
                 {data.awards.top_performer && (
                   <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.top_performer?.location_id)!)} className="relative overflow-hidden bg-gradient-to-br from-yellow-500/20 to-amber-600/10 backdrop-blur-md border border-yellow-500/30 rounded-xl p-5 cursor-pointer hover:-translate-y-1 hover:shadow-lg transition-all shadow-sm group">
                     <Trophy className="absolute -right-4 -bottom-4 h-24 w-24 text-yellow-500/10 transform group-hover:scale-110 transition-transform duration-500" />
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-yellow-600 mb-2 relative z-10">Top Performer</p>
+                    <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-yellow-600 mb-2 relative z-10">
+                      Top Performer
+                      <InfoHint text={METRIC_HELP['Top Performer']} />
+                    </p>
                     <p className="text-base font-black text-foreground truncate relative z-10">{data.awards.top_performer.location_name}</p>
                     <p className="text-xs font-semibold text-yellow-700/80 dark:text-yellow-500/80 mt-1 relative z-10">{data.awards.top_performer.composite_score?.toFixed(1)} pts</p>
                   </div>
@@ -386,7 +394,10 @@ export default function LeaderboardPage() {
                 {data.awards.most_improved && (
                   <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.most_improved?.location_id)!)} className="relative overflow-hidden bg-gradient-to-br from-emerald-500/20 to-teal-600/10 backdrop-blur-md border border-emerald-500/30 rounded-xl p-5 cursor-pointer hover:-translate-y-1 hover:shadow-lg transition-all shadow-sm group">
                     <TrendingUp className="absolute -right-4 -bottom-4 h-24 w-24 text-emerald-500/10 transform group-hover:scale-110 transition-transform duration-500" />
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-600 mb-2 relative z-10">Most Improved</p>
+                    <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-emerald-600 mb-2 relative z-10">
+                      Most Improved
+                      <InfoHint text={METRIC_HELP['Most Improved']} />
+                    </p>
                     <p className="text-base font-black text-foreground truncate relative z-10">{data.awards.most_improved.location_name}</p>
                     <p className="text-xs text-emerald-700 dark:text-emerald-500 font-bold flex items-center mt-1 relative z-10"><TrendingUp className="h-3 w-3 mr-1"/>{data.awards.most_improved.rank_movement} ranks</p>
                   </div>
@@ -394,7 +405,10 @@ export default function LeaderboardPage() {
                 {data.awards.highest_rated && (
                   <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.highest_rated?.location_id)!)} className="relative overflow-hidden bg-gradient-to-br from-blue-500/10 to-indigo-600/5 backdrop-blur-md border border-blue-500/20 rounded-xl p-5 cursor-pointer hover:-translate-y-1 hover:shadow-lg transition-all shadow-sm group">
                     <Star className="absolute -right-4 -bottom-4 h-24 w-24 text-blue-500/10 transform group-hover:scale-110 transition-transform duration-500" />
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 mb-2 relative z-10">Highest Rated</p>
+                    <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-blue-600 mb-2 relative z-10">
+                      Highest Rated
+                      <InfoHint text={METRIC_HELP['Highest Rated']} />
+                    </p>
                     <p className="text-base font-black text-foreground truncate relative z-10">{data.awards.highest_rated.location_name}</p>
                     <p className="text-xs text-blue-700 dark:text-blue-500 font-bold mt-1 flex items-center relative z-10"><Star className="h-3 w-3 text-blue-600 mr-1"/> {data.awards.highest_rated.average_rating_raw?.toFixed(2)}</p>
                   </div>
@@ -402,7 +416,10 @@ export default function LeaderboardPage() {
                 {data.awards.highest_review_velocity && (
                   <div onClick={() => openDrillIn(data.eligible_locations.find(l => l.location_id === data.awards.highest_review_velocity?.location_id)!)} className="relative overflow-hidden bg-gradient-to-br from-purple-500/10 to-fuchsia-600/5 backdrop-blur-md border border-purple-500/20 rounded-xl p-5 cursor-pointer hover:-translate-y-1 hover:shadow-lg transition-all shadow-sm group">
                     <MessageSquare className="absolute -right-4 -bottom-4 h-24 w-24 text-purple-500/10 transform group-hover:scale-110 transition-transform duration-500" />
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-purple-600 mb-2 relative z-10">Review Champion</p>
+                    <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-purple-600 mb-2 relative z-10">
+                      Review Champion
+                      <InfoHint text={METRIC_HELP['Review Champion']} />
+                    </p>
                     <p className="text-base font-black text-foreground truncate relative z-10">{data.awards.highest_review_velocity.location_name}</p>
                     <p className="text-xs font-bold text-purple-700 dark:text-purple-500 mt-1 relative z-10">{data.awards.highest_review_velocity.review_velocity_raw} reviews</p>
                   </div>
@@ -482,7 +499,10 @@ export default function LeaderboardPage() {
                       
                       <div className="pt-4 border-t border-border/60 flex items-end justify-between">
                         <div>
-                          <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">Composite</p>
+                          <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">
+                            Composite
+                            <InfoHint text={METRIC_HELP['Composite']} />
+                          </p>
                           <p className="text-2xl font-black bg-gradient-to-br from-indigo-500 to-purple-500 bg-clip-text text-transparent">{loc.composite_score?.toFixed(1)} <span className="text-xs font-bold text-muted-foreground">pts</span></p>
                         </div>
                         {loc.streak_count >= 3 && (
@@ -502,8 +522,12 @@ export default function LeaderboardPage() {
                         <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground w-16">Rank</th>
                         <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground w-20">Move</th>
                         <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground">Location Name</th>
-                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground">Cohort</th>
-                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">Score</th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground">
+                          <span className="flex items-center gap-1.5">Cohort<InfoHint text={METRIC_HELP['Cohort']} /></span>
+                        </th>
+                        <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">
+                          <span className="flex items-center justify-end gap-1.5">Score<InfoHint text={METRIC_HELP['Composite']} /></span>
+                        </th>
                         <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">Rating</th>
                         <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">Reviews This Month</th>
                         <th className="px-5 py-4 font-extrabold text-[10px] uppercase tracking-wider text-muted-foreground text-right">Health</th>
@@ -621,7 +645,10 @@ export default function LeaderboardPage() {
                 <>
                   {/* Score Breakdown */}
                   <div>
-                    <h3 className="text-xs font-extrabold uppercase tracking-widest text-muted-foreground mb-4">Score Breakdown</h3>
+                    <h3 className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-widest text-muted-foreground mb-4">
+                      Score Breakdown
+                      <InfoHint text={METRIC_HELP['Composite Breakdown']} />
+                    </h3>
                     <div className="space-y-3">
                       {Object.entries(selectedLocation.score_contributions).map(([key, val]) => {
                         const labelMap: Record<string, string> = {

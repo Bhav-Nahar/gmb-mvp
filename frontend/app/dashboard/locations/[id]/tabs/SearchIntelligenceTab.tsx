@@ -13,6 +13,8 @@ import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { api } from '@/lib/api'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP } from '@/lib/metric-help'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
@@ -260,7 +262,10 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
           <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
             <Search className="w-24 h-24" />
           </div>
-          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">Total Impressions</p>
+          <p className="flex items-center gap-1.5 text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">
+            Total Impressions
+            <InfoHint text={METRIC_HELP['Total Impressions']} />
+          </p>
           <h3 className="text-3xl sm:text-4xl font-extrabold text-foreground tracking-tight relative z-10">
             <AnimatedNumber value={kpis?.total_impressions ?? 0} />
           </h3>
@@ -273,9 +278,7 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
           </div>
           <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 flex items-center gap-1.5 relative z-10">
             Keywords Tracked
-            <span title="Google only reports keywords above a privacy threshold; low-volume terms may be hidden." className="cursor-help text-muted-foreground/50">
-              <Info className="h-3.5 w-3.5" />
-            </span>
+            <InfoHint text={METRIC_HELP['Keywords Tracked']} />
           </p>
           <h3 className="text-3xl sm:text-4xl font-extrabold text-foreground tracking-tight relative z-10">
             <AnimatedNumber value={kpis?.keywords_tracked ?? 0} />
@@ -287,7 +290,10 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
           <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
             <TrendingUp className="w-24 h-24 text-indigo-500" />
           </div>
-          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">Branded Impressions</p>
+          <p className="flex items-center gap-1.5 text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">
+            Branded Impressions
+            <InfoHint text={METRIC_HELP['Branded Impressions']} />
+          </p>
           <h3 className="text-3xl sm:text-4xl font-extrabold text-indigo-500 tracking-tight relative z-10">
             <AnimatedNumber value={kpis?.branded_pct ?? 0} />%
           </h3>
@@ -298,7 +304,10 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
           <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
             <Search className="w-24 h-24 text-emerald-500" />
           </div>
-          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">Non-Branded (Discovery)</p>
+          <p className="flex items-center gap-1.5 text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest mb-3 relative z-10">
+            Non-Branded (Discovery)
+            <InfoHint text={METRIC_HELP['Non-Branded (Discovery)']} />
+          </p>
           <h3 className="text-3xl sm:text-4xl font-extrabold text-emerald-500 tracking-tight relative z-10">
             <AnimatedNumber value={kpis?.non_branded_pct ?? 0} />%
           </h3>
@@ -310,7 +319,10 @@ export function SearchIntelligenceTab({ locationId }: { locationId: number }) {
       <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm border border-border/60">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div>
-            <h3 className="text-base font-bold text-foreground">Visibility Trend</h3>
+            <h3 className="flex items-center gap-1.5 text-base font-bold text-foreground">
+              Visibility Trend
+              <InfoHint text={METRIC_HELP['Visibility Trend']} />
+            </h3>
             <p className="text-xs text-muted-foreground mt-1">Monthly impressions — branded vs discovery</p>
           </div>
           <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">

@@ -20,6 +20,8 @@ import {
 } from 'lucide-react'
 
 import { resolveTemplateVariables } from '@/lib/utils/template-utils'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP } from '@/lib/metric-help'
 import { AnalyticsTab } from './AnalyticsTab'
 
 interface ReplyTemplate {
@@ -499,7 +501,10 @@ export default function ReviewsPage(props: any) {
                   <div className="text-xl sm:text-2xl font-extrabold text-foreground leading-none">
                     {reviewSummary.response_rate !== null && reviewSummary.response_rate !== undefined ? `${reviewSummary.response_rate.toFixed(0)}%` : '—'}
                   </div>
-                  <div className="text-[11px] text-muted-foreground mt-1 truncate uppercase tracking-wider font-bold">Response rate</div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-1 uppercase tracking-wider font-bold">
+                    <span className="truncate">Response rate</span>
+                    <InfoHint text={METRIC_HELP['Response rate']} />
+                  </div>
                 </div>
               </div>
             </div>
@@ -533,7 +538,10 @@ export default function ReviewsPage(props: any) {
               ) : (
                 <div className="flex flex-wrap items-center gap-6 w-full">
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Avg Response</span>
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Avg Response
+                      <InfoHint text={METRIC_HELP['Response SLA']} />
+                    </span>
                     <span className="text-sm font-bold text-foreground">
                       {slaMetrics.avg_response_hours !== null ? `${slaMetrics.avg_response_hours}h — ${slaMetrics.avg_sla_tier}` : 'N/A'}
                     </span>
@@ -543,7 +551,10 @@ export default function ReviewsPage(props: any) {
                     <span className="text-sm font-bold text-foreground">{slaMetrics.total_replied}</span>
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Overdue</span>
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Overdue
+                      <InfoHint text={METRIC_HELP['Overdue']} />
+                    </span>
                     <span className="text-sm font-bold text-red-400">{slaMetrics.overdue_count}</span>
                   </div>
                   <div className="flex flex-col">

@@ -2,6 +2,8 @@ import React from "react"
 import { AlertCircle, CheckCircle2, ChevronRight, MessageSquare, ClipboardList, MapPin, Sparkles, Activity, ImageIcon } from "lucide-react"
 import { useLocationWorkspace } from "@/hooks/useLocationWorkspace"
 import { ProfileStrengthRadar, breakdownToRadar } from "@/components/ProfileStrengthRadar"
+import { InfoHint } from "@/components/ui/InfoHint"
+import { METRIC_HELP } from "@/lib/metric-help"
 
 interface OverviewTabProps {
   locationId: number;
@@ -43,6 +45,7 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
           <h3 className="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
             <Activity className="w-4 h-4" />
             Profile Health
+            <InfoHint text={METRIC_HELP['Health Score']} />
           </h3>
           {isHealthScoreLoading ? (
             <div className="w-32 h-32 flex items-center justify-center">
@@ -154,7 +157,10 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
       {/* Breakdown Section */}
       {breakdown && (
         <div className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm">
-          <h3 className="text-sm font-medium text-foreground mb-4">Profile Strength</h3>
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-foreground mb-4">
+            Profile Strength
+            <InfoHint text={METRIC_HELP['Profile Strength']} />
+          </h3>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center mb-6">
             <div className="min-w-0">
               <ProfileStrengthRadar data={breakdownToRadar(breakdown as unknown as Record<string, { score: number; max_score: number }>)} height={260} />
@@ -171,7 +177,10 @@ export function OverviewTab({ locationId, setActiveTab }: OverviewTabProps) {
               ))}
             </div>
           </div>
-          <h3 className="text-sm font-medium text-foreground mb-4">Score Breakdown</h3>
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-foreground mb-4">
+            Score Breakdown
+            <InfoHint text={METRIC_HELP['Score Breakdown']} />
+          </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
 
             <div className="p-4 rounded-lg bg-muted/30 border border-border/50 flex flex-col items-center text-center">

@@ -7,6 +7,8 @@ import { BarChart2, Download, Filter, RefreshCw, TrendingUp, TrendingDown, Troph
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell } from 'recharts'
 import { api } from '@/lib/api'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP, helpFor } from '@/lib/metric-help'
 import { Skeleton } from '@/components/ui/skeleton'
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6', '#a855f7', '#3b82f6']
 
@@ -269,7 +271,10 @@ export default function ComparisonDashboardPage() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {totals.map(t => (
           <div key={t.key} className="glass-panel border border-border/60 rounded-xl p-5 relative overflow-hidden group hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:hover:shadow-[0_8px_30px_rgba(255,255,255,0.05)] transition-all duration-300 transform hover:-translate-y-1">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground relative z-10">{LABELS[t.key]}</p>
+            <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground relative z-10">
+              {LABELS[t.key]}
+              {helpFor(LABELS[t.key]) && <InfoHint text={helpFor(LABELS[t.key])!} />}
+            </p>
             <p className="text-2xl font-extrabold mt-1 tracking-tight text-foreground relative z-10">
               {isPct(t.key) || isRate(t.key) ? fmt(t.cur, isPct(t.key)) : <AnimatedNumber value={t.cur} />}
             </p>
@@ -308,7 +313,10 @@ export default function ComparisonDashboardPage() {
 
       {/* Ranking bar chart — current-period totals per group (no extra backend call) */}
       <div className="space-y-3">
-        <h3 className="text-lg font-extrabold flex items-center gap-2"><BarChart2 className="h-5 w-5 text-indigo-500" /> {LABELS[metric]} by {noun}</h3>
+        <h3 className="text-lg font-extrabold flex items-center gap-2">
+          <BarChart2 className="h-5 w-5 text-indigo-500" /> {LABELS[metric]} by {noun}
+          {helpFor(LABELS[metric]) && <InfoHint text={helpFor(LABELS[metric])!} />}
+        </h3>
         <div className="h-[360px] glass-panel border-border/60 shadow-sm rounded-xl p-5">
           {sorted.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
@@ -329,6 +337,7 @@ export default function ComparisonDashboardPage() {
       {/* Multi-series trend */}
       <div className="space-y-3">
         <h3 className="text-lg font-extrabold flex items-center gap-2"><TrendingUp className="h-5 w-5 text-indigo-500" /> {LABELS[metric]} over time
+          {helpFor(LABELS[metric]) && <InfoHint text={helpFor(LABELS[metric])!} />}
           {truncated && <span className="text-xs font-semibold text-amber-600">· showing top 12 of {series.length} {noun}s</span>}</h3>
         <div className="h-[380px] glass-panel border-border/60 shadow-sm rounded-xl p-5">
           {chartData.length > 0 && series.length > 0 ? (
@@ -394,10 +403,15 @@ export default function ComparisonDashboardPage() {
             <thead className="bg-muted/40 border-b border-border/60">
               <tr>
                 <th className="px-4 py-4 text-left font-bold text-muted-foreground">{noun}</th>
-                <th className="px-3 py-4 text-right font-bold text-muted-foreground">Locs</th>
+                <th className="px-3 py-4 text-right font-bold text-muted-foreground">
+                  <span className="flex items-center justify-end gap-1.5">Locs<InfoHint text={METRIC_HELP['Locs']} /></span>
+                </th>
                 {tableCols.map(c => (
                   <th key={c} onClick={() => setSort(c)} className={`px-3 py-4 text-right font-bold cursor-pointer select-none whitespace-nowrap transition-colors hover:text-indigo-500 ${sortKey === c ? 'text-indigo-600' : 'text-muted-foreground'}`}>
-                    {LABELS[c]}{sortKey === c ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}
+                    <span className="inline-flex items-center gap-1.5">
+                      {LABELS[c]}{sortKey === c ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}
+                      {helpFor(LABELS[c]) && <InfoHint text={helpFor(LABELS[c])!} />}
+                    </span>
                   </th>
                 ))}
               </tr>
