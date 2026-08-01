@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP } from '@/lib/metric-help'
 import { useLocationWorkspace } from '@/hooks/useLocationWorkspace'
 import { useBillingStatus } from '@/hooks/useBilling'
 import { LocalRankMap, RankCell } from '@/components/local-rank/LocalRankMap'
@@ -190,7 +192,10 @@ export function LocalRankPanel({ locationId }: Props) {
 
       <div className="flex flex-wrap items-end gap-4">
         <div className="space-y-1.5">
-          <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground ml-1">Grid size</Label>
+          <Label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground ml-1">
+            Grid size
+            <InfoHint text={METRIC_HELP['Grid size']} />
+          </Label>
           <div className="flex gap-1.5 p-1 bg-muted/30 rounded-lg border border-border/50">
             {GRID_SIZES.map((g) => (
               <button key={g} onClick={() => onGrid(g)}
@@ -218,19 +223,28 @@ export function LocalRankPanel({ locationId }: Props) {
           {!showPreview && scan && scan.status === 'Completed' ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
               <div className="glass-panel border-border/60 rounded-xl p-3 shadow-sm relative overflow-hidden group hover:-translate-y-0.5 transition-all">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Avg rank</p>
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Avg rank
+                  <InfoHint text={METRIC_HELP['Avg rank']} />
+                </p>
                 <p className="text-2xl font-extrabold mt-1 text-foreground">
                   {scan.avg_rank != null ? <AnimatedNumber value={scan.avg_rank} /> : '—'}
                 </p>
               </div>
               <div className="glass-panel border-border/60 rounded-xl p-3 shadow-sm relative overflow-hidden group hover:-translate-y-0.5 transition-all">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Top-3 (SoLV)</p>
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Top-3 (SoLV)
+                  <InfoHint text={METRIC_HELP['SoLV']} />
+                </p>
                 <p className="text-2xl font-extrabold mt-1 text-foreground">
                   {scan.solv != null ? <AnimatedNumber value={scan.solv} /> : '0'}%
                 </p>
               </div>
               <div className="glass-panel border-border/60 rounded-xl p-3 shadow-sm relative overflow-hidden group hover:-translate-y-0.5 transition-all">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Found in</p>
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Found in
+                  <InfoHint text={METRIC_HELP['Found in']} />
+                </p>
                 <p className="text-2xl font-extrabold mt-1 text-foreground">
                   <AnimatedNumber value={scan.found_count} /><span className="text-muted-foreground text-sm font-semibold"> / {scan.total_cells}</span>
                 </p>

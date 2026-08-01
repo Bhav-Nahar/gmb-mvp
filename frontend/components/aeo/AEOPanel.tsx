@@ -7,6 +7,8 @@ import { api } from '@/lib/api'
 import { useBillingStatus } from '@/hooks/useBilling'
 import { Button } from '@/components/ui/button'
 import { SurfaceLogo } from './brandMarks'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { helpFor } from '@/lib/metric-help'
 
 const ACCENT = '#2F63E6'   // score gauge + coverage bar
 
@@ -317,7 +319,12 @@ function ScanHistory({ scans, selectedId, onSelect }: { scans: ScanSummary[]; se
 function Card({ title, children, className = '' }: { title?: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={`rounded-xl border border-border bg-card p-5 ${className}`}>
-      {title && <h3 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{title}</h3>}
+      {title && (
+        <h3 className="mb-3 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+          {title}
+          {helpFor(title) && <InfoHint text={helpFor(title)!} />}
+        </h3>
+      )}
       {children}
     </div>
   )

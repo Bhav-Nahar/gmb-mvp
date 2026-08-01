@@ -471,6 +471,11 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
             quota = org.location_quota if (org and org.location_quota is not None) else plan_config.TRIAL_LOCATION_QUOTA
         active_count = sum(1 for loc in existing_locations if loc.billing_status == "active")
 
+        # Fields this org published through us in the last few days — Google reports
+        # them as differing from our stored row, and they are not third-party edits.
+        # One query for the whole org, not one per location.
+        own_edits = profile_change_service.recently_published_fields(db, organization_id)
+
         synced_count = 0
         locked_count = 0
         sync_jobs = []
@@ -506,7 +511,7 @@ def sync_locations_task(organization_id: int, user_id: int, run_type: str = "Sch
                             **({"is_verified": p_loc.is_verified,
                                 "is_suspended": p_loc.is_suspended}
                                if p_loc.is_verified is not None else {}),
-                        })
+                        }, skip_fields=own_edits.get(existing_loc.id))
                 except Exception:
                     # Change detection is informational — never fail a sync over it.
                     logger.exception("profile change detection failed for location %s", existing_loc.id)
@@ -941,9 +946,17 @@ def reconcile_pending_subscriptions_task() -> str:
     db: Session = SessionLocal()
     reconciled = 0
     try:
+        # "locked" is included deliberately. Excluding it made the lock absorbing: an org
+        # that reached locked was never asked about again, so a customer whose payment
+        # webhook was missed could pay and still stay locked forever. reconcile_subscription
+        # only grants entitlements when Razorpay itself reports the subscription active, so
+        # a genuinely churned org just reconciles to False and stays locked.
+        # ponytail: costs one Razorpay GET per locked org per run, including churned ones
+        # that will never come back. If locked orgs pile up, add a last_reconcile_attempt_at
+        # column and back this set off to daily instead of every 30 minutes.
         pending = db.query(Organization).filter(
             Organization.razorpay_subscription_id.isnot(None),
-            Organization.subscription_status.notin_(["active", "locked"]),
+            Organization.subscription_status != "active",
         ).all()
 
         for org in pending:

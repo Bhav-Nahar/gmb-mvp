@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 from app.db.session import Base
 
 
@@ -53,4 +53,13 @@ class ActivityLog(Base):
         Index("idx_activity_log_location_created", "location_id", "created_at"),
         Index("idx_activity_log_org_created", "organization_id", "created_at"),
         Index("idx_activity_log_entity", "entity_type", "entity_id"),
+        # The Unauthorised Changes list and its sidebar badge are org-wide and always
+        # filter entity_type='ProfileChange'; partial keeps it small next to the rest
+        # of the log (every sync, post, review and edit writes here).
+        Index(
+            "idx_activity_log_profile_change",
+            "organization_id",
+            text("created_at DESC"),
+            postgresql_where=text("entity_type = 'ProfileChange'"),
+        ),
     )

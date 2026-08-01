@@ -388,22 +388,25 @@ def test_assert_location_active_blocks_locked():
 
 
 def test_proration_math():
-    """Graduated marginal delta and time-based proration."""
+    """Marginal delta and time-based proration under flat per-location pricing."""
     from app.services.billing.pricing_service import PricingService
 
-    # Band 1 is ₹2,500 (250000 paise) per location for 1-10. 4 -> 5 adds one band-1 slot.
-    assert PricingService.marginal_monthly_paise(4, 1, "monthly") == 250000
-    # 10 -> 11 crosses into band 2 (₹2,000 = 200000) for the 11th.
-    assert PricingService.marginal_monthly_paise(10, 1, "monthly") == 200000
+    # Basic is a flat ₹1,999 (199900 paise) GST-INCLUSIVE per location — no volume bands,
+    # so the marginal cost of one more location is the same at any quota.
+    RATE = 199900
+    assert PricingService.marginal_monthly_paise(4, 1, "monthly") == RATE
+    assert PricingService.marginal_monthly_paise(10, 1, "monthly") == RATE
+    # Two at once is just twice the rate.
+    assert PricingService.marginal_monthly_paise(4, 2, "monthly") == 2 * RATE
 
     # Half a cycle -> half the marginal cost.
-    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=15, days_in_cycle=30) == 125000
+    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=15, days_in_cycle=30) == RATE // 2
     # Start of cycle -> full marginal.
-    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=30, days_in_cycle=30) == 250000
+    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=30, days_in_cycle=30) == RATE
     # End of cycle -> 0.
     assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=0, days_in_cycle=30) == 0
     # Guard against div-by-zero.
-    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=5, days_in_cycle=0) == 250000
+    assert PricingService.prorated_addon_paise(4, 1, "monthly", days_left=5, days_in_cycle=0) == RATE
 
 
 def test_location_addon_unlock_grants_and_activates(db):
@@ -498,9 +501,9 @@ def test_razorpay_mode_isolation(db):
             assert org.razorpay_customer_id == "test:cust_mock_user@mode.com"
 
             plan_id = SubscriptionService._get_or_create_plan(db, 1, "monthly")
-            assert plan_id == "plan_mock_295000"  # Per-location graduated: 1 loc = 2500 INR = 250000 paise + 18% GST = 295000 paise
+            assert plan_id == "plan_mock_199900"  # Flat per-location: 1 loc = 1999 INR GST-inclusive = 199900 paise
             plan_row = db.query(RazorpayPlan).filter_by(location_count=1, interval="monthly").first()
-            assert plan_row.razorpay_plan_id == "test:plan_mock_295000"
+            assert plan_row.razorpay_plan_id == "test:plan_mock_199900"
 
         # 2. Transition to live environment: should create new live records and ignore test ones
         fake_client.customer.create.side_effect = lambda data: {"id": "cust_live_123"}
@@ -518,7 +521,7 @@ def test_razorpay_mode_isolation(db):
             plans = db.query(RazorpayPlan).filter_by(location_count=1, interval="monthly").all()
             assert len(plans) == 2
             plan_ids = [p.razorpay_plan_id for p in plans]
-            assert "test:plan_mock_295000" in plan_ids
+            assert "test:plan_mock_199900" in plan_ids
             assert "live:plan_live_123" in plan_ids
 
         # 3. Transition back to test: plans are stored durably per-mode (razorpay_plans
@@ -528,7 +531,7 @@ def test_razorpay_mode_isolation(db):
         # happens for a real org, so we only assert plan-level isolation here.
         with patch.object(settings, "RAZORPAY_KEY_ID", "rzp_test_key"):
             plan_id_test2 = SubscriptionService._get_or_create_plan(db, 1, "monthly")
-            assert plan_id_test2 == "plan_mock_295000"
+            assert plan_id_test2 == "plan_mock_199900"
 
 
 def test_cancel_active_subscriptions_cancels_both_and_swallows_errors():

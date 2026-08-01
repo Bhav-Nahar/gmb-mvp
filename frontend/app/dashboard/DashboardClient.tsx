@@ -40,6 +40,8 @@ import { UpgradeModal } from '@/components/modals/UpgradeModal'
 import { ProfileStrengthRadar, DIMENSION_LABELS } from '@/components/ProfileStrengthRadar'
 import { RemandateBanner } from '@/components/billing/RemandateBanner'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP } from '@/lib/metric-help'
 
 interface Location {
   id: number
@@ -950,7 +952,10 @@ function DashboardContent() {
               <div className="absolute -right-4 -top-4 opacity-[0.03] pointer-events-none">
                 <Sparkles className="w-32 h-32 text-foreground" />
               </div>
-              <div className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">Avg Health Score</div>
+              <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">
+                Avg Health Score
+                <InfoHint text={METRIC_HELP['Health Score']} />
+              </div>
               <div className={`text-4xl font-black relative z-10 tracking-tight ${healthSummary?.average_score ? (healthSummary.average_score >= 75 ? 'text-emerald-500' : healthSummary.average_score >= 60 ? 'text-amber-500' : 'text-rose-500') : 'text-muted-foreground'}`}>
                 {healthSummary ? <AnimatedNumber value={healthSummary.average_score} /> : '--'}
               </div>
@@ -993,18 +998,22 @@ function DashboardContent() {
                 <AnimatedNumber value={suspendedCount} />
               </div>
             </button>
-            <button
-              onClick={() => focusStorefronts('all')}
-              className="group relative overflow-hidden text-left glass-panel rounded-2xl p-6 shadow-sm border-border/40 hover:border-indigo-500/50 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-pointer"
-            >
-              <div className="absolute -right-4 -top-4 opacity-[0.03] group-hover:opacity-10 group-hover:scale-110 transition-all pointer-events-none">
-                <Clock className="w-32 h-32 text-indigo-500" />
-              </div>
-              <div className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">SLA Pending</div>
-              <div className={`text-4xl font-black relative z-10 transition-colors tracking-tight ${slaNeedsResponseCount === 0 ? 'text-muted-foreground' : 'text-indigo-500'}`}>
-                <AnimatedNumber value={slaNeedsResponseCount} />
-              </div>
-            </button>
+            {/* The hint sits outside the button — a button inside a button is invalid HTML. */}
+            <div className="relative">
+              <button
+                onClick={() => focusStorefronts('all')}
+                className="group relative overflow-hidden text-left glass-panel rounded-2xl p-6 shadow-sm border-border/40 hover:border-indigo-500/50 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-pointer w-full h-full"
+              >
+                <div className="absolute -right-4 -top-4 opacity-[0.03] group-hover:opacity-10 group-hover:scale-110 transition-all pointer-events-none">
+                  <Clock className="w-32 h-32 text-indigo-500" />
+                </div>
+                <div className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 relative z-10">SLA Pending</div>
+                <div className={`text-4xl font-black relative z-10 transition-colors tracking-tight ${slaNeedsResponseCount === 0 ? 'text-muted-foreground' : 'text-indigo-500'}`}>
+                  <AnimatedNumber value={slaNeedsResponseCount} />
+                </div>
+              </button>
+              <InfoHint text={METRIC_HELP['SLA Pending']} className="absolute right-3 top-3 z-20" />
+            </div>
           </section>
 
           {/* Reputation at-a-glance — org avg rating + review velocity */}
@@ -1439,7 +1448,10 @@ function DashboardContent() {
           {healthSummary?.dimension_averages && Object.keys(healthSummary.dimension_averages).length >= 3 && (
             <section className="glass-panel border-border/40 rounded-2xl p-6 shadow-sm">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-medium text-foreground">Profile Strength</h3>
+                <h3 className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  Profile Strength
+                  <InfoHint text={METRIC_HELP['Profile Strength']} />
+                </h3>
                 <span className="text-xs text-muted-foreground">Average across all locations</span>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">

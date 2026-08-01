@@ -243,10 +243,15 @@ def list_competitors(
         })
     is_pro = _is_pro(db, current_user.organization_id)
     # Own visibility per completed scan — feeds the share-of-voice trend.
+    # found_count/total_cells go out alongside solv so the share-of-voice chart can
+    # plot our appearance share against the competitors' (which is all their
+    # snapshots record) instead of comparing our top-3 share to their any-position share.
     own_trend = [
-        {"captured_at": created_at, "keyword": keyword, "solv": solv}
-        for created_at, keyword, solv in db.query(
-            LocalRankScan.created_at, LocalRankScan.keyword, LocalRankScan.solv)
+        {"captured_at": created_at, "keyword": keyword, "solv": solv,
+         "found_count": found_count, "total_cells": total_cells}
+        for created_at, keyword, solv, found_count, total_cells in db.query(
+            LocalRankScan.created_at, LocalRankScan.keyword, LocalRankScan.solv,
+            LocalRankScan.found_count, LocalRankScan.total_cells)
         .filter(LocalRankScan.location_id == location.id,
                 LocalRankScan.status == "Completed", LocalRankScan.solv.isnot(None))
         .order_by(LocalRankScan.created_at.asc()).limit(30).all()

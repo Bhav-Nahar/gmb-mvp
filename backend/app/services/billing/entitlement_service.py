@@ -136,14 +136,19 @@ class EntitlementService:
             ).all()
 
             for org in trials_to_past_due:
-                # SAFEGUARD (card-required flow): a card-backed trial's day-7 first charge
-                # may have SUCCEEDED while its subscription.charged webhook was missed. If
-                # the org still carries a mandate, reconcile from Razorpay before locking —
-                # so a missed webhook can never push a paying customer into past_due. A
-                # halted/cancelled mandate reconciles to False and falls through to lock.
+                # SAFEGUARD: a trial's first charge may have SUCCEEDED while its
+                # subscription.charged webhook was missed. If the org still carries a
+                # mandate, reconcile from Razorpay before locking — so a missed webhook
+                # can never push a paying customer into past_due. A halted/cancelled
+                # mandate reconciles to False and falls through to lock.
+                # This used to be gated on CARD_REQUIRED_ONBOARDING, which meant that with
+                # the flag off a subscriber whose webhook never arrived got locked without
+                # anyone asking Razorpay whether they had paid. Whether the card was taken
+                # up front has no bearing on "did this charge land?", so the check is
+                # unconditional: the only precondition is that a mandate exists.
                 # ponytail: one Razorpay fetch per expiring trial; fine at nightly volume,
                 # revisit if trial expiries ever batch into the thousands.
-                if settings.CARD_REQUIRED_ONBOARDING and org.razorpay_subscription_id:
+                if org.razorpay_subscription_id:
                     from app.services.billing.subscription_service import SubscriptionService
                     try:
                         if SubscriptionService.reconcile_subscription(db, org.id):

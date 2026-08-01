@@ -14,6 +14,8 @@ import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { api } from '@/lib/api'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP } from '@/lib/metric-help'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -343,7 +345,10 @@ export default function SearchIntelligencePage() {
           <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
             <Search className="w-24 h-24" />
           </div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">Total Impressions</p>
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">
+            Total Impressions
+            <InfoHint text={METRIC_HELP['Total Impressions']} />
+          </p>
           <h3 className="text-3xl font-extrabold text-foreground tracking-tight relative z-10">
             <AnimatedNumber value={kpis?.total_impressions ?? 0} />
           </h3>
@@ -356,9 +361,7 @@ export default function SearchIntelligencePage() {
           </div>
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1 relative z-10">
             Keywords Tracked
-            <span title="Google only reports keywords above a privacy threshold; low-volume terms may be hidden." className="cursor-help">
-              <Info className="h-3 w-3" />
-            </span>
+            <InfoHint text={METRIC_HELP['Keywords Tracked']} />
           </p>
           <h3 className="text-3xl font-extrabold text-foreground tracking-tight relative z-10">
             <AnimatedNumber value={kpis?.keywords_tracked ?? 0} />
@@ -370,7 +373,10 @@ export default function SearchIntelligencePage() {
           <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
             <TrendingUp className="w-24 h-24" />
           </div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">Branded Impressions</p>
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">
+            Branded Impressions
+            <InfoHint text={METRIC_HELP['Branded Impressions']} />
+          </p>
           <h3 className="text-3xl font-extrabold text-indigo-600 dark:text-indigo-400 tracking-tight relative z-10">
             {kpis?.branded_pct ?? 0}%
           </h3>
@@ -383,7 +389,10 @@ export default function SearchIntelligencePage() {
           <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform duration-500">
             <Search className="w-24 h-24" />
           </div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">Non-Branded (Discovery)</p>
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 relative z-10">
+            Non-Branded (Discovery)
+            <InfoHint text={METRIC_HELP['Non-Branded (Discovery)']} />
+          </p>
           <h3 className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight relative z-10">
             {kpis?.non_branded_pct ?? 0}%
           </h3>
@@ -397,7 +406,10 @@ export default function SearchIntelligencePage() {
       <div className="glass-panel rounded-xl p-6 shadow-sm border border-border/60">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div>
-            <h3 className="text-base font-bold text-foreground">Visibility Trend</h3>
+            <h3 className="flex items-center gap-1.5 text-base font-bold text-foreground">
+              Visibility Trend
+              <InfoHint text={METRIC_HELP['Visibility Trend']} />
+            </h3>
             <p className="text-xs text-muted-foreground">Monthly impressions — branded vs discovery</p>
           </div>
           <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">
@@ -449,7 +461,10 @@ export default function SearchIntelligencePage() {
       {/* Location comparison (All Locations only) */}
       {selectedLocation === 'all' && comparison.length > 0 && (
         <div className="glass-panel border border-border/60 rounded-xl p-6 shadow-sm">
-          <h3 className="text-base font-bold text-foreground mb-4">Location Comparison</h3>
+          <h3 className="flex items-center gap-1.5 text-base font-bold text-foreground mb-4">
+            Location Comparison
+            <InfoHint text={METRIC_HELP['Location Comparison']} />
+          </h3>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>

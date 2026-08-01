@@ -179,6 +179,29 @@ def test_expired_trial_reconciles_before_locking(db):
     assert unpaid.subscription_status == "past_due"  # no mandate -> normal grace path
 
 
+def test_expired_trial_reconciles_before_locking_without_card_onboarding(db):
+    """Regression: the reconcile-before-lock safeguard used to be gated on
+    CARD_REQUIRED_ONBOARDING, so with that flag off a subscriber whose
+    subscription.charged webhook was missed got locked without Razorpay ever being
+    asked. Whether the card was taken up front says nothing about whether the charge
+    landed, so the safeguard must hold with the flag off too."""
+    paid = _mk_org(db, status="trial", trial_ends_at=NOW - timedelta(days=1), sub_id="sub_paid_nocard")
+
+    fake = MagicMock()
+    fake.subscription.fetch.return_value = {
+        "id": "sub_paid_nocard", "status": "active",
+        "current_end": int((NOW + timedelta(days=29)).timestamp()),
+        "notes": {"organization_id": str(paid.id), "location_count": "1", "plan_tier": "basic"},
+    }
+    with patch("app.services.billing.entitlement_service.get_redis", return_value=_FakeRedis()), \
+         patch.object(settings, "CARD_REQUIRED_ONBOARDING", False), \
+         patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        EntitlementService.transition_expired_subscriptions(db)
+
+    db.refresh(paid)
+    assert paid.subscription_status == "active"  # reconciled, NOT locked
+
+
 def test_stuck_onboarding_with_mandate_gets_activated_by_sweep(db):
     """Fix #3: both /confirm and the authenticated webhook were missed, so the org sits
     onboarding (trial_ends_at NULL) with an authenticated mandate. The sweep must start

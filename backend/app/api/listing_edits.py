@@ -300,7 +300,10 @@ def list_profile_changes(
         query = query.filter(ActivityLog.payload["source"].astext == source)
 
     rows = (
-        query.order_by(ActivityLog.created_at.desc())
+        # id breaks the tie: created_at is the transaction timestamp, so one sync writes
+        # a whole block of rows with the same value. Ordering by it alone makes a page
+        # boundary inside that block non-deterministic — rows repeat or go missing.
+        query.order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
         .offset(offset).limit(limit).all()
     )
     return [

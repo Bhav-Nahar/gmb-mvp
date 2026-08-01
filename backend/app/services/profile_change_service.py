@@ -7,12 +7,14 @@ possible detector is: compare what Google just returned against what we stored
 last time, and log the differences to the activity feed.
 """
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.activity_log import ActivityLog
 from app.models.location import Location
+from app.models.location_edit import LocationEdit, LocationEditStatus
 from app.services.activity_log_service import ActivityLogService
 
 logger = logging.getLogger(__name__)
@@ -69,15 +71,57 @@ def _normalize(value: Any) -> Any:
     return value
 
 
-def detect(db: Session, location: Location, new_values: dict[str, Any]) -> list[dict]:
+PUBLISHED_EDIT_WINDOW_DAYS = 3
+
+
+def recently_published_fields(db: Session, organization_id: int) -> dict[int, set[str]]:
+    """{location_id -> fields we published to Google ourselves recently}.
+
+    Publishing an edit patches Google but does not write the new value back onto the
+    Location row, so the next sync sees stored != Google and reports our own edit as
+    an unauthorised change. Pass this into `detect()` to suppress that.
+
+    ponytail: matches on field name within a window, not on value — the published
+    value and the stored column are in different shapes per field (address is
+    JSON-encoded, category is a display name), and comparing them is the exact
+    trap google_update_resolver exists to document. Cost of the loose match: a real
+    third-party edit to the *same field* within the window goes unreported. Window
+    only has to outlast the gap to the next daily sync.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=PUBLISHED_EDIT_WINDOW_DAYS)
+    rows = (
+        db.query(LocationEdit.location_id, LocationEdit.field_name)
+        .filter(
+            LocationEdit.organization_id == organization_id,
+            LocationEdit.status == LocationEditStatus.PUBLISHED,
+            LocationEdit.published_at >= since,
+        )
+        .all()
+    )
+    out: dict[int, set[str]] = {}
+    for location_id, field_name in rows:
+        out.setdefault(location_id, set()).add(field_name)
+    return out
+
+
+def detect(
+    db: Session,
+    location: Location,
+    new_values: dict[str, Any],
+    skip_fields: Optional[set[str]] = None,
+) -> list[dict]:
     """Log one activity entry per watched field that Google now reports differently.
 
-    Call this BEFORE writing `new_values` onto `location`. Returns the changes
-    found (mostly for tests/logging). Staged only — the caller commits.
+    Call this BEFORE writing `new_values` onto `location`. `skip_fields` are fields
+    we published ourselves (see `recently_published_fields`) and so must not be
+    reported as third-party changes. Returns the changes found (mostly for
+    tests/logging). Staged only — the caller commits.
     """
     changes = []
     for field, label in WATCHED_FIELDS.items():
         if field not in new_values:
+            continue
+        if skip_fields and field in skip_fields:
             continue
         old = _normalize(getattr(location, field, None))
         new = _normalize(new_values[field])
@@ -205,7 +249,13 @@ def google_updated_fields(blob: Optional[dict]) -> dict[str, Any]:
 
 
 def _already_reported(db: Session, location_id: int) -> dict[str, Any]:
-    """{field -> last value we reported} for Google-sourced entries on this location."""
+    """{field -> last value we reported} for *unresolved* Google entries on this location.
+
+    Resolved entries are excluded: dedup exists to stop us re-announcing a divergence
+    the user hasn't dealt with yet. Once they've accepted or rejected it, that entry is
+    closed — if Google later applies the same edit again it is genuinely new, and
+    matching it against the closed row would hide it forever.
+    """
     rows = (
         db.query(ActivityLog)
         .filter(
@@ -216,6 +266,7 @@ def _already_reported(db: Session, location_id: int) -> dict[str, Any]:
             # would otherwise fill the window and push every google row out of it —
             # silently re-reporting divergences the user has already seen.
             ActivityLog.payload["source"].astext == "google",
+            ActivityLog.payload["resolved"].astext.is_(None),
         )
         # created_at is the transaction timestamp, so every row from one sync ties.
         # id breaks the tie deterministically.
