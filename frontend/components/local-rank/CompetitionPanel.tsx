@@ -7,6 +7,8 @@ import { Star, Plus, Trash2, TrendingUp, TrendingDown, Users, Info, MapPin } fro
 import { toast } from 'sonner'
 import { ResponsiveContainer, BarChart, Bar, LineChart, Line, ScatterChart, Scatter, CartesianGrid, XAxis, YAxis, Tooltip, Cell, LabelList } from 'recharts'
 import { loadLeaflet, LocalRankMap, RankCell } from './LocalRankMap'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP } from '@/lib/metric-help'
 
 interface Snapshot {
   captured_at: string
@@ -43,7 +45,7 @@ interface KeywordWinner {
   scanned_at: string
 }
 
-interface OwnTrendPoint { captured_at: string; keyword: string; solv: number }
+interface OwnTrendPoint { captured_at: string; keyword: string; solv: number; found_count?: number | null; total_cells?: number | null }
 
 interface MarketPoint {
   name: string
@@ -208,7 +210,10 @@ function SummaryStrip({ own, competitors }: { own: CompetitorsResponse['own'], c
         <div className="text-xs text-muted-foreground mt-1">{ratingPos === 1 ? 'Highest rated in your tracked set' : 'among you + tracked competitors'}</div>
       </div>
       <div className="glass-panel rounded-2xl p-4 sm:p-5">
-        <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">Review lead</div>
+        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
+          Review lead
+          <InfoHint text={METRIC_HELP['Review lead']} />
+        </div>
         <div className={`text-2xl font-extrabold mt-1.5 ${reviewGap != null && reviewGap < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
           {reviewGap != null ? `${reviewGap > 0 ? '+' : ''}${reviewGap}` : '—'}
         </div>
@@ -228,7 +233,10 @@ function SovTrend({ own, ownTrend, competitors }: { own: CompetitorsResponse['ow
   const byDate: Record<string, any> = {}
   ownTrend.forEach(p => {
     const d = new Date(p.captured_at).toISOString().slice(0, 10)
-    byDate[d] = { ...(byDate[d] || { date: d }), You: Math.round(p.solv) }
+    // Appearance share, matching what competitor snapshots record. Older scans
+    // predate found_count, so fall back to solv (top-3 share) for those points.
+    const pct = p.total_cells ? Math.round(((p.found_count ?? 0) / p.total_cells) * 100) : Math.round(p.solv)
+    byDate[d] = { ...(byDate[d] || { date: d }), You: pct }
   })
   const tracked = competitors.filter(c => c.snapshots.some(s => s.appearances != null && s.total_cells)).slice(0, 4)
   tracked.forEach(c => c.snapshots.forEach(s => {
@@ -241,7 +249,10 @@ function SovTrend({ own, ownTrend, competitors }: { own: CompetitorsResponse['ow
   const names = ['You', ...tracked.map(c => c.name)]
   return (
     <div className="glass-panel rounded-2xl border-border/40 shadow-sm p-4 sm:p-5 min-w-0">
-      <h3 className="text-sm font-semibold text-foreground mb-1">Share of local voice</h3>
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground mb-1">
+        Share of local voice
+        <InfoHint text={METRIC_HELP['Share of local voice']} />
+      </h3>
       <p className="text-xs text-muted-foreground mb-3">% of grid points where each business appears, per scan.</p>
       <ResponsiveContainer width="100%" height={220}>
         <LineChart data={series} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
@@ -328,7 +339,10 @@ function ProVelocityAndGaps({ own, competitors }: { own: CompetitorsResponse['ow
   })
   return (
     <div className="glass-panel rounded-2xl border-border/40 shadow-sm p-4 sm:p-5">
-      <h3 className="text-sm font-semibold text-foreground mb-3">Momentum & gaps</h3>
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground mb-3">
+        Momentum & gaps
+        <InfoHint text={METRIC_HELP['Momentum & gaps']} />
+      </h3>
       <div className="space-y-3">
         {rows.map(({ c, perWeek, photoDelta, reviewGap, ratingGap }) => (
           <div key={c.id} className="rounded-xl border border-border/50 bg-muted/10 px-4 py-3">
@@ -390,7 +404,10 @@ function ProKeywordWinners({ winners, ownName }: { winners: KeywordWinner[], own
   if (winners.length === 0) return null
   return (
     <div className="glass-panel rounded-2xl border-border/40 shadow-sm p-4 sm:p-5">
-      <h3 className="text-sm font-semibold text-foreground mb-3">Who wins each keyword</h3>
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground mb-3">
+        Who wins each keyword
+        <InfoHint text={METRIC_HELP['Who wins each keyword']} />
+      </h3>
       <div className="space-y-2">
         {winners.map(w => {
           const youLead = w.leader != null && (w.leader.toLowerCase().includes(ownName.toLowerCase()) || ownName.toLowerCase().includes(w.leader.toLowerCase()))
