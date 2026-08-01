@@ -192,7 +192,10 @@ def test_run_scan_fills_and_completes(db):
     aeo_service.run_scan(db, s, loc)
     assert s.status == "Completed"
     assert s.ai_visibility_score is not None
-    # queries_tracked derives from the resolved custom+auto list, not a fixed number
-    assert s.result["queries_tracked"] == len(aeo_service.build_queries(loc))
+    # queries_tracked derives from the resolved custom+auto list, not a fixed number —
+    # and run_scan resolves it under the tier's plan cap, so the expectation must pass
+    # the same cap. Without it build_queries returns the uncapped list and over-counts.
+    assert s.result["queries_tracked"] == len(
+        aeo_service.build_queries(loc, plan_config.AEO_QUERIES_BY_DEPTH["full"], db=db))
     assert s.result["queries_tracked"] > 0
     assert s.result["queries"][0]["query"] == "cold brew powai"  # custom query ran first

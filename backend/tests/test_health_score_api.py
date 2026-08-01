@@ -19,11 +19,15 @@ from app.main import app
 from app.db.session import get_db
 from app.api.deps import staff_required, get_current_user, require_location_access, require_premium
 import app.api.deps as deps_module
+from app.services.health_score_service import HealthScoreService
 
 
 def _stub_health_score(location_id: int = 42):
     return SimpleNamespace(
         location_id=location_id,
+        # Current version, so the endpoint returns this row instead of recalculating
+        # against the MagicMock db. Stale-version recalculation is its own concern.
+        score_version=HealthScoreService.SCORE_VERSION,
         score=72,
         potential_score=100,
         label="Average",
