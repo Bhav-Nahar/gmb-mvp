@@ -946,9 +946,17 @@ def reconcile_pending_subscriptions_task() -> str:
     db: Session = SessionLocal()
     reconciled = 0
     try:
+        # "locked" is included deliberately. Excluding it made the lock absorbing: an org
+        # that reached locked was never asked about again, so a customer whose payment
+        # webhook was missed could pay and still stay locked forever. reconcile_subscription
+        # only grants entitlements when Razorpay itself reports the subscription active, so
+        # a genuinely churned org just reconciles to False and stays locked.
+        # ponytail: costs one Razorpay GET per locked org per run, including churned ones
+        # that will never come back. If locked orgs pile up, add a last_reconcile_attempt_at
+        # column and back this set off to daily instead of every 30 minutes.
         pending = db.query(Organization).filter(
             Organization.razorpay_subscription_id.isnot(None),
-            Organization.subscription_status.notin_(["active", "locked"]),
+            Organization.subscription_status != "active",
         ).all()
 
         for org in pending:
