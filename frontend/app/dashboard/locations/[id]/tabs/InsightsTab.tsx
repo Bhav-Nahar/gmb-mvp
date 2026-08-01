@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
+import { toDateStr, daysBefore } from '@/lib/utils'
 import {
   KpiCard,
   TrendChart,
@@ -68,10 +69,8 @@ export function InsightsTab({ locationId }: { locationId: number }) {
     queryKey: ['location-insights', locationId, range],
     queryFn: () => {
       const today = new Date()
-      const endStr = today.toISOString().split('T')[0]
-      const start = new Date()
-      start.setDate(today.getDate() - parseInt(range))
-      const startStr = start.toISOString().split('T')[0]
+      const endStr = toDateStr(today)
+      const startStr = toDateStr(daysBefore(today, parseInt(range)))
 
       return api.get<LocationInsightsResponse>(
         `/insights/locations/${locationId}?start_date=${startStr}&end_date=${endStr}`
@@ -85,10 +84,8 @@ export function InsightsTab({ locationId }: { locationId: number }) {
     setSyncing(true)
     try {
       const today = new Date()
-      const endStr = today.toISOString().split('T')[0]
-      const start = new Date()
-      start.setDate(today.getDate() - 90) // manual sync defaults to 90 days
-      const startStr = start.toISOString().split('T')[0]
+      const endStr = toDateStr(today)
+      const startStr = toDateStr(daysBefore(today, 90)) // manual sync defaults to 90 days
 
       await api.post(`/insights/locations/${locationId}/sync?start_date=${startStr}&end_date=${endStr}`, {})
       toast.success('Synchronization task queued successfully!')

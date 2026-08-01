@@ -30,7 +30,10 @@ import { useSearchParams } from 'next/navigation'
 import { generateMockInsightsData } from '@/lib/mock-insights'
 import { PlatformDeviceImpressions, KpiCard as SharedKpiCard, type PlatformDeviceBreakdown, type ReputationVelocity } from '@/components/insights/InsightsShared'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
+import { InfoHint } from '@/components/ui/InfoHint'
+import { METRIC_HELP, helpFor } from '@/lib/metric-help'
 import { Skeleton } from '@/components/ui/skeleton'
+import { toDateStr, daysBefore } from '@/lib/utils'
 import {
   AreaChart,
   Area,
@@ -280,6 +283,7 @@ function ReputationGrid({
           <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
             <Smile className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
             Brand Sentiment
+            <InfoHint text={METRIC_HELP['Sentiment']} />
           </h4>
           <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} • Tone analysis</p>
         </div>
@@ -331,13 +335,17 @@ function ReputationGrid({
           <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
             <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
             Response SLA
+            <InfoHint text={METRIC_HELP['Response SLA']} />
           </h4>
           <p className="text-[10px] text-muted-foreground mt-0.5">{scopeLabel} • Engagement speed</p>
         </div>
         
         <div className="my-6 grid grid-cols-2 gap-4">
           <div className="bg-gradient-to-br from-indigo-500/10 to-transparent p-4 rounded-xl text-center border border-indigo-500/20">
-            <span className="text-[10px] uppercase font-bold text-indigo-600/80 dark:text-indigo-400/80 block mb-1">Response Rate</span>
+            <span className="flex items-center justify-center gap-1 text-[10px] uppercase font-bold text-indigo-600/80 dark:text-indigo-400/80 mb-1">
+              Response Rate
+              <InfoHint text={METRIC_HELP['Response rate']} />
+            </span>
             <span className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400 flex items-center justify-center gap-1">
               <AnimatedNumber value={sla.response_rate} />%
             </span>
@@ -362,6 +370,7 @@ function ReputationGrid({
         <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
           <Heart className="h-4 w-4 text-rose-600 dark:text-rose-400" />
           Key Themes
+          <InfoHint text={METRIC_HELP['Themes']} />
         </h4>
         <p className="text-[10px] text-muted-foreground mt-0.5 mb-4">{scopeLabel} • Trending topics</p>
         
@@ -503,13 +512,15 @@ function InsightsContent() {
       startStr = customStart
       endStr = customEnd
     } else {
-      const yesterday = new Date()
-      yesterday.setDate(yesterday.getDate() - 1)
-      endStr = yesterday.toISOString().split('T')[0]
-
-      const start = new Date()
-      start.setDate(yesterday.getDate() - parseInt(range))
-      startStr = start.toISOString().split('T')[0]
+      // Count back from the END date, not from today. The old code did
+      // `start.setDate(yesterday.getDate() - range)` — day-OF-MONTH of yesterday
+      // applied to a Date still sitting in today's month. On the 1st, yesterday is
+      // in the previous month, so e.g. 1 Aug + range 7 produced start = 24 Aug against
+      // end = 31 Jul and the API rejected it with "start_date must be on or before
+      // end_date"; longer ranges silently returned the wrong window instead.
+      const end = daysBefore(new Date(), 1)
+      endStr = toDateStr(end)
+      startStr = toDateStr(daysBefore(end, parseInt(range)))
     }
 
     setLoading(true)
@@ -567,7 +578,10 @@ function InsightsContent() {
           <Icon className="w-24 h-24" />
         </div>
         <div className="flex items-center justify-between relative z-10">
-          <span className="text-sm font-semibold text-muted-foreground">{title}</span>
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
+            {title}
+            {helpFor(title) && <InfoHint text={helpFor(title)!} />}
+          </span>
           <div className={`p-2 rounded-xl bg-muted/40 shadow-sm border border-border/50 group-hover:scale-110 transition-transform duration-300 ${KPI_ICON_CLASSES[color] ?? 'text-indigo-400'}`}>
             <Icon className="h-5 w-5" />
           </div>
@@ -891,13 +905,16 @@ function InsightsContent() {
                     return (
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         {items.map((it) => (
-                          <div key={it.label} className="glass-panel p-4 flex items-center gap-3" title={it.help}>
+                          <div key={it.label} className="glass-panel p-4 flex items-center gap-3">
                             <div className="p-2 rounded-lg bg-muted/40 text-indigo-400">
                               <it.icon className="h-4 w-4" />
                             </div>
                             <div>
                               <div className="text-lg font-extrabold text-foreground leading-none">{it.value}</div>
-                              <div className="text-[11px] text-muted-foreground mt-1">{it.label}</div>
+                              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-1">
+                                {it.label}
+                                <InfoHint text={it.help} />
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -909,7 +926,10 @@ function InsightsContent() {
                   <div className="glass-panel p-6">
                     <div className="flex flex-col gap-4 mb-6 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <h3 className="text-base font-bold text-foreground">Growth Velocity</h3>
+                        <h3 className="flex items-center gap-1.5 text-base font-bold text-foreground">
+                          Growth Velocity
+                          <InfoHint text={METRIC_HELP['Growth Velocity']} />
+                        </h3>
                         <p className="text-xs text-muted-foreground mt-0.5">Isolate metrics to uncover trends • Hover to inspect daily data</p>
                       </div>
                       {/* Clickable legend doubles as a metric toggle */}
@@ -964,6 +984,7 @@ function InsightsContent() {
                         <div className="flex items-center gap-1.5 mb-1">
                           <Compass className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
                           <h3 className="text-base font-bold text-foreground">Traffic Acquisition</h3>
+                          <InfoHint text={METRIC_HELP['Traffic Acquisition']} />
                         </div>
                         <p className="text-xs text-muted-foreground mb-4">Breakdown of customer discovery channels</p>
                         <div className="w-full h-3 rounded-full overflow-hidden flex bg-muted/40">
@@ -1101,7 +1122,10 @@ function InsightsContent() {
 
                       {/* MoM comparisons */}
                       <div className="glass-panel p-6">
-                        <h3 className="text-base font-bold text-foreground mb-4">Period Comparison</h3>
+                        <h3 className="flex items-center gap-1.5 text-base font-bold text-foreground mb-4">
+                          Period Comparison
+                          <InfoHint text={METRIC_HELP['Period Comparison']} />
+                        </h3>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
@@ -1156,7 +1180,10 @@ function InsightsContent() {
 
                       {/* Period Comparison for Single Location */}
                       <div className="glass-panel p-6">
-                        <h3 className="text-base font-bold text-foreground mb-4">Period Comparison</h3>
+                        <h3 className="flex items-center gap-1.5 text-base font-bold text-foreground mb-4">
+                          Period Comparison
+                          <InfoHint text={METRIC_HELP['Period Comparison']} />
+                        </h3>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
