@@ -371,6 +371,46 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
             db.commit()
 
 
+        # 3b. Guarantee offline access. Every background sync (insights, reviews, posts)
+        # authenticates with the refresh token, but Google only issues one when consent is
+        # actually GRANTED — a repeat authorization with prompt=select_account returns an
+        # access token and nothing else. An account could therefore look connected while
+        # every scheduled sync failed with "Refresh token missing". If no refresh token is
+        # stored for this user, bounce them through the consent screen once.
+        #
+        # This runs BEFORE step 4 on purpose: the sync we kick off there needs the refresh
+        # token, and `triggered_onboarding` is only true on the pass that creates the sync
+        # state — deciding to bounce afterwards would spend that one pass and drop a brand-new
+        # user on the dashboard with onboarding=false. Everything above this point must stay
+        # idempotent, because the retry replays it (it is: the invite is already accepted and
+        # the user now exists, so the create branch is skipped).
+        if not consent_retried:
+            stored_oauth = db.query(OAuthAccount).filter(
+                OAuthAccount.user_id == user.id, OAuthAccount.provider == "gbp"
+            ).first()
+            if stored_oauth is None or not stored_oauth.refresh_token:
+                logging.warning(
+                    "No Google refresh token for user %s after OAuth; re-requesting consent.", user.id
+                )
+                retry_csrf = secrets.token_urlsafe(32)
+                try:
+                    get_redis().set(_oauth_state_key(retry_csrf), b"1", ex=OAUTH_STATE_TTL)
+                except Exception:
+                    logging.exception("Failed to store OAuth consent-retry state in Redis")
+                retry_response = RedirectResponse(
+                    url=ProviderFactory.get_oauth_url(
+                        "gbp", state=f"{retry_csrf}:{invite_token or ''}:c", prompt="consent"
+                    )
+                )
+                # Mirror the cookie fallback the login endpoint sets, so the retry validates
+                # even when Redis is unavailable.
+                _secure = settings.FRONTEND_URL.startswith("https://")
+                retry_response.set_cookie(
+                    key="oauth_state", value=retry_csrf, httponly=True, secure=_secure,
+                    samesite="none" if _secure else "lax", max_age=3600, domain=_cookie_domain(),
+                )
+                return retry_response
+
         # 4. State-Aware Background Synchronization check
         sync_state = db.query(OrganizationSyncState).filter(
             OrganizationSyncState.organization_id == user.organization_id
@@ -446,37 +486,6 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                     args=[user.organization_id, user.id, "Auto-Refresh"]
                 )
 
-
-        # 4b. Guarantee offline access. Every background sync (insights, reviews, posts)
-        # authenticates with the refresh token, but Google only issues one when consent is
-        # actually GRANTED — a repeat authorization with prompt=select_account returns an
-        # access token and nothing else. An account could therefore look connected while
-        # every scheduled sync failed with "Refresh token missing". If no refresh token is
-        # stored for this user, bounce them through the consent screen once.
-        if not consent_retried:
-            stored_oauth = db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id).first()
-            if stored_oauth is None or not stored_oauth.refresh_token:
-                logging.warning(
-                    "No Google refresh token for user %s after OAuth; re-requesting consent.", user.id
-                )
-                retry_csrf = secrets.token_urlsafe(32)
-                try:
-                    get_redis().set(_oauth_state_key(retry_csrf), b"1", ex=OAUTH_STATE_TTL)
-                except Exception:
-                    logging.exception("Failed to store OAuth consent-retry state in Redis")
-                retry_response = RedirectResponse(
-                    url=ProviderFactory.get_oauth_url(
-                        "gbp", state=f"{retry_csrf}:{invite_token or ''}:c", prompt="consent"
-                    )
-                )
-                # Mirror the cookie fallback the login endpoint sets, so the retry validates
-                # even when Redis is unavailable.
-                _secure = settings.FRONTEND_URL.startswith("https://")
-                retry_response.set_cookie(
-                    key="oauth_state", value=retry_csrf, httponly=True, secure=_secure,
-                    samesite="none" if _secure else "lax", max_age=3600, domain=_cookie_domain(),
-                )
-                return retry_response
 
         # 5. Generate local JWT access token and refresh token
         local_token = create_access_token(subject=user.email, token_version=user.token_version)
