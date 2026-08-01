@@ -33,6 +33,21 @@ from app.worker import celery
 OAUTH_STATE_TTL = 600  # 10 minutes — ample for an interactive consent screen
 
 
+def _parse_oauth_state(state: str) -> tuple[str, str | None, bool]:
+    """Split the OAuth `state` into (csrf_token, invite_token, consent_retried).
+
+    Format: "<csrf>:<invite_token>[:c]". The optional trailing "c" marks a round that
+    was already retried with prompt=consent, so that retry fires at most once and can
+    never loop. Invite tokens are secrets.token_urlsafe, which never contains a colon.
+    """
+    parts = state.split(":", 2)
+    return (
+        parts[0],
+        parts[1] if len(parts) > 1 and parts[1] else None,
+        len(parts) > 2 and parts[2] == "c",
+    )
+
+
 def _oauth_state_key(csrf_token: str) -> str:
     return f"oauth_state:{csrf_token}"
 
@@ -100,9 +115,7 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
     5. Generates local JWT and redirects to frontend success hook.
     """
     try:
-        parts = state.split(":", 1)
-        csrf_token = parts[0]
-        invite_token = parts[1] if len(parts) > 1 and parts[1] else None
+        csrf_token, invite_token, consent_retried = _parse_oauth_state(state)
         
         # Validate CSRF state. Prefer the server-side Redis record (single-use,
         # independent of browser cookie policy); fall back to the cookie for
@@ -433,6 +446,37 @@ def google_callback(request: Request, code: str, state: str, db: Session = Depen
                     args=[user.organization_id, user.id, "Auto-Refresh"]
                 )
 
+
+        # 4b. Guarantee offline access. Every background sync (insights, reviews, posts)
+        # authenticates with the refresh token, but Google only issues one when consent is
+        # actually GRANTED — a repeat authorization with prompt=select_account returns an
+        # access token and nothing else. An account could therefore look connected while
+        # every scheduled sync failed with "Refresh token missing". If no refresh token is
+        # stored for this user, bounce them through the consent screen once.
+        if not consent_retried:
+            stored_oauth = db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id).first()
+            if stored_oauth is None or not stored_oauth.refresh_token:
+                logging.warning(
+                    "No Google refresh token for user %s after OAuth; re-requesting consent.", user.id
+                )
+                retry_csrf = secrets.token_urlsafe(32)
+                try:
+                    get_redis().set(_oauth_state_key(retry_csrf), b"1", ex=OAUTH_STATE_TTL)
+                except Exception:
+                    logging.exception("Failed to store OAuth consent-retry state in Redis")
+                retry_response = RedirectResponse(
+                    url=ProviderFactory.get_oauth_url(
+                        "gbp", state=f"{retry_csrf}:{invite_token or ''}:c", prompt="consent"
+                    )
+                )
+                # Mirror the cookie fallback the login endpoint sets, so the retry validates
+                # even when Redis is unavailable.
+                _secure = settings.FRONTEND_URL.startswith("https://")
+                retry_response.set_cookie(
+                    key="oauth_state", value=retry_csrf, httponly=True, secure=_secure,
+                    samesite="none" if _secure else "lax", max_age=3600, domain=_cookie_domain(),
+                )
+                return retry_response
 
         # 5. Generate local JWT access token and refresh token
         local_token = create_access_token(subject=user.email, token_version=user.token_version)
