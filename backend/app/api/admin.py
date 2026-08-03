@@ -160,6 +160,7 @@ def get_metrics(db: Session = Depends(get_db), _: User = Depends(superadmin_requ
     # rate, so a custom-priced enterprise deal is counted at its real price.
     from app.services.billing.pricing_service import PricingService
     mrr_paise = 0
+    mrr_skipped = []
     for org in db.query(Organization).filter(
         Organization.subscription_status == "active", Organization.deleted_at.is_(None)
     ).all():
@@ -167,8 +168,19 @@ def get_metrics(db: Session = Depends(get_db), _: User = Depends(superadmin_requ
         if qty <= 0:
             continue
         tier = org.plan_tier or "basic"
-        monthly = PricingService.compute_monthly_price_paise(
-            qty, tier, PricingService.custom_rate(org, tier))
+        try:
+            monthly = PricingService.compute_monthly_price_paise(
+                qty, tier, PricingService.custom_rate(org, tier))
+        except Exception:
+            # compute_monthly_price_paise runs validate_location_count, which is a guard on
+            # REQUEST input (1..MAX_LOCATIONS) and raises HTTPException. A single org whose
+            # quota sits outside that range — a manual override, a legacy row — turned this
+            # whole dashboard into a 400 and took the Accounts page down with it. A reporting
+            # endpoint must never fail on one bad row: skip it and say which, so the number
+            # is visibly incomplete rather than quietly wrong.
+            logger.warning("MRR: skipped org %s (quota=%s tier=%s)", org.id, qty, tier)
+            mrr_skipped.append(org.id)
+            continue
         mrr_paise += plan_config.price_with_gst(monthly)["total_paise"]
 
     trials_ending_48h = (
@@ -200,6 +212,9 @@ def get_metrics(db: Session = Depends(get_db), _: User = Depends(superadmin_requ
 
     return {
         "mrr_paise": mrr_paise,
+        # Non-empty means MRR excludes these orgs (unpriceable quota) — surfaced so the
+        # figure is never silently understated.
+        "mrr_skipped_org_ids": mrr_skipped,
         "trials_ending_48h": trials_ending_48h,
         "trial_to_paid_pct": round(ever_paid / started_trial * 100) if started_trial else 0,
         "ever_paid_organizations": ever_paid,

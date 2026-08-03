@@ -444,3 +444,22 @@ def test_status_reports_idle_when_no_sync_ever_ran(db, client):
     r = client.get("/api/v1/billing/status")
     assert r.status_code == 200, r.text
     assert r.json()["onboarding_sync_status"] == "idle"
+
+
+def test_metrics_survive_an_org_whose_quota_cannot_be_priced(db, client):
+    """Seen in production: one active org with a quota above MAX_LOCATIONS made
+    compute_monthly_price_paise raise its request-input HTTPException, so /admin/metrics
+    returned 400 and the whole Accounts page broke. Report the rest, name the skipped."""
+    from app.core import plan_config
+
+    fine = _org(db, name="Priceable", subscription_status="active", location_quota=2)
+    broken = _org(db, name="Unpriceable", subscription_status="active",
+                  location_quota=plan_config.MAX_LOCATIONS + 50)
+    with patch.object(settings, "SUPERADMIN_EMAILS", SUPER_EMAIL):
+        _as_super(db, client)
+        r = client.get("/api/v1/admin/metrics")
+    assert r.status_code == 200, r.text
+    m = r.json()
+    assert m["mrr_paise"] == 2 * 199_900          # the healthy org still counted
+    assert m["mrr_skipped_org_ids"] == [broken.id]
+    assert fine.id not in m["mrr_skipped_org_ids"]

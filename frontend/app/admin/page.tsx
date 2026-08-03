@@ -30,6 +30,7 @@ interface OrgRow {
 
 interface Metrics {
   mrr_paise: number
+  mrr_skipped_org_ids: number[]
   trials_ending_48h: number
   trial_to_paid_pct: number
   ever_paid_organizations: number
@@ -174,7 +175,13 @@ export default function AdminOrgsPage() {
 
   const cards: { label: string; value: string | number; alert: boolean }[] = metrics
     ? [
-        { label: 'MRR', value: `₹${Math.round(metrics.mrr_paise / 100).toLocaleString('en-IN')}`, alert: false },
+        // Suffixed when an org's quota can't be priced, so the figure is never read as
+        // complete when it isn't (the org ids are logged server-side).
+        { label: metrics.mrr_skipped_org_ids?.length
+            ? `MRR (excl. ${metrics.mrr_skipped_org_ids.length})`
+            : 'MRR',
+          value: `₹${Math.round(metrics.mrr_paise / 100).toLocaleString('en-IN')}`,
+          alert: (metrics.mrr_skipped_org_ids?.length ?? 0) > 0 },
         { label: 'Trial → paid', value: `${metrics.trial_to_paid_pct}%`, alert: false },
         { label: 'Trials ending 48h', value: metrics.trials_ending_48h, alert: false },
         { label: 'Last webhook', value: webhookLabel,
