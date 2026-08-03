@@ -110,3 +110,29 @@ def fake_admin_user():
         is_active=True,
         viewer_scope=None,
     )
+
+
+# --- never let a test run against a database that matters --------------------
+
+_LOCAL_DB_HOSTS = {"", "localhost", "127.0.0.1", "db", "postgres"}
+
+
+def pytest_sessionstart(session):
+    """Abort the run if DATABASE_URL points at a remote database.
+
+    Two suites (test_reliability, test_media) bind to the app's real engine so a task
+    under test and the test itself share a session. That is survivable against the local
+    dev stack; against production credentials it would write to — and, before the scoping
+    fix in test_reliability.setUp, DELETE FROM — the live tenant tables.
+    """
+    import pytest
+    from app.db.session import engine
+
+    if engine.url.get_backend_name() == "sqlite":
+        return
+    host = engine.url.host or ""
+    if host not in _LOCAL_DB_HOSTS:
+        raise pytest.UsageError(
+            f"refusing to run the test suite against remote database host {host!r} — "
+            "tests write to (and clean up in) the configured database."
+        )
