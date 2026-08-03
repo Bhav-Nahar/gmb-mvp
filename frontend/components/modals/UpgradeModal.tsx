@@ -46,6 +46,14 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
     billing?.subscription_status === 'active' && (billing?.pending_location_count ?? 0) > 0;
   const { data: pending, isLoading: pendingLoading } = usePendingLocations(open && isUnlockMode);
 
+  // A trial has every location active, so default the stepper to that count — otherwise
+  // it opens at 1 and paying silently locks the rest back to pending_payment on the first
+  // charge. Paying for fewer stays possible (e.g. skip the HQ listing); it's just explicit.
+  const activeCount = billing?.active_location_count ?? 0;
+  useEffect(() => {
+    if (open && !isUnlockMode && activeCount > 0) setLocationCount(activeCount);
+  }, [open, isUnlockMode, activeCount]);
+
   // Price is computed server-side (flat per-location plan pricing) so the UI and
   // the charge can never drift apart.
   const { data: quote, isLoading: quoteLoading } = useQuote(
@@ -404,6 +412,13 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                 +
               </Button>
             </div>
+            {activeCount > locationCount && (
+              <p className="text-sm text-amber-600">
+                You have {activeCount} locations active. Paying for {locationCount} pauses the other{' '}
+                {activeCount - locationCount}. You can choose which {locationCount} stay active on
+                the billing settings page after paying — no extra charge.
+              </p>
+            )}
           </div>
 
           <div className="pt-4 border-t flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

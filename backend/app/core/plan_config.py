@@ -33,6 +33,10 @@ TRIAL_AI_CREDITS = 10
 # forever. Cap that: a trial still pending (trial_ends_at NULL) this many days after
 # signup is treated as expired.
 PENDING_TRIAL_MAX_DAYS = 14
+# How long an onboarding sync may sit flagged in-progress before the gate treats it as
+# dead. A crashed worker never clears sync_in_progress, and the customer was left on the
+# "Building your audit" screen indefinitely with no retry.
+ONBOARDING_SYNC_STALE_MINUTES = 15
 
 # Length of the free trial, in days. In the legacy frictionless flow the clock starts
 # on first sync; in the card-required flow it starts when the payment mandate is set up

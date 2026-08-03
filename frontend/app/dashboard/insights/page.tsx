@@ -33,6 +33,7 @@ import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 import { InfoHint } from '@/components/ui/InfoHint'
 import { METRIC_HELP, helpFor } from '@/lib/metric-help'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ReportPrintHeader, ExportPdfButton } from '@/components/reports/ReportExport'
 import { toDateStr, daysBefore } from '@/lib/utils'
 import {
   AreaChart,
@@ -659,11 +660,25 @@ function InsightsContent() {
     })
   }
 
+  // "All Locations · Last 30 Days" — the scope line under the report title, so a
+  // client reading the PDF knows what period and which store it covers.
+  const scopeName = selectedLocation === 'all'
+    ? 'All Locations'
+    : locations.find((l) => l.id.toString() === selectedLocation)?.location_name || 'Location'
+  const periodLabel = range === 'custom'
+    ? (customStart && customEnd ? `${customStart} → ${customEnd}` : 'Custom range')
+    : `Last ${range} Days`
+  const reportSubtitle = `${scopeName} · ${periodLabel}`
+
   return (
     <div className="w-full flex flex-col">
-        <main className="flex-1 mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 lg:px-8">
+        <main className="report-print flex-1 mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 lg:px-8">
+          {/* Masthead for the PDF only — replaces the on-screen header below, which is
+              all filters and sync buttons and has no place in a client's report. */}
+          <ReportPrintHeader title="Performance Report" subtitle={reportSubtitle} />
+
           {/* Header */}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
+          <div className="no-print flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
             <div>
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Intelligence Hub</h1>
               <div className="flex items-center gap-3 mt-1.5 flex-wrap">
@@ -779,6 +794,8 @@ function InsightsContent() {
                 )}
                 {selectedLocation === 'all' ? 'Sync All' : 'Sync Now'}
               </button>
+
+              <ExportPdfButton className="h-10 rounded-xl" />
 
             </div>
           </div>

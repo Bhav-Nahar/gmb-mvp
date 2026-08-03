@@ -52,7 +52,9 @@ export function BillingBanners() {
     if (CARD_REQUIRED_ONBOARDING && !isWhitelisted) {
       // Phone is collected inline on the gate now (fewer steps), so we no longer wait on it.
       if (sync === 'failed') return <OnboardingSyncing failed />;
-      if (sync === 'syncing' || sync === 'idle') return <OnboardingSyncing />;
+      // 'idle' = no sync state row at all, i.e. the initial task never ran. Tell the
+      // screen so it can start one instead of spinning against nothing.
+      if (sync === 'syncing' || sync === 'idle') return <OnboardingSyncing neverStarted={sync === 'idle'} />;
       // ready: the audit result + paywall (single "Start Free Trial" screen).
       if (activeLocations > 0) return <OnboardingGate locations={activeLocations} />;
     }

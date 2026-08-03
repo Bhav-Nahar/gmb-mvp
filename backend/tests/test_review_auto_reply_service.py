@@ -534,10 +534,14 @@ def test_has_backlog_is_false_once_the_old_reviews_are_answered(db: Session, mon
     db.add(_ai_review("fresh", 5, datetime.now(timezone.utc) - timedelta(hours=2)))
     db.commit()
     assert svc.has_backlog(loc) is True               # the old one counts
+
+    # Pin the drip room: _backlog_room paces the day's quota across IST business hours
+    # (9am-9pm), so outside that window it is legitimately 0 and _find_backlog_targets
+    # returns nothing. Without this the test failed on any run after 9pm IST.
+    monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, l: 5)
     assert ReviewAutoReplyService(db)._find_backlog_targets(loc)
 
     provider = _FakeProvider()
-    monkeypatch.setattr(ReviewAutoReplyService, "_backlog_room", lambda self, l: 5)
     _run(db, provider, monkeypatch, backlog=True)
     assert ReviewAutoReplyService(db).has_backlog(loc) is False  # drained, stop polling
 

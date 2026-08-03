@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, func, Index, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 
@@ -9,6 +10,14 @@ class Organization(Base):
     name = Column(String, nullable=False)
     slug = Column(String, nullable=True, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Agency white-labelling. is_agency is super-admin only; the org fills in the rest
+    # from its own settings. Any NULL falls back to Pinzo's own logo/site, so a
+    # half-configured agency still exports a sane report. See report_branding().
+    is_agency = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    brand_name = Column(String, nullable=True)
+    brand_logo_url = Column(String, nullable=True)
+    brand_website_url = Column(String, nullable=True)
 
     # Billing Fields
     plan = Column(String, nullable=True, default="trial", server_default=text("'trial'"))
@@ -63,12 +72,28 @@ class Organization(Base):
     # its cascade children) is hard-purged after ACCOUNT_PURGE_GRACE_DAYS. NULL = live.
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 
-    # Enterprise custom pricing (set by a super-admin). Both NULL = standard tier pricing.
-    #   custom_price_paise: negotiated per-location MONTHLY rate (paise/location). Replaces
-    #     the standard plan price; annual = rate * 12 (no annual discount for negotiated deals).
+    # Enterprise custom pricing (set by a super-admin). NULL = standard tier pricing.
+    #   custom_prices: negotiated per-location MONTHLY rate PER TIER, in paise —
+    #     {"basic": 79900, "pro": 149900}. A tier absent from the map bills standard
+    #     price, so a Basic-only deal can't be spent on Pro and upsell still works.
+    #     Annual = rate * 12 (no annual discount on a negotiated rate).
     #   custom_credits_per_location: AI credits granted per location (replaces the tier's).
-    custom_price_paise = Column(Integer, nullable=True)
+    # none_as_null: without it, clearing a deal stores the JSON literal `null`, which is
+    # NOT NULL to SQL — every `custom_prices IS NOT NULL` query then counts cleared orgs
+    # as still having a deal. Reads are unaffected either way (both come back as None).
+    custom_prices = Column(JSONB(none_as_null=True), nullable=True)
     custom_credits_per_location = Column(Integer, nullable=True)
+    # Set when the "your trial ends tomorrow" email goes out — the idempotency key for
+    # the hourly reminder sweep. NULL = not warned yet.
+    trial_reminder_sent_at = Column(DateTime(timezone=True), nullable=True)
+    # Super-admin escape hatch for the one-trial-per-Google-account/phone guard, e.g. a
+    # customer who trialled on the wrong Google account. Audited like every override.
+    allow_extra_trial = Column(Boolean, nullable=False, default=False,
+                               server_default=text("false"))
+
+    # LEGACY: the old single all-tiers rate. Backfilled into custom_prices by
+    # cust_2026_tier_prices and no longer read by pricing — kept one release for rollback.
+    custom_price_paise = Column(Integer, nullable=True)
 
     # Marketing attribution, captured first-touch from the browser at signup and used
     # for server-side conversions (Meta CAPI / Google Ads). First-touch wins: a column

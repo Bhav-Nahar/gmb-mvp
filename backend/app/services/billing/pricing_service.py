@@ -19,6 +19,16 @@ class PricingService:
         return location_count
 
     @staticmethod
+    def custom_rate(org, plan_tier: str) -> int | None:
+        """The negotiated per-location rate for THIS tier, or None for standard pricing.
+
+        Deals are per-tier: an org priced at ₹799 for Basic pays standard price if it
+        buys Pro. That's the point — one all-tiers rate meant a Basic discount silently
+        applied to Pro, and every tier cost the same so nobody could be upsold."""
+        rate = (org.custom_prices or {}).get(plan_tier)
+        return int(rate) if rate is not None else None
+
+    @staticmethod
     def compute_monthly_price_paise(location_count: int, plan_tier: str = "basic",
                                     custom_per_location_paise: int | None = None,
                                     annual: bool = False) -> int:

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CheckCircle2, Loader2, AlertTriangle } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -23,9 +23,16 @@ const STEP_MS = 1100
  * Full-screen "building your audit" screen. The staggered checklist and progress bar
  * make the work feel real and thorough, which is what earns the paywall that follows.
  */
-export function OnboardingSyncing({ failed = false }: { failed?: boolean }) {
+// How long to believe "a few seconds" before offering a way out. The screen polls billing
+// status every 3s, so anything past this is a sync that is not coming back on its own.
+const STALL_MS = 25_000
+
+export function OnboardingSyncing({ failed = false, neverStarted = false }:
+  { failed?: boolean; neverStarted?: boolean }) {
   const [done, setDone] = useState(0)
   const [retrying, setRetrying] = useState(false)
+  const [stalled, setStalled] = useState(false)
+  const kicked = useRef(false)
   const queryClient = useQueryClient()
 
   // Real retry: re-trigger the org sync, then re-poll billing status (which flips
@@ -42,6 +49,23 @@ export function OnboardingSyncing({ failed = false }: { failed?: boolean }) {
       setRetrying(false)
     }
   }
+
+  // No sync state at all means the initial task never ran (lost on a worker/broker
+  // restart, or the org got its locations another way). Nothing else will ever start it,
+  // so start it once — otherwise this screen spins forever.
+  useEffect(() => {
+    if (failed || !neverStarted || kicked.current) return
+    kicked.current = true
+    retry()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failed, neverStarted])
+
+  // Escape hatch: past STALL_MS this stops pretending and offers the retry controls.
+  useEffect(() => {
+    if (failed) return
+    const id = setTimeout(() => setStalled(true), STALL_MS)
+    return () => clearTimeout(id)
+  }, [failed])
 
   useEffect(() => {
     if (failed) return
@@ -98,9 +122,35 @@ export function OnboardingSyncing({ failed = false }: { failed?: boolean }) {
         <div className="space-y-1 text-center">
           <h2 className="text-xl font-bold">Building your audit</h2>
           <p className="text-sm text-muted-foreground">
-            We are analyzing your Google Business Profile. This takes just a few seconds.
+            {stalled
+              ? 'This is taking longer than usual. Your sync may not have started.'
+              : 'We are analyzing your Google Business Profile. This takes just a few seconds.'}
           </p>
         </div>
+
+        {stalled && (
+          <div className="flex flex-col justify-center gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={retry}
+              disabled={retrying}
+              className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+            >
+              {retrying ? 'Restarting...' : 'Restart sync'}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                beginGoogleLogin('sync_failed').catch(() =>
+                  toast.error('Could not open Google sign-in. Please try again.')
+                )
+              }
+              className="rounded-xl border px-4 py-2.5 text-sm font-semibold hover:bg-muted"
+            >
+              Reconnect Google
+            </button>
+          </div>
+        )}
 
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div

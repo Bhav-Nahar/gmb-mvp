@@ -107,11 +107,11 @@ def test_superadmin_sets_and_clears_custom_pricing(db, client):
     with patch.object(settings, "SUPERADMIN_EMAILS", SUPER_EMAIL):
         _as_super(db, client)
         r = client.patch(f"/api/v1/admin/organizations/{target.id}", json={
-            "custom_price_paise": 130000, "custom_credits_per_location": 60, "reason": "enterprise deal",
+            "custom_prices": {"pro": 130000}, "custom_credits_per_location": 60, "reason": "enterprise deal",
         })
         assert r.status_code == 200, r.text
         db.refresh(target)
-        assert target.custom_price_paise == 130000
+        assert target.custom_prices == {"pro": 130000}
         assert target.custom_credits_per_location == 60
 
         # Clear -> back to standard.
@@ -120,7 +120,7 @@ def test_superadmin_sets_and_clears_custom_pricing(db, client):
         })
         assert r2.status_code == 200, r2.text
         db.refresh(target)
-        assert target.custom_price_paise is None
+        assert target.custom_prices is None
         assert target.custom_credits_per_location is None
 
 
@@ -128,7 +128,7 @@ def test_superadmin_sets_and_clears_custom_pricing(db, client):
 
 def test_checkout_uses_custom_rate_for_plan_and_credits(db):
     org = Organization(name="Ent", subscription_status="trial", location_quota=60, plan_tier="pro",
-                       custom_price_paise=130_000, custom_credits_per_location=60)
+                       custom_prices={"pro": 130_000}, custom_credits_per_location=60)
     db.add(org)
     db.commit()
     db.refresh(org)
@@ -157,7 +157,7 @@ def test_price_change_on_active_sub_schedules_next_renewal(db, client):
          patch.object(SubscriptionService, "update_subscription_plan_for_quota", return_value="upgraded") as sched:
         _as_super(db, client)
         r = client.patch(f"/api/v1/admin/organizations/{target.id}",
-                         json={"custom_price_paise": 130000, "reason": "deal"})
+                         json={"custom_prices": {"pro": 130000}, "reason": "deal"})
     assert r.status_code == 200, r.text
     sched.assert_called_once()                       # scheduled the plan change (at cycle end)
     assert r.json()["plan_change"] == "upgraded"
@@ -173,7 +173,103 @@ def test_price_change_without_subscription_does_not_schedule(db, client):
          patch.object(SubscriptionService, "update_subscription_plan_for_quota") as sched:
         _as_super(db, client)
         r = client.patch(f"/api/v1/admin/organizations/{target.id}",
-                         json={"custom_price_paise": 130000, "reason": "deal"})
+                         json={"custom_prices": {"pro": 130000}, "reason": "deal"})
     assert r.status_code == 200, r.text
     sched.assert_not_called()                        # no live subscription to reschedule
     assert r.json()["plan_change"] is None
+
+
+# --- per-tier scoping: the whole point of the map ----------------------------
+
+def test_custom_rate_is_scoped_to_the_negotiated_tier(db):
+    """A ₹799 Basic deal must not price Pro at ₹799, and must still be upsellable."""
+    org = Organization(name="Deal", plan_tier="basic", custom_prices={"basic": 79_900})
+    assert PricingService.custom_rate(org, "basic") == 79_900
+    assert PricingService.custom_rate(org, "pro") is None   # standard Pro price applies
+    # No map at all = standard everywhere.
+    assert PricingService.custom_rate(Organization(name="Std", plan_tier="basic"), "basic") is None
+
+
+def test_checkout_on_an_undiscounted_tier_bills_standard(db):
+    """Same org, Pro checkout: the Basic rate must NOT leak into the Razorpay plan."""
+    org = Organization(name="Deal", subscription_status="trial", location_quota=2, plan_tier="basic",
+                       custom_prices={"basic": 79_900})
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    fake = MagicMock()
+    fake.subscription.create.side_effect = lambda data: {"id": "sub_x"}
+    with patch.object(SubscriptionService, "ensure_razorpay_customer", return_value="cust_1"), \
+         patch.object(SubscriptionService, "_get_or_create_plan", return_value="plan_x") as plan_mock, \
+         patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        SubscriptionService.create_subscription_checkout(
+            db, org.id, "Deal", "d@d.com", location_count=2, interval="monthly", plan_tier="pro")
+    assert plan_mock.call_args.args[4] is None            # standard Pro pricing, no custom rate
+
+    with patch.object(SubscriptionService, "ensure_razorpay_customer", return_value="cust_1"), \
+         patch.object(SubscriptionService, "_get_or_create_plan", return_value="plan_x") as plan_mock, \
+         patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        SubscriptionService.create_subscription_checkout(
+            db, org.id, "Deal", "d@d.com", location_count=2, interval="monthly", plan_tier="basic")
+    assert plan_mock.call_args.args[4] == 79_900          # the negotiated Basic rate
+
+
+def test_rate_for_a_tier_they_are_not_on_does_not_reschedule(db, client):
+    """Editing the Pro rate for a Basic client touches no money today."""
+    target = Organization(name="Ent", subscription_status="active", location_quota=5, plan_tier="basic",
+                          razorpay_subscription_id="sub_b", billing_cycle="monthly")
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+    with patch.object(settings, "SUPERADMIN_EMAILS", SUPER_EMAIL), \
+         patch.object(SubscriptionService, "update_subscription_plan_for_quota") as sched:
+        _as_super(db, client)
+        r = client.patch(f"/api/v1/admin/organizations/{target.id}",
+                         json={"custom_prices": {"pro": 149900}, "reason": "future upsell rate"})
+    assert r.status_code == 200, r.text
+    sched.assert_not_called()
+    assert "basic" in r.json()["message"]
+
+
+def test_unknown_tier_is_rejected(db, client):
+    target = Organization(name="Ent", plan_tier="basic")
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+    with patch.object(settings, "SUPERADMIN_EMAILS", SUPER_EMAIL):
+        _as_super(db, client)
+        r = client.patch(f"/api/v1/admin/organizations/{target.id}",
+                         json={"custom_prices": {"platinum": 100}, "reason": "typo"})
+    assert r.status_code == 400
+    assert "platinum" in r.text
+
+
+# --- /billing/quote reflects the org's own rate, but stays public ------------
+
+def test_public_quote_is_standard_and_needs_no_auth(client):
+    r = client.get("/api/v1/billing/quote", params={"location_count": 2, "plan_tier": "basic"})
+    assert r.status_code == 200, r.text
+    # Marketing homepage path: the standard Basic sticker price (GST-inclusive total).
+    assert r.json()["total_paise"] == 2 * 199_900
+
+
+def test_quote_uses_the_callers_negotiated_rate(db, client):
+    org = Organization(name="Deal", plan_tier="basic", custom_prices={"basic": 79_900},
+                       custom_credits_per_location=30, subscription_status="active")
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+    u = User(email="deal@x.com", name="d", google_id="g_deal", role="Owner",
+             is_active=True, organization_id=org.id)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    client.cookies.set("gmb_auth_token", create_access_token(u.email, token_version=u.token_version))
+
+    r = client.get("/api/v1/billing/quote", params={"location_count": 2, "plan_tier": "basic"})
+    assert r.status_code == 200, r.text
+    assert r.json()["total_paise"] == 2 * 79_900          # their deal, not the ₹1,999 sheet
+    # A tier they have no deal on still quotes standard price.
+    r2 = client.get("/api/v1/billing/quote", params={"location_count": 2, "plan_tier": "pro"})
+    assert r2.json()["total_paise"] == 2 * 299_900

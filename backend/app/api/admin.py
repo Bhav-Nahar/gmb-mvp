@@ -10,7 +10,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from pydantic import Field
+import re
+
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, aliased
 
 from app.db.session import get_db
@@ -26,6 +29,7 @@ from app.models.audit_log import AuditLog
 from app.models.sync_log import SyncLog
 from app.models.organization_sync_state import OrganizationSyncState
 from app.models.billing_transaction import BillingTransaction
+from app.models.billing_webhook_event import BillingWebhookEvent
 from app.schemas.admin import OrgUpdate, AdminUserUpdate, LocationUpdate, AdminActionBody, FlagsUpdate
 from app.services.app_settings import india_phone_trial_enabled, row_phone_trial_enabled, set_flag
 
@@ -37,6 +41,7 @@ VALID_ROLES = {Role.OWNER, Role.ADMIN, Role.REGIONAL_MANAGER, Role.STORE_MANAGER
 
 # Org columns a super-admin may set directly (validated below where applicable).
 _ORG_EDITABLE = [
+    "is_agency",
     "plan_tier",
     "subscription_status",
     "location_quota",
@@ -44,8 +49,8 @@ _ORG_EDITABLE = [
     "topup_ai_credits_balance",
     "trial_ends_at",
     "grace_period_ends_at",
-    "custom_price_paise",
     "custom_credits_per_location",
+    "allow_extra_trial",
 ]
 
 
@@ -77,6 +82,11 @@ def _org_row(org, user_count, location_count):
         "subscription_ends_at": org.subscription_ends_at,
         "created_at": org.created_at,
         "deleted_at": org.deleted_at,
+        "is_agency": org.is_agency,
+        # "Active" with no Razorpay mandate = a comped/manually-activated account. It is
+        # never re-checked by any sweep, so it stays free forever unless someone notices.
+        "is_comped": org.subscription_status == "active" and not org.razorpay_subscription_id,
+        "razorpay_subscription_id": org.razorpay_subscription_id,
     }
 
 
@@ -138,13 +148,69 @@ def get_metrics(db: Session = Depends(get_db), _: User = Depends(superadmin_requ
         func.coalesce(func.sum(Organization.monthly_ai_credits_balance), 0)
         + func.coalesce(func.sum(Organization.topup_ai_credits_balance), 0)
     ).scalar()
+    # Split the 'trial' status the same way the tabs do: never-started (onboarding) vs
+    # a running clock. One lumped "Trial" number hid how many signups never converted.
+    onboarding = (
+        db.query(func.count(Organization.id))
+        .filter(Organization.subscription_status == "trial", Organization.trial_ends_at.is_(None))
+        .scalar()
+    )
+    # Money and funnel, not just row counts. MRR is derived from what the mandates
+    # actually bill (paid_location_quota falling back to location_quota) at each org's own
+    # rate, so a custom-priced enterprise deal is counted at its real price.
+    from app.services.billing.pricing_service import PricingService
+    mrr_paise = 0
+    for org in db.query(Organization).filter(
+        Organization.subscription_status == "active", Organization.deleted_at.is_(None)
+    ).all():
+        qty = org.paid_location_quota or org.location_quota or 0
+        if qty <= 0:
+            continue
+        tier = org.plan_tier or "basic"
+        monthly = PricingService.compute_monthly_price_paise(
+            qty, tier, PricingService.custom_rate(org, tier))
+        mrr_paise += plan_config.price_with_gst(monthly)["total_paise"]
+
+    trials_ending_48h = (
+        db.query(func.count(Organization.id))
+        .filter(Organization.subscription_status == "trial",
+                Organization.trial_ends_at.isnot(None),
+                Organization.trial_ends_at > datetime.now(timezone.utc),
+                Organization.trial_ends_at <= datetime.now(timezone.utc) + timedelta(hours=48),
+                Organization.deleted_at.is_(None))
+        .scalar()
+    )
+    # Everyone who ever started a clock, vs everyone who ever paid — the honest
+    # denominator for "does the trial convert?".
+    started_trial = (
+        db.query(func.count(Organization.id))
+        .filter(or_(Organization.trial_ends_at.isnot(None),
+                    Organization.subscription_status.in_(["active", "past_due", "locked"])))
+        .scalar()
+    )
+    ever_paid = (
+        db.query(func.count(func.distinct(BillingTransaction.organization_id)))
+        .filter(BillingTransaction.transaction_type == "subscription_charge",
+                BillingTransaction.status == "success")
+        .scalar()
+    )
+    # If this goes quiet, Razorpay webhook delivery is broken and every activation is
+    # riding on the /confirm fast path plus the 30-minute reconcile sweep.
+    last_webhook = db.query(func.max(BillingWebhookEvent.processed_at)).scalar()
+
     return {
+        "mrr_paise": mrr_paise,
+        "trials_ending_48h": trials_ending_48h,
+        "trial_to_paid_pct": round(ever_paid / started_trial * 100) if started_trial else 0,
+        "ever_paid_organizations": ever_paid,
+        "last_webhook_at": last_webhook,
         "total_organizations": db.query(func.count(Organization.id)).scalar(),
         "total_users": db.query(func.count(User.id)).scalar(),
         "total_locations": db.query(func.count(Location.id)).scalar(),
         "by_status": {(k or "unknown"): v for k, v in status_counts.items()},
         "active_organizations": status_counts.get("active", 0),
-        "trial_organizations": status_counts.get("trial", 0),
+        "onboarding_organizations": onboarding,
+        "trial_organizations": status_counts.get("trial", 0) - onboarding,   # running clocks only
         "past_due_organizations": status_counts.get("past_due", 0),
         "locked_organizations": status_counts.get("locked", 0),
         "needs_remandate": needs_remandate,
@@ -165,8 +231,36 @@ def list_organizations(
 ):
     query = db.query(Organization)
     if q:
-        query = query.filter(Organization.name.ilike(f"%{q}%"))
-    if subscription_status:
+        # Support conversations arrive as an email, a phone number or a Razorpay id —
+        # name-only search meant none of them could be looked up.
+        term = q.strip()
+        digits = re.sub(r"[^\d]", "", term)
+        conditions = [
+            Organization.name.ilike(f"%{term}%"),
+            Organization.razorpay_subscription_id == term,
+            Organization.razorpay_customer_id.ilike(f"%{term}%"),
+            Organization.id.in_(
+                db.query(User.organization_id).filter(User.email.ilike(f"%{term}%"))
+            ),
+        ]
+        if len(digits) >= 6:
+            # Match a phone however it was typed: +919876543210, 9876543210, 09876…
+            conditions.append(Organization.id.in_(
+                db.query(User.organization_id).filter(User.phone.ilike(f"%{digits[-10:]}%"))
+            ))
+        query = query.filter(or_(*conditions))
+    # Tabs. 'onboarding' and 'trial' split the DB's single 'trial' status: an onboarding
+    # org has connected Google but never started a clock (no payment method / phone yet),
+    # a trial org is counting down. 'paid' = a live paying subscription.
+    if subscription_status == "onboarding":
+        query = query.filter(Organization.subscription_status == "trial",
+                             Organization.trial_ends_at.is_(None))
+    elif subscription_status == "trial":
+        query = query.filter(Organization.subscription_status == "trial",
+                             Organization.trial_ends_at.isnot(None))
+    elif subscription_status == "paid":
+        query = query.filter(Organization.subscription_status == "active")
+    elif subscription_status:
         query = query.filter(Organization.subscription_status == subscription_status)
     # Trash handling: hide soft-deleted by default; 'only' = the trash view, 'include' = both.
     if deleted == "exclude":
@@ -250,8 +344,15 @@ def get_organization(
         "subscription_needs_remandate": org.subscription_needs_remandate,
         "paid_location_quota": org.paid_location_quota,
         "remandate_due_at": org.remandate_due_at,
-        "custom_price_paise": org.custom_price_paise,
+        "allow_extra_trial": org.allow_extra_trial,
+        "trial_reminder_sent_at": org.trial_reminder_sent_at,
+        "custom_prices": org.custom_prices or {},
         "custom_credits_per_location": org.custom_credits_per_location,
+        # Every tier's standard rate, so the panel can show what a negotiated rate is
+        # being discounted FROM without hardcoding the price sheet in the frontend.
+        "standard_prices": {
+            tier: plan_config.get_plan(tier)["price_tiers"][-1][1] for tier in plan_config.PLANS
+        },
     })
 
     return {
@@ -325,10 +426,26 @@ def update_organization(
     if payload.subscription_status is not None and payload.subscription_status not in VALID_SUBSCRIPTION_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid subscription_status. Allowed: {sorted(VALID_SUBSCRIPTION_STATUSES)}")
 
+    if payload.custom_prices is not None:
+        bad_tiers = sorted(set(payload.custom_prices) - set(plan_config.PLANS))
+        if bad_tiers:
+            raise HTTPException(status_code=400,
+                                detail=f"Unknown tier(s) in custom_prices: {bad_tiers}. "
+                                       f"Allowed: {list(plan_config.PLANS)}")
+        if any(v < 0 for v in payload.custom_prices.values()):
+            raise HTTPException(status_code=400, detail="custom_prices rates must be >= 0 (paise).")
+
+    # The rate this org is billed at TODAY, so the reschedule below only fires when the
+    # money actually moved — editing the Pro rate for a Basic client changes nothing yet.
+    from app.services.billing.pricing_service import PricingService
+    current_tier = payload.plan_tier or org.plan_tier or "basic"
+    rate_before = PricingService.custom_rate(org, current_tier)
+
     changes = {}
-    # Clearing custom pricing wins over any per-field values in the same request.
+    # Clearing custom pricing wins over any per-field values in the same request. The
+    # legacy single-rate column is cleared too, so a rollback can't resurrect an old deal.
     if payload.clear_custom_pricing:
-        for field in ("custom_price_paise", "custom_credits_per_location"):
+        for field in ("custom_prices", "custom_credits_per_location", "custom_price_paise"):
             if getattr(org, field) is not None:
                 changes[field] = {"old": getattr(org, field), "new": None}
                 setattr(org, field, None)
@@ -341,6 +458,13 @@ def update_organization(
             if old != new:
                 changes[field] = {"old": old, "new": new}
                 setattr(org, field, new)
+        if payload.custom_prices is not None:
+            # Replace wholesale: the panel always sends every tier, so an omitted tier
+            # means "no deal on that tier" (standard price), not "leave as-is".
+            new_prices = payload.custom_prices or None
+            if (org.custom_prices or None) != new_prices:
+                changes["custom_prices"] = {"old": org.custom_prices, "new": new_prices}
+                org.custom_prices = new_prices
 
     if not changes:
         raise HTTPException(status_code=400, detail="No changes provided")
@@ -354,8 +478,9 @@ def update_organization(
     # the next renewal, never mid-cycle. (New clients with no subscription yet just get
     # billed the custom rate when they check out; credits-only changes need no plan edit —
     # they apply on the next charge.)
+    price_moved = PricingService.custom_rate(org, current_tier) != rate_before
     plan_change = None
-    if "custom_price_paise" in changes and org.razorpay_subscription_id \
+    if price_moved and org.razorpay_subscription_id \
             and org.subscription_status == "active" and (org.location_quota or 0) >= 1:
         from app.services.billing.subscription_service import SubscriptionService
         try:
@@ -366,7 +491,11 @@ def update_organization(
             plan_change = "error"
 
     msg = "Organization updated"
-    if "custom_price_paise" in changes and plan_change is None:
+    if "custom_prices" in changes and not price_moved:
+        # A rate was set for a tier this org isn't on — it only bills if they switch to it.
+        msg = (f"Organization updated. This org is on the {current_tier} tier, so the rate you "
+               f"changed applies only if they move to that tier.")
+    elif price_moved and plan_change is None:
         # Price changed but no live subscription reschedule ran (not active, no Razorpay
         # sub, or no quota). Say so — otherwise it looks like the save silently no-op'd.
         msg = ("Organization updated. No active card subscription to reschedule — the custom "
@@ -560,7 +689,24 @@ def update_location(
     _audit(db, actor=admin, organization_id=loc.organization_id, action="superadmin.location_update",
            changes={**changes, "location_id": location_id}, reason=payload.reason)
     db.commit()
-    return {"message": "Location updated", "changes": changes}
+
+    # This endpoint deliberately skips the quota ceiling and the reassign cooldown that
+    # the customer-facing /billing/locations/active enforces — a super-admin override
+    # should not be blocked by them. But going over quota is not free: the next charge
+    # re-applies the paid quota and locks the surplus back to pending_payment, which reads
+    # to the customer as us silently switching their locations off. Say so here.
+    msg = "Location updated"
+    org = db.query(Organization).filter(Organization.id == loc.organization_id).first()
+    quota = (org.location_quota or 0) if org else 0
+    active_now = db.query(func.count(Location.id)).filter(
+        Location.organization_id == loc.organization_id,
+        Location.billing_status == "active",
+    ).scalar() or 0
+    if quota and active_now > quota:
+        msg = (f"Location updated, but this org now has {active_now} active locations against a "
+               f"paid quota of {quota}. The next renewal will lock the surplus back to "
+               f"pending_payment — raise the quota (or sell the add-on) to make it stick.")
+    return {"message": msg, "changes": changes, "active_locations": active_now, "location_quota": quota}
 
 
 @router.post("/organizations/{org_id}/sync")
@@ -672,3 +818,151 @@ def list_audit(
             for (log, org_name, actor_email) in rows
         ],
     }
+
+
+# --- support actions on a live subscription ----------------------------------
+
+@router.post("/organizations/{org_id}/reconcile")
+def reconcile_subscription(
+    org_id: int,
+    body: Optional[AdminActionBody] = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Pull this org's subscription state from Razorpay and apply it now.
+
+    The answer to "I paid but I'm still locked". The periodic sweep does this every 30
+    minutes; before this endpoint existed, support's only option in the panel was to
+    hand-edit subscription_status, which then drifted from what Razorpay actually says.
+    """
+    from app.services.billing.subscription_service import SubscriptionService
+
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not org.razorpay_subscription_id:
+        raise HTTPException(status_code=400, detail="This organization has no Razorpay subscription to reconcile.")
+
+    before = org.subscription_status
+    try:
+        active = SubscriptionService.reconcile_subscription(db, org.id)
+    except Exception as e:
+        logger.error("Manual reconcile failed for org %s: %s", org_id, e)
+        raise HTTPException(status_code=502, detail=f"Razorpay call failed: {e}")
+
+    db.refresh(org)
+    _audit(db, actor=admin, organization_id=org.id, action="superadmin.reconcile",
+           changes={"subscription_status": {"old": before, "new": org.subscription_status}},
+           reason=body.reason if body else None)
+    db.commit()
+    msg = ("Razorpay confirms this subscription is paid — entitlements applied."
+           if active else
+           "Razorpay does not report this subscription as active (no charge landed yet). "
+           "Nothing was changed.")
+    return {"message": msg, "active": active, "subscription_status": org.subscription_status}
+
+
+class CancelBody(AdminActionBody):
+    immediate: bool = False  # default: let the paid period run out
+
+
+@router.post("/organizations/{org_id}/cancel-subscription")
+def cancel_subscription(
+    org_id: int,
+    body: CancelBody = CancelBody(),
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Cancel the org's Razorpay mandate.
+
+    Default is at cycle end: the customer keeps what they paid for and simply stops
+    renewing (subscription_ends_at carries the paid-through date, and the lifecycle sweep
+    locks them once it passes). `immediate` stops it now — use that for a refund case.
+    Until this existed, cancelling meant someone doing it by hand in the Razorpay
+    dashboard after a WhatsApp message, with nothing recorded on our side.
+    """
+    from app.services.billing.subscription_service import SubscriptionService
+
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    sub_id = org.razorpay_subscription_id
+    if not sub_id:
+        raise HTTPException(status_code=400, detail="This organization has no active mandate to cancel.")
+
+    client = SubscriptionService.get_razorpay_client()
+    try:
+        sub = client.subscription.cancel(sub_id, {"cancel_at_cycle_end": 0 if body.immediate else 1})
+    except Exception as e:
+        logger.error("Cancel failed for org %s sub %s: %s", org_id, sub_id, e)
+        raise HTTPException(status_code=502, detail=f"Razorpay refused the cancellation: {e}")
+
+    before = {"subscription_status": org.subscription_status, "subscription_ends_at": org.subscription_ends_at}
+    if body.immediate:
+        org.subscription_status = "locked"
+        org.subscription_ends_at = datetime.now(timezone.utc)
+    else:
+        # Stays 'active' until the paid period elapses; the sweep locks it after that.
+        current_end = sub.get("current_end") or sub.get("charge_at")
+        org.subscription_ends_at = (datetime.fromtimestamp(current_end, tz=timezone.utc)
+                                    if current_end else datetime.now(timezone.utc))
+    _audit(db, actor=admin, organization_id=org.id, action="superadmin.cancel_subscription",
+           changes={"before": before, "immediate": body.immediate,
+                    "subscription_ends_at": org.subscription_ends_at,
+                    "razorpay_subscription_id": sub_id},
+           reason=body.reason)
+    db.commit()
+    return {
+        "message": ("Mandate cancelled immediately — the org is locked now."
+                    if body.immediate else
+                    f"Mandate cancelled. Access continues until {org.subscription_ends_at:%d %b %Y}, "
+                    "then the org locks automatically."),
+        "subscription_ends_at": org.subscription_ends_at,
+    }
+
+
+class ExtendTrialBody(AdminActionBody):
+    days: int = Field(default=7, ge=1, le=90)
+
+
+@router.post("/organizations/{org_id}/extend-trial")
+def extend_trial(
+    org_id: int,
+    body: ExtendTrialBody = ExtendTrialBody(),
+    db: Session = Depends(get_db),
+    admin: User = Depends(superadmin_required),
+):
+    """Push a running trial's clock out by N days, and move the Razorpay debit with it.
+
+    Editing trial_ends_at alone was a trap: for a card trial the first debit is pinned to
+    the mandate's start_at, so "I gave them another week" still charged them on day 7,
+    mid-extension. Razorpay cannot reschedule an existing mandate's first charge, so when
+    one exists this refuses rather than quietly lying about what the customer will be
+    charged — cancel and re-checkout instead.
+    """
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if org.subscription_status != "trial" or org.trial_ends_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a running trial can be extended (this org has no trial clock).",
+        )
+    if org.razorpay_subscription_id:
+        raise HTTPException(
+            status_code=409,
+            detail="This trial has a payment mandate attached: Razorpay debits it on the "
+                   "originally scheduled date and the first charge cannot be moved. Cancel "
+                   "the mandate and have them check out again to change the date.",
+        )
+
+    before = org.trial_ends_at
+    org.trial_ends_at = before + timedelta(days=body.days)
+    # Let the new deadline warn them again — they were already told the old date.
+    org.trial_reminder_sent_at = None
+    _audit(db, actor=admin, organization_id=org.id, action="superadmin.extend_trial",
+           changes={"trial_ends_at": {"old": before, "new": org.trial_ends_at}, "days": body.days},
+           reason=body.reason)
+    db.commit()
+    return {"message": f"Trial extended by {body.days} day(s) to {org.trial_ends_at:%d %b %Y}.",
+            "trial_ends_at": org.trial_ends_at}

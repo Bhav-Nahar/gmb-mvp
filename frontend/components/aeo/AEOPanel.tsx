@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useState } from 'react'
+import { ReportPrintHeader } from '@/components/reports/ReportExport'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Sparkles, Lock, RefreshCw, AlertCircle, Plus, X, Printer, ChevronDown, ChevronRight } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -146,12 +147,12 @@ export function AEOPanel({ locationId, locationName }: { locationId: number; loc
 
       {result && (
         <div className="aeo-print space-y-5">
-          {/* Print-only report header (hidden on screen, shown in the PDF) */}
-          <div className="aeo-print-only mb-4 border-b pb-3">
-            <div className="text-lg font-bold">AI Visibility Report</div>
-            <div className="text-sm">{locationName || `Location #${locationId}`}</div>
-            <div className="text-xs">{scan?.created_at ? fmtDateTime(scan.created_at) : ''}</div>
-          </div>
+          {/* Print-only masthead. Shared with the Performance Report so an agency's client
+              gets the same logo on every page of the pack, not just some of them. */}
+          <ReportPrintHeader
+            title="AI Visibility Report"
+            subtitle={`${locationName || `Location #${locationId}`}${scan?.created_at ? ` · ${fmtDateTime(scan.created_at)}` : ''}`}
+          />
           <div className="grid gap-4 md:grid-cols-[280px_1fr]">
             <ScoreCard result={result} />
             <SurfaceCard surfaces={result.surfaces} />

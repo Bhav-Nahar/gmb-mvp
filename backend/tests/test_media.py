@@ -27,20 +27,30 @@ from app.storage.factory import StorageProviderFactory
 from app.storage.providers.local import LocalStorageProvider
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+# Its own in-memory database — this suite used to read and write the app's real one, so
+# `pytest` left fixture orgs behind in the dev DB (and would have in any DB the env
+# pointed at). StaticPool keeps the single :memory: connection shared.
+_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
+_TestingSessionLocal = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
+
 
 class MediaPipelineTests(unittest.TestCase):
     def setUp(self):
-        from app.db.session import engine, SessionLocal
-        self.engine = engine
+        self.engine = _engine
         Base.metadata.create_all(self.engine)
-        self.SessionLocal = SessionLocal
+        self.SessionLocal = _TestingSessionLocal
         self.db = self.SessionLocal()
 
-        # Clean up any leftover test data from previous runs to ensure idempotency
-        self.db.query(PostMedia).filter(PostMedia.original_filename.in_(["valid.jpg", "large.jpg", "file.jpg", "new.jpg"])).delete(synchronize_session=False)
-        self.db.query(User).filter(User.email.in_(["userA@acme.com", "userB@acme.com"])).delete(synchronize_session=False)
-        self.db.query(Organization).filter(Organization.name.in_(["Organization A", "Organization B"])).delete(synchronize_session=False)
-        self.db.commit()
+        # The media tasks resolve SessionLocal from app.tasks' module globals (imported at
+        # module load), so patch it there as well as at the source.
+        for target in ("app.db.session.SessionLocal", "app.tasks.SessionLocal"):
+            patcher = patch(target, _TestingSessionLocal)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
 
         self.org_a = Organization(name="Organization A")
         self.org_b = Organization(name="Organization B")
@@ -78,6 +88,7 @@ class MediaPipelineTests(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+        Base.metadata.drop_all(self.engine)
 
     def test_validation_rules_gbp_constraints(self):
         # 1. Test size constraint (<10KB should fail)

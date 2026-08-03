@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { api } from '@/lib/api'
+import { invalidateBranding } from '@/hooks/useBranding'
 import { trackCustomerData } from '@/lib/analytics'
 
 export interface User {
@@ -71,6 +72,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (typeof document !== 'undefined') {
       document.cookie = "gmb_csrf_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
     }
+    // Report branding is cached at module scope (it changes about once a year). Logout
+    // is a state change, not a page load, so without this the next person to sign in on
+    // this tab would see the previous org's agency logo on their exports.
+    invalidateBranding()
     setUser(null)
   }
 

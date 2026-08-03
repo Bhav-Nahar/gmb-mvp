@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +10,10 @@ class OrgUpdate(BaseModel):
     All fields optional — only the ones provided are applied. `reason` is recorded
     in the audit trail alongside the before/after values.
     """
+    # Unlocks the white-label branding settings for this org's report exports.
+    is_agency: Optional[bool] = None
+    # Forgive the one-trial-per-Google-account/phone guard for this org (wrong-account signup).
+    allow_extra_trial: Optional[bool] = None
     plan_tier: Optional[str] = None
     subscription_status: Optional[str] = None
     location_quota: Optional[int] = Field(default=None, ge=0)
@@ -17,8 +21,11 @@ class OrgUpdate(BaseModel):
     topup_ai_credits_balance: Optional[int] = Field(default=None, ge=0)
     trial_ends_at: Optional[datetime] = None
     grace_period_ends_at: Optional[datetime] = None
-    # Enterprise custom pricing (Flavor B: per-location). Both applied only when provided.
-    custom_price_paise: Optional[int] = Field(default=None, ge=0)          # per-location MONTHLY rate
+    # Enterprise custom pricing: negotiated per-location MONTHLY rate PER TIER, in paise
+    # — {"basic": 79900}. Replaces the map wholesale (the panel sends every tier), so a
+    # tier omitted here bills standard price. Tiers absent = standard, which is what keeps
+    # a Basic-rate deal from discounting Pro. {} clears all per-tier rates.
+    custom_prices: Optional[Dict[str, int]] = None
     custom_credits_per_location: Optional[int] = Field(default=None, ge=0)
     # Set true to REMOVE custom pricing (back to standard tiers) — the fields above can't
     # express "clear" via null, since null means "leave unchanged".

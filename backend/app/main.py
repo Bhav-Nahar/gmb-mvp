@@ -10,7 +10,7 @@ from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
 from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays, aeo, pseo, lpseo, cseo, cityseo
-from app.api import comparison
+from app.api import comparison, branding
 from app.api.deps import check_csrf, check_billing_lock, require_feature, require_premium
 from app.core import plan_config
 from fastapi.staticfiles import StaticFiles
@@ -142,6 +142,7 @@ app.include_router(billing.webhook_router, prefix="/api/v1/webhooks", tags=["Web
 app.include_router(reply_templates.router, prefix="/api/v1/reply-templates", tags=["Reply Templates"],
                    dependencies=[Depends(require_feature(plan_config.FEATURE_TEMPLATES))])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(branding.router, prefix="/api/v1", tags=["Branding"])
 app.include_router(pseo.public_router, prefix="/api/v1/public/pseo", tags=["Public pSEO"])
 app.include_router(pseo.admin_router, prefix="/api/v1/admin/pseo", tags=["Admin pSEO"])
 app.include_router(lpseo.public_router, prefix="/api/v1/public/lpseo", tags=["Public lpSEO"])

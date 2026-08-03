@@ -125,16 +125,25 @@ body {
   }
 }
 
-/* Print / "Download PDF" for AI Visibility reports: hide the app chrome and
-   everything marked .no-print, show only the .aeo-print report area. */
+/* Print / "Download PDF": hide the app chrome and everything marked .no-print,
+   show only the .report-print area. `.aeo-print` is the original AI-Visibility
+   name, kept as an alias so that panel keeps working unchanged. */
 @media print {
   /* Force backgrounds/colours to render in the PDF (browsers strip them by default). */
   html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body * { visibility: hidden; }
-  .aeo-print, .aeo-print * { visibility: visible; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .aeo-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; }
+  .aeo-print, .aeo-print *,
+  .report-print, .report-print * { visibility: visible; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .aeo-print,
+  .report-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; }
   .no-print { display: none !important; }
-  .aeo-print-only { display: block !important; }
+  .aeo-print-only,
+  .print-only { display: block !important; }
+  /* Cards and charts must not be sliced across a page break. .glass-panel is the
+     card class every analytics page already uses, so tagging it covers all of them
+     without touching a single component. */
+  .glass-panel, .print-keep { break-inside: avoid; page-break-inside: avoid; }
   @page { margin: 16mm; }
 }
-.aeo-print-only { display: none; }
+.aeo-print-only,
+.print-only { display: none; }

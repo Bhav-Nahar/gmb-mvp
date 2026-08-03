@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -59,16 +59,32 @@ class ConfirmRequest(BaseModel):
     razorpay_order_id: str | None = None
 
 @router.get("/quote", response_model=QuoteResponse)
-def get_quote(location_count: int, interval: str = "monthly", plan_tier: str = "basic"):
+def get_quote(http_request: Request, location_count: int, interval: str = "monthly",
+              plan_tier: str = "basic", db: Session = Depends(get_db)):
     """Server-authoritative price for a location count + tier (for display).
     Returns base, GST, and the GST-inclusive total that is actually charged.
 
     PUBLIC (no auth) — the marketing homepage pricing calls this while logged out, so it
-    must stay unauthenticated and standard-tier. Enterprise custom pricing is reflected at
-    checkout and in /billing/status, not in this public quote."""
+    must keep working with no credentials. When a caller IS signed in, their org's
+    negotiated rate is applied: an enterprise org used to be quoted the standard price
+    everywhere in the app and then charged its (lower) custom rate by Razorpay."""
     if plan_tier not in plan_config.PLANS:
         raise HTTPException(status_code=400, detail="Unknown plan tier")
-    base = PricingService.compute_price_paise(location_count, interval, plan_tier)
+
+    # Soft auth: a signed-in caller gets their own negotiated rate, a logged-out one gets
+    # standard pricing. Never a 401 — this endpoint is the public pricing page's source.
+    custom_rate = custom_credits = None
+    try:
+        user = get_current_user(request=http_request, db=db)
+        if user.organization_id:
+            org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+            if org:
+                custom_rate = PricingService.custom_rate(org, plan_tier)
+                custom_credits = org.custom_credits_per_location
+    except Exception:
+        pass
+
+    base = PricingService.compute_price_paise(location_count, interval, plan_tier, custom_rate)
     gst = plan_config.price_with_gst(base)
     return QuoteResponse(
         location_count=location_count,
@@ -78,7 +94,7 @@ def get_quote(location_count: int, interval: str = "monthly", plan_tier: str = "
         gst_paise=gst["gst_paise"],
         total_paise=gst["total_paise"],
         gst_rate=plan_config.GST_RATE,
-        monthly_ai_credits=PricingService.get_credits_for_locations(location_count, plan_tier),
+        monthly_ai_credits=PricingService.get_credits_for_locations(location_count, plan_tier, custom_credits),
     )
 
 @router.post("/checkout-subscription", dependencies=[Depends(_billing_mutation_rate_limit)])
@@ -258,12 +274,22 @@ def confirm_payment(
             raise HTTPException(status_code=400, detail="Subscription does not belong to this organization")
         # Card-required onboarding: the returning subscription is an authenticated (not
         # yet charged) mandate, so START THE TRIAL rather than waiting on a first charge.
-        # Once the trial is running (or the org has paid) this falls through to the normal
-        # reconcile. subscription.authenticated / subscription.charged webhooks back it up.
-        if settings.CARD_REQUIRED_ONBOARDING and org.subscription_status == "trial":
+        # subscription.authenticated / subscription.charged webhooks back it up.
+        #
+        # Gated on is_onboarding (no clock yet), NOT on status == 'trial'. A trial org that
+        # pays EARLY is also status 'trial', and activate_trial_from_subscription early-
+        # returns True for a running clock without ever asking Razorpay — so the charge sat
+        # unapplied until the webhook (or the 30-min sweep) landed, while /confirm reported
+        # activated=true. An early payer must reconcile here and go active immediately.
+        if settings.CARD_REQUIRED_ONBOARDING and EntitlementService.is_onboarding(org):
             activated = SubscriptionService.activate_trial_from_subscription(db, org.id)
         else:
-            activated = SubscriptionService.reconcile_subscription(db, org.id)
+            # Anyone who is NOT starting a trial just paid to start now: convert on the
+            # spot (including a UPI mandate whose debit is still in flight) instead of
+            # leaving them on the old plan until a webhook arrives.
+            activated = SubscriptionService.activate_paid_now(
+                db, org.id, payment_id=request.razorpay_payment_id
+            )
     else:
         # Order payments are either a credit top-up or a location add-on. Try the
         # add-on path first (it no-ops unless the order's notes say location_addon),
@@ -330,7 +356,17 @@ def get_billing_status(
     if ss is None:
         onboarding_sync_status = "idle"
     elif ss.sync_in_progress:
-        onboarding_sync_status = "syncing"
+        # A worker that dies mid-sync leaves sync_in_progress set forever, and the gate
+        # showed "Building your audit" for eternity with no way out. Past the stale
+        # window, call it failed so the customer gets the retry/reconnect screen.
+        started = ss.sync_started_at
+        if started is not None and started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        if started is not None and started < datetime.now(timezone.utc) - timedelta(
+                minutes=plan_config.ONBOARDING_SYNC_STALE_MINUTES):
+            onboarding_sync_status = "failed"
+        else:
+            onboarding_sync_status = "syncing"
     elif ss.last_sync_status == "Failed":
         onboarding_sync_status = "failed"
     elif ss.last_location_sync_at is not None and ss.last_sync_status == "Success":

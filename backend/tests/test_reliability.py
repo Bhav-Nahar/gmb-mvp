@@ -7,6 +7,9 @@ from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
 
 # Map PostgreSQL JSONB to SQLite TEXT for in-memory compatibility
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -28,23 +31,30 @@ from app.constants.posts import PostStatus, PublishJobStatus
 from app.services.post_service import post_service
 from app.tasks import process_publish_job_task
 
+# Its own in-memory database. This suite used to bind to the app's real engine and
+# SessionLocal, so a plain `pytest` wrote to — and wiped rows in — whatever DATABASE_URL
+# pointed at. StaticPool keeps the one :memory: connection alive so the session under test
+# and the task under test see the same database.
+_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
+_TestingSessionLocal = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
+
+
 class ReliabilityGuardrailsTests(unittest.TestCase):
     def setUp(self):
-        from app.db.session import engine, SessionLocal
-        self.engine = engine
+        self.engine = _engine
         Base.metadata.create_all(self.engine)
-        self.SessionLocal = SessionLocal
+        self.SessionLocal = _TestingSessionLocal
         self.db = self.SessionLocal()
 
-        # Clean up any leftover test data
-        self.db.query(PublishJob).delete()
-        self.db.query(PostAuditLog).delete()
-        self.db.query(PostMedia).delete()
-        self.db.query(Location).delete()
-        self.db.query(Post).delete()
-        self.db.query(User).delete()
-        self.db.query(Organization).delete()
-        self.db.commit()
+        # process_publish_job_task opens its own session (a call-time import of
+        # SessionLocal), so point that at the test database too — otherwise the task
+        # under test would talk to the real one.
+        for target in ("app.db.session.SessionLocal", "app.tasks.SessionLocal"):
+            patcher = patch(target, _TestingSessionLocal)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
 
         # Setup standard organization & users
         self.org = Organization(name="Test Org")
@@ -76,6 +86,7 @@ class ReliabilityGuardrailsTests(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+        Base.metadata.drop_all(self.engine)
 
     def test_unapproved_status_publishing_block(self):
         # 1. Create a draft post

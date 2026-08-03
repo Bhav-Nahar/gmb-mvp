@@ -24,14 +24,22 @@ interface OrgRow {
   trial_ends_at: string | null
   created_at: string
   deleted_at: string | null
+  is_comped: boolean
+  razorpay_subscription_id: string | null
 }
 
 interface Metrics {
+  mrr_paise: number
+  trials_ending_48h: number
+  trial_to_paid_pct: number
+  ever_paid_organizations: number
+  last_webhook_at: string | null
   total_organizations: number
   total_users: number
   total_locations: number
   by_status: Record<string, number>
   active_organizations: number
+  onboarding_organizations: number
   trial_organizations: number
   past_due_organizations: number
   locked_organizations: number
@@ -64,6 +72,19 @@ const FLAG_META: { key: keyof Flags; title: string; region: string; whenOn: stri
   },
 ]
 
+// Tabs over the org list. `count` reads the metrics payload so each tab shows its size;
+// paid/trial/not-started are the three that matter day to day.
+const TABS: { value: string; label: string; count?: (m: Metrics | null) => number | null }[] = [
+  { value: '', label: 'All', count: (m) => m?.total_organizations ?? null },
+  { value: 'paid', label: 'Paid', count: (m) => m?.active_organizations ?? null },
+  { value: 'trial', label: 'Trial', count: (m) => m?.trial_organizations ?? null },
+  { value: 'onboarding', label: 'Not started', count: (m) => m?.onboarding_organizations ?? null },
+  { value: 'past_due', label: 'Past due', count: (m) => m?.past_due_organizations ?? null },
+  { value: 'locked', label: 'Locked', count: (m) => m?.locked_organizations ?? null },
+]
+
+const PAGE_SIZE = 50
+
 const STATUS_STYLES: Record<string, string> = {
   active: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
   trial: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
@@ -87,6 +108,7 @@ export default function AdminOrgsPage() {
   const [q, setQ] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [showDeleted, setShowDeleted] = useState(false)
+  const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   // Global runtime flags: which regions start the trial with a phone number only
@@ -115,6 +137,8 @@ export default function AdminOrgsPage() {
       if (q.trim()) params.q = q.trim()
       if (statusFilter) params.subscription_status = statusFilter
       if (showDeleted) params.deleted = 'only'
+      params.limit = String(PAGE_SIZE)
+      params.offset = String(page * PAGE_SIZE)
       const [m, list, flags] = await Promise.all([
         api.get<Metrics>('/admin/metrics'),
         api.get<{ total: number; items: OrgRow[] }>('/admin/organizations', params),
@@ -132,17 +156,37 @@ export default function AdminOrgsPage() {
   }
 
   // Reload on status / trash toggle change; search submits via the form.
-  useEffect(() => { load() }, [statusFilter, showDeleted])
+  useEffect(() => { load() }, [statusFilter, showDeleted, page])
+  // Any filter change starts over at page 1 — otherwise switching tabs while on page 3
+  // shows an empty table.
+  useEffect(() => { setPage(0) }, [statusFilter, showDeleted])
 
-  const cards = metrics
+  // Razorpay delivery health: if webhooks go quiet, activations fall back to the
+  // /confirm path plus the 30-minute reconcile sweep, and renewals stop applying at all.
+  const webhookAgeHours = metrics?.last_webhook_at
+    ? (Date.now() - new Date(metrics.last_webhook_at).getTime()) / 3.6e6
+    : null
+  const webhookLabel = webhookAgeHours === null
+    ? 'never'
+    : webhookAgeHours < 1 ? '< 1h ago'
+    : webhookAgeHours < 48 ? `${Math.round(webhookAgeHours)}h ago`
+    : `${Math.round(webhookAgeHours / 24)}d ago`
+
+  const cards: { label: string; value: string | number; alert: boolean }[] = metrics
     ? [
+        { label: 'MRR', value: `₹${Math.round(metrics.mrr_paise / 100).toLocaleString('en-IN')}`, alert: false },
+        { label: 'Trial → paid', value: `${metrics.trial_to_paid_pct}%`, alert: false },
+        { label: 'Trials ending 48h', value: metrics.trials_ending_48h, alert: false },
+        { label: 'Last webhook', value: webhookLabel,
+          alert: webhookAgeHours === null || webhookAgeHours > 48 },
         { label: 'Organizations', value: metrics.total_organizations, alert: false },
-        { label: 'Active', value: metrics.active_organizations, alert: false },
-        { label: 'Trial', value: metrics.trial_organizations, alert: false },
-        { label: 'Past due', value: metrics.past_due_organizations, alert: true },
-        { label: 'Locked', value: metrics.locked_organizations, alert: true },
-        { label: 'Re-mandate due', value: metrics.needs_remandate, alert: true },
-        { label: 'Failed syncs (7d)', value: metrics.failed_syncs_7d, alert: true },
+        { label: 'Paid', value: metrics.active_organizations, alert: false },
+        { label: 'On trial', value: metrics.trial_organizations, alert: false },
+        { label: 'Not started', value: metrics.onboarding_organizations, alert: false },
+        { label: 'Past due', value: metrics.past_due_organizations, alert: metrics.past_due_organizations > 0 },
+        { label: 'Locked', value: metrics.locked_organizations, alert: metrics.locked_organizations > 0 },
+        { label: 'Re-mandate due', value: metrics.needs_remandate, alert: metrics.needs_remandate > 0 },
+        { label: 'Failed syncs (7d)', value: metrics.failed_syncs_7d, alert: metrics.failed_syncs_7d > 0 },
         { label: 'Users', value: metrics.total_users, alert: false },
         { label: 'Locations', value: metrics.total_locations, alert: false },
         { label: 'Credits in circ.', value: metrics.credits_in_circulation, alert: false },
@@ -161,7 +205,7 @@ export default function AdminOrgsPage() {
           {cards.map((c) => (
             <div key={c.label} className="rounded-xl border border-border bg-card px-4 py-3">
               <div className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">{c.label}</div>
-              <div className={`text-xl font-bold mt-1 ${c.alert && c.value > 0 ? 'text-red-600' : ''}`}>{c.value}</div>
+              <div className={`text-xl font-bold mt-1 ${c.alert ? 'text-red-600' : ''}`}>{c.value}</div>
             </div>
           ))}
         </div>
@@ -201,6 +245,27 @@ export default function AdminOrgsPage() {
         </div>
       )}
 
+      {/* Tabs. 'Trial' is a running clock; 'Not started' is signed up but never activated
+          (status trial, no trial_ends_at) — the two used to be lumped together. */}
+      <div className="flex flex-wrap items-center gap-1 border-b border-border">
+        {TABS.map((t) => (
+          <button
+            key={t.value}
+            onClick={() => { setShowDeleted(false); setStatusFilter(t.value) }}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold transition ${
+              !showDeleted && statusFilter === t.value
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {t.label}
+            {t.count?.(metrics) != null && (
+              <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{t.count(metrics)}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-wrap items-center gap-3">
         <form onSubmit={(e) => { e.preventDefault(); load() }} className="flex items-center gap-2 flex-1 min-w-[220px]">
           <div className="relative flex-1">
@@ -208,22 +273,11 @@ export default function AdminOrgsPage() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search by name…"
+              placeholder="Search name, email, phone or Razorpay id…"
               className="w-full rounded-lg border border-border bg-card pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
         </form>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-lg border border-border bg-card px-3 py-2 text-sm"
-        >
-          <option value="">All statuses</option>
-          <option value="trial">Trial</option>
-          <option value="active">Active</option>
-          <option value="past_due">Past due</option>
-          <option value="locked">Locked</option>
-        </select>
         <button
           onClick={() => setShowDeleted((v) => !v)}
           className={`rounded-lg border px-3 py-2 text-sm font-semibold ${showDeleted ? 'border-red-500/40 text-red-600 bg-red-500/10' : 'border-border bg-card hover:bg-muted/40'}`}
@@ -260,6 +314,9 @@ export default function AdminOrgsPage() {
                       {o.deleted_at && <span className="ml-2 text-[10px] font-bold uppercase text-red-600">deleted</span>}
                       {/* No live users = nobody can sign in. Left behind when a user row is
                           deleted straight from the DB; the owner's next sign-in makes a new org. */}
+                      {o.is_comped && (
+                        <span className="ml-2 text-[10px] font-bold uppercase text-indigo-600" title="Active with no Razorpay mandate — comped/manual account, never re-checked by any sweep">comped</span>
+                      )}
                       {!o.deleted_at && o.user_count === 0 && (
                         <span className="ml-2 text-[10px] font-bold uppercase text-amber-600" title="No live users — unreachable workspace, safe to delete">orphaned</span>
                       )}
@@ -292,7 +349,27 @@ export default function AdminOrgsPage() {
           </table>
         </div>
       </div>
-      <div className="text-[11px] text-muted-foreground">{total} total</div>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>
+          {total === 0 ? 'No results' : `${page * PAGE_SIZE + 1}–${page * PAGE_SIZE + orgs.length} of ${total}`}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0 || loading}
+            className="rounded-md border border-border px-2 py-1 font-semibold disabled:opacity-40 hover:bg-muted/40"
+          >
+            Previous
+          </button>
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={loading || (page + 1) * PAGE_SIZE >= total}
+            className="rounded-md border border-border px-2 py-1 font-semibold disabled:opacity-40 hover:bg-muted/40"
+          >
+            Next
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
