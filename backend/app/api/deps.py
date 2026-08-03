@@ -95,10 +95,47 @@ def get_current_user(
                 "SUPERADMIN_IMPERSONATION admin=%s acting_org=%s path=%s method=%s",
                 user.email, target_org_id, request.url.path, request.method,
             )
+            _audit_impersonation(db, user, target_org_id, request)
             set_committed_value(user, "organization_id", target_org_id)
 
     request.state.current_user = user
     return user
+
+
+# One audit row per admin+org+day, so entering a workspace is answerable ("who opened
+# my account?") without writing a row for every request the impersonated session makes.
+def _audit_impersonation(db: Session, admin, target_org_id: int, request: Request) -> None:
+    """Record a super-admin entering another org's workspace.
+
+    Every other override goes through AuditLog; impersonation only wrote a log line, so
+    /admin/audit — the page you'd actually check — could not answer the question."""
+    from datetime import datetime, timezone
+    from app.models.audit_log import AuditLog
+    import json
+
+    try:
+        today = datetime.now(timezone.utc).date()
+        already = (
+            db.query(AuditLog.id)
+            .filter(AuditLog.organization_id == target_org_id,
+                    AuditLog.actor_user_id == admin.id,
+                    AuditLog.action == "superadmin.impersonate",
+                    AuditLog.created_at >= datetime(today.year, today.month, today.day,
+                                                    tzinfo=timezone.utc))
+            .first()
+        )
+        if already:
+            return
+        db.add(AuditLog(
+            organization_id=target_org_id, user_id=admin.id, actor_user_id=admin.id,
+            action="superadmin.impersonate",
+            details=json.dumps({"admin_email": admin.email, "first_path": request.url.path}),
+        ))
+        db.commit()
+    except Exception:
+        # Never let bookkeeping break the request it is describing.
+        db.rollback()
+        logger.exception("Could not record impersonation audit row for org %s", target_org_id)
 
 
 def _get_request_org(request: Request, db: Session, organization_id: int) -> Optional[Organization]:

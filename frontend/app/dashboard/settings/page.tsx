@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
+import { BrandingSettings } from '@/components/settings/BrandingSettings'
 import { Shield, AlertTriangle, User as UserIcon, Trash2, X, Building2, Mail, CalendarDays, Globe, ChevronRight, FileClock, BellRing } from 'lucide-react'
 
 interface UserProfile {
@@ -194,6 +195,9 @@ export default function SettingsPage() {
             />
           </div>
         </section>
+
+        {/* Agency white-labelling — self-hides unless is_agency */}
+        <BrandingSettings />
 
         {/* Danger zone — compact */}
         <section className="rounded-xl border border-red-300/60 dark:border-red-500/30 bg-red-50/50 dark:bg-red-500/5 p-4 sm:p-5">

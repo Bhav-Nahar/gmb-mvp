@@ -4163,3 +4163,89 @@ def release_lpseo_index_batch_task() -> dict:
         raise
     finally:
         db.close()
+
+
+@shared_task(name="app.tasks.send_trial_ending_reminders_task")
+def send_trial_ending_reminders_task() -> str:
+    """Warn a trial org before its clock runs out.
+
+    The gap this closes: a phone trial has no Razorpay mandate, so nobody sends a
+    pre-debit notice (card/UPI mandates get one from Razorpay itself). The first signal
+    those customers got was a locked dashboard on day 7. India is the default-on
+    phone-trial region, so that was most of the funnel churning in silence.
+
+    Sent once per org, one day out, to its Owners/Admins. `trial_reminder_sent_at` is
+    the idempotency key — the beat runs hourly and must not re-send.
+    """
+    from datetime import datetime, timedelta, timezone
+    from app.core.config import settings
+    from app.core.roles import ADMIN_ROLES
+    from app.models.user import User
+    from app.services.branding import report_branding
+    from app.services.email_service import send_email
+
+    now = datetime.now(timezone.utc)
+    dash_url = f"{settings.FRONTEND_URL.rstrip('/')}/dashboard/settings/billing"
+    db: Session = SessionLocal()
+    sent = 0
+    try:
+        due = db.query(Organization).filter(
+            Organization.subscription_status == "trial",
+            Organization.trial_ends_at.isnot(None),
+            Organization.trial_ends_at > now,
+            Organization.trial_ends_at <= now + timedelta(hours=24),
+            Organization.trial_reminder_sent_at.is_(None),
+            Organization.deleted_at.is_(None),
+        ).all()
+
+        for org in due:
+            admins = db.query(User).filter(
+                User.organization_id == org.id,
+                User.role.in_(list(ADMIN_ROLES)),
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+            ).all()
+            emails = [u.email for u in admins if u.email]
+            if not emails:
+                # Nobody to tell; still stamp it so the query doesn't re-scan this org hourly.
+                org.trial_reminder_sent_at = now
+                continue
+
+            brand = report_branding(org)
+            # A mandate means Razorpay debits automatically at trial end; without one the
+            # customer has to come back and pay, which is the whole point of this email.
+            has_mandate = bool(org.razorpay_subscription_id)
+            action = ("Your card will be charged automatically when the trial ends — "
+                      "nothing to do." if has_mandate else
+                      "Add a payment method before then to keep your dashboard, reports and AI replies.")
+            html = _trial_reminder_html(brand, org.name, action, has_mandate, dash_url)
+            if send_email(emails, "Your trial ends tomorrow", html):
+                sent += 1
+            org.trial_reminder_sent_at = now
+
+        db.commit()
+        return f"Trial-ending reminders: {sent} sent of {len(due)} due."
+    except Exception:
+        db.rollback()
+        logger.exception("Trial-ending reminder sweep failed")
+        raise
+    finally:
+        db.close()
+
+
+
+def _trial_reminder_html(brand, org_name, action, has_mandate, billing_url) -> str:
+    """Plain, brand-aware reminder. Escaped: brand fields and the org name are user input."""
+    from html import escape
+    name = escape(brand["name"] or "", quote=True)
+    logo_url = escape(brand["logo_url"] or "", quote=True)
+    site_url = escape(brand["website_url"] or "", quote=True)
+    org_name = escape(org_name or "", quote=True)
+    cta = "View billing" if has_mandate else "Add payment method"
+    return f'''<div style="font-family:system-ui,Arial,sans-serif;max-width:560px;margin:auto;color:#111">
+  <a href="{site_url}"><img src="{logo_url}" alt="{name}" style="height:32px;margin-bottom:16px;border:0"></a>
+  <h2 style="margin:0 0 4px">Your trial ends tomorrow</h2>
+  <p style="color:#555;margin:8px 0 20px">{org_name} — {escape(action)}</p>
+  <a href="{billing_url}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:700">{cta} →</a>
+  <p style="color:#aaa;font-size:11px;margin-top:24px">Sent by <a href="{site_url}" style="color:#aaa">{name}</a></p>
+</div>'''

@@ -77,6 +77,12 @@ celery.conf.beat_schedule = {
                              # NOT ride the daily sync — Google's own edits are rare and
                              # never urgent, and weekly is ~10x cheaper.
     },
+    "trial-ending-reminders": {
+        "task": "app.tasks.send_trial_ending_reminders_task",
+        "schedule": 3600.0,  # Hourly. Cheap (one indexed query on trial_ends_at) and the
+                             # window is the last 24h of the trial, so an hourly tick
+                             # sends each org's single reminder within an hour of due.
+    },
     "transition-subscriptions": {
         "task": "app.tasks.transition_subscriptions_task",
         "schedule": 21600.0, # Every 6 hours — preserves the lifecycle-sweep cadence

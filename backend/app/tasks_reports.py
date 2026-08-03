@@ -8,6 +8,7 @@ already shows — no new infra, no PDF.
 """
 import datetime
 import logging
+from html import escape
 
 from celery import shared_task
 from sqlalchemy import func, case
@@ -21,6 +22,8 @@ from app.models.organization import Organization
 from app.models.location import Location
 from app.models.location_daily_insights import LocationDailyInsight
 from app.models.review import Review
+from app.services.billing.entitlement_service import EntitlementService
+from app.services.branding import report_branding
 from app.services.email_service import send_email
 
 logger = logging.getLogger(__name__)
@@ -81,7 +84,16 @@ def _reputation(db, org_id, location_ids, start, end):
     return avg_rating, new_reviews, unanswered
 
 
-def _render_html(org_name, period, cur, prior, avg_rating, new_reviews, unanswered, dash_url):
+def _render_html(brand, org_name, period, cur, prior, avg_rating, new_reviews, unanswered, dash_url):
+    # The brand fields and the org name are user-supplied and land inside HTML attributes
+    # (src/href/alt) and element text, so they are escaped before touching the markup. The
+    # URL validator only checks the http(s) prefix — a URL containing a quote would
+    # otherwise break out of the attribute and inject arbitrary HTML into the email.
+    name = escape(brand["name"] or "", quote=True)
+    logo_url = escape(brand["logo_url"] or "", quote=True)
+    site_url = escape(brand["website_url"] or "", quote=True)
+    org_name = escape(org_name or "", quote=True)
+
     def tile(key, label):
         c, p = int(getattr(cur, key)), int(getattr(prior, key))
         if p:
@@ -99,7 +111,10 @@ def _render_html(org_name, period, cur, prior, avg_rating, new_reviews, unanswer
     t = [tile(k, lbl) for k, lbl in _KPI_COLS]
     grid = f"<tr>{t[0]}{t[1]}{t[2]}</tr><tr>{t[3]}{t[4]}{t[5]}</tr>"
     rating_txt = f"★ <b>{avg_rating:.1f}</b> avg rating · " if avg_rating is not None else ""
+    logo = (f'<a href="{site_url}"><img src="{logo_url}" alt="{name}" '
+            f'style="height:32px;margin-bottom:16px;border:0"></a>')
     return f'''<div style="font-family:system-ui,Arial,sans-serif;max-width:560px;margin:auto;color:#111">
+  {logo}
   <h2 style="margin:0 0 4px">Your week on Google</h2>
   <p style="color:#888;margin:0 0 20px">{org_name} · {period}</p>
   <table style="width:100%;border-collapse:separate;border-spacing:8px">{grid}</table>
@@ -107,7 +122,9 @@ def _render_html(org_name, period, cur, prior, avg_rating, new_reviews, unanswer
     {rating_txt}<b>{new_reviews}</b> new reviews · <b style="color:#dc2626">{unanswered}</b> awaiting reply
   </div>
   <a href="{dash_url}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:700">View full report →</a>
-  <p style="color:#aaa;font-size:11px;margin-top:24px"><a href="{dash_url}/settings" style="color:#aaa">Notification settings</a></p>
+  <p style="color:#aaa;font-size:11px;margin-top:24px">
+    Sent by <a href="{site_url}" style="color:#aaa">{name}</a> ·
+    <a href="{dash_url}/settings" style="color:#aaa">Notification settings</a></p>
 </div>'''
 
 
@@ -135,7 +152,17 @@ def send_weekly_reports_task() -> str:
             User.weekly_report_email == True,  # noqa: E712
             User.role.in_(list(STAFF_ROLES)),
         ).all()
-        org_names = dict(db.query(Organization.id, Organization.name).all())
+        # Whole rows, not (id, name): report_branding needs is_agency and the brand
+        # fields. Scoped to the orgs actually being emailed and to LIVE orgs only — a
+        # soft-deleted org's members lose app access immediately (deps.py) but were still
+        # being emailed for the whole 14-day purge window, and loading every row in the
+        # table to answer a per-user question got worse with each signup.
+        org_ids = {u.organization_id for u in users if u.organization_id}
+        orgs = {
+            o.id: o for o in db.query(Organization).filter(
+                Organization.id.in_(org_ids), Organization.deleted_at.is_(None)
+            ).all()
+        } if org_ids else {}
 
         for user in users:
             try:
@@ -150,8 +177,16 @@ def send_weekly_reports_task() -> str:
                 # Nothing happened in this scope this week — don't send a dead email.
                 if not any(int(getattr(cur, k)) for k, _ in _KPI_COLS) and not new_reviews and not unanswered:
                     continue
+                org = orgs.get(user.organization_id)
+                if org is None:
+                    continue  # org deleted (or user has none) — nothing to report on
+                # The weekly report is a paid deliverable: a locked (non-paying) org and
+                # a pre-payment onboarding org must not keep receiving it.
+                if not EntitlementService.is_premium_unlocked(org):
+                    continue
+                brand = report_branding(org)
                 html = _render_html(
-                    org_names.get(user.organization_id, "Your business"), period,
+                    brand, org.name, period,
                     cur, prior, avg_rating, new_reviews, unanswered, dash_url,
                 )
                 if send_email([user.email], f"Your week on Google · {period}", html):

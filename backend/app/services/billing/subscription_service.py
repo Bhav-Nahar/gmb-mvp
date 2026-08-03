@@ -238,9 +238,10 @@ class SubscriptionService:
                        f"location(s). Choose a higher plan for more.",
             )
 
-        # Enterprise custom pricing (per-location rate / credits) overrides the tiers.
+        # Enterprise custom pricing (per-location rate / credits) overrides the tier price.
+        # Scoped to the tier being bought: a Basic-rate deal doesn't discount Pro.
         _org = db.query(Organization).filter(Organization.id == org_id).first()
-        custom_rate = _org.custom_price_paise if _org else None
+        custom_rate = PricingService.custom_rate(_org, plan_tier) if _org else None
         custom_credits = _org.custom_credits_per_location if _org else None
 
         # Serialize checkouts per org. Without this, a double-submit (two tabs / rapid
@@ -265,6 +266,28 @@ class SubscriptionService:
             _cur = db.query(Organization).filter(Organization.id == org_id).first()
             prior_sub_id = _cur.razorpay_subscription_id if _cur else None
             needs_remandate = bool(_cur.subscription_needs_remandate) if _cur else False
+
+            # A prior mandate that Razorpay says is ALREADY ACTIVE means this org has a
+            # live, charging subscription — minting a second one here would orphan the
+            # first (org.razorpay_subscription_id is overwritten below) and the customer
+            # would be billed twice, forever. The API-level already_subscribed guard
+            # misses this window: after an early payment charges at Razorpay but before
+            # /confirm flips our row to 'active', the org still looks like a trial.
+            # A wind-down (subscription_ends_at set) is exempt — that org is legitimately
+            # re-subscribing while its cancelled mandate runs out.
+            if prior_sub_id and not needs_remandate and not _cur.subscription_ends_at:
+                try:
+                    prev_state = client.subscription.fetch(prior_sub_id).get("status")
+                except Exception as e:
+                    prev_state = None  # fail open: a Razorpay blip must not block checkout
+                    logger.warning("Could not check prior mandate %s for org %s: %s",
+                                   prior_sub_id, org_id, e)
+                if prev_state == "active":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="already_subscribed: this payment already went through. "
+                               "Refresh the page — if you are still not activated, contact support.",
+                    )
 
             data = {
                 "plan_id": plan_id,
@@ -349,11 +372,18 @@ class SubscriptionService:
 
         # Trial ends when the first debit is scheduled (Razorpay charge_at / start_at);
         # fall back to a fixed window if the field is absent.
+        #
+        # Capped at TRIAL_DAYS. On a mandate that bills immediately, charge_at is the NEXT
+        # cycle — a month out — so trusting it unconditionally would hand out a free month.
+        # Every mandate that reaches here is supposed to carry start_at = now + TRIAL_DAYS;
+        # the cap makes that guarantee instead of assuming it.
+        now = datetime.now(timezone.utc)
+        limit = now + timedelta(days=plan_config.TRIAL_DAYS)
         charge_at = subscription.get("charge_at") or subscription.get("start_at")
         if charge_at:
-            org.trial_ends_at = datetime.fromtimestamp(charge_at, tz=timezone.utc)
+            org.trial_ends_at = min(datetime.fromtimestamp(charge_at, tz=timezone.utc), limit)
         else:
-            org.trial_ends_at = datetime.now(timezone.utc) + timedelta(days=plan_config.TRIAL_DAYS)
+            org.trial_ends_at = limit
 
         mode = subscription.get("payment_method")  # 'card' | 'upi' | 'emandate' | ...
         if mode in ("card", "upi"):
@@ -394,6 +424,74 @@ class SubscriptionService:
         return ok
 
     @staticmethod
+    def activate_paid_now(db: Session, org_id: int, payment_id: str | None = None) -> bool:
+        """Start a PAID subscription the moment the user completes checkout.
+
+        Used only for a deliberate pay-now checkout (a trial converting early, or a
+        past_due/locked org paying) — never for an onboarding trial mandate, which is
+        scheduled to debit on day 7 and must not grant paid entitlements up front.
+
+        Unlike `reconcile_subscription` this also accepts an `authenticated` mandate whose
+        first debit is due immediately: with UPI Autopay the bank approves instantly but
+        the debit lands later, and the customer must not sit locked out in the meantime.
+        The risk that the debit then fails is covered by the subscription.halted /
+        .pending webhooks, which drop the org to past_due with its grace window.
+
+        Returns True if the org is paid-active afterwards."""
+        from app.services.billing.webhook_service import WebhookService
+
+        stmt = select(Organization).where(Organization.id == org_id).with_for_update()
+        org = db.scalars(stmt).first()
+        if not org:
+            return False
+        if org.subscription_status == "active" and not org.subscription_ends_at:
+            return True
+        if not org.razorpay_subscription_id:
+            return False
+
+        client = SubscriptionService.get_razorpay_client()
+        try:
+            subscription = client.subscription.fetch(org.razorpay_subscription_id)
+        except Exception:
+            return False
+        if str(subscription.get("notes", {}).get("organization_id")) != str(org_id):
+            return False
+
+        status = subscription.get("status")
+        if status not in ("active", "authenticated"):
+            return False  # 'created' = mandate never approved; nothing was paid
+
+        # paid_count >= 1 means Razorpay has already debited at least once — whatever the
+        # status string says, this customer has paid and must be activated.
+        charged = int(subscription.get("paid_count") or 0) >= 1
+        if status == "authenticated" and not charged:
+            # An authenticated-but-unpaid mandate is only a trial mandate if its FIRST
+            # debit was deliberately scheduled into the future, which is exactly what
+            # start_at encodes (the trial checkout sets start_at = now + TRIAL_DAYS).
+            #
+            # Do NOT consult charge_at here: on any normal subscription Razorpay sets
+            # charge_at to the NEXT billing date — a month out — so reading it made every
+            # pay-now UPI checkout look like a deferred trial and left the payer sitting
+            # on their old plan until a webhook arrived.
+            start_at = subscription.get("start_at")
+            if start_at and start_at > int(datetime.now(timezone.utc).timestamp()) + 60:
+                return False
+
+        # Fetch the payment so the charge lands in billing history immediately. Without
+        # it the org is active with no receipt until the webhook arrives (and never, if
+        # webhook delivery is broken). Best-effort: entitlements matter more than the row.
+        payment = None
+        if payment_id:
+            try:
+                payment = client.payment.fetch(payment_id)
+            except Exception:
+                logger.warning("Could not fetch payment %s for org %s ledger row", payment_id, org_id)
+
+        WebhookService.apply_subscription_charged(db, org, subscription, payment=payment)
+        db.commit()
+        return True
+
+    @staticmethod
     def assert_trial_not_abused(db: Session, org_id: int, phone: str | None = None) -> None:
         """Block a second free trial for the same person. A card-authorization mandate
         alone doesn't stop someone spinning up N accounts, so we dedupe on the two stable
@@ -403,6 +501,13 @@ class SubscriptionService:
         advanced past onboarding (active/past_due/locked). Raises 409 if a DIFFERENT org
         with a matching identity already consumed one. No-op when the flag is off."""
         if not settings.CARD_REQUIRED_ONBOARDING:
+            return
+
+        # Super-admin forgiveness: a customer who trialled on the wrong Google account
+        # would otherwise need a DB edit to be let back in.
+        this_org = db.query(Organization).filter(Organization.id == org_id).first()
+        if this_org is not None and this_org.allow_extra_trial:
+            logger.info("Trial-abuse guard waived for org %s (allow_extra_trial)", org_id)
             return
 
         consumed = or_(
@@ -539,7 +644,7 @@ class SubscriptionService:
 
         customer_id = SubscriptionService.ensure_razorpay_customer(db, org_id, org_name, user_email)
         plan_id = SubscriptionService._get_or_create_plan(db, location_count, interval, plan_tier,
-                                                          org.custom_price_paise)
+                                                          PricingService.custom_rate(org, plan_tier))
         client = SubscriptionService.get_razorpay_client()
         credits = PricingService.get_credits_for_locations(location_count, plan_tier, org.custom_credits_per_location)
 
@@ -674,7 +779,7 @@ class SubscriptionService:
         days_left, days_in_cycle = SubscriptionService._cycle_days_remaining(org, interval)
 
         base_amount = PricingService.prorated_addon_paise(current_quota, added, interval, days_left,
-                                                          days_in_cycle, tier, org.custom_price_paise)
+                                                          days_in_cycle, tier, PricingService.custom_rate(org, tier))
         if added > 0:
             base_amount = max(base_amount, _MIN_ORDER_PAISE)
         gst = plan_config.price_with_gst(base_amount)
@@ -765,7 +870,9 @@ class SubscriptionService:
             return "noop"
         interval = org.billing_cycle or "monthly"
         try:
-            new_plan_id = SubscriptionService._get_or_create_plan(db, org.location_quota, interval, org.plan_tier or "basic", org.custom_price_paise)
+            tier = org.plan_tier or "basic"
+            new_plan_id = SubscriptionService._get_or_create_plan(db, org.location_quota, interval, tier,
+                                                                 PricingService.custom_rate(org, tier))
             client = SubscriptionService.get_razorpay_client()
             # The razorpay SDK exposes the PATCH /subscriptions/{id} call as `edit`
             # (there is no `update` method) — using the wrong name silently raised

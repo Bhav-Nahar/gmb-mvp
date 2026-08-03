@@ -29,7 +29,12 @@ interface OrgDetail {
   remandate_due_at: string | null
   created_at: string
   deleted_at: string | null
-  custom_price_paise: number | null
+  is_agency: boolean
+  allow_extra_trial: boolean
+  trial_reminder_sent_at: string | null
+  is_comped: boolean
+  custom_prices: Record<string, number> | null
+  standard_prices: Record<string, number> | null
   custom_credits_per_location: number | null
 }
 interface OrgUser { id: number; email: string; name: string; role: string; phone: string | null; is_active: boolean; viewer_scope: string | null; created_at: string; deleted_at: string | null }
@@ -42,6 +47,13 @@ interface DetailResponse { organization: OrgDetail; users: OrgUser[]; users_tota
 const USERS_PAGE_SIZE = 25
 
 const ROLES = ['Owner', 'Admin', 'Regional Manager', 'Store Manager', 'Viewer']
+// Fallback tier order for the custom-pricing card. The real list comes from the API
+// (standard_prices) so a tier added server-side can't be silently dropped on save.
+const TIERS = ['lite', 'basic', 'pro']
+function tierList(o: { standard_prices: Record<string, number> | null }): string[] {
+  const keys = Object.keys(o.standard_prices || {})
+  return keys.length ? keys : TIERS
+}
 const inputCls = 'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30'
 
 function toLocalInput(iso: string | null): string {
@@ -104,7 +116,10 @@ export default function AdminOrgDetailPage() {
         topup_ai_credits_balance: o.topup_ai_credits_balance ?? '',
         trial_ends_at: toLocalInput(o.trial_ends_at),
         grace_period_ends_at: toLocalInput(o.grace_period_ends_at),
-        custom_price_rupees: o.custom_price_paise != null ? o.custom_price_paise / 100 : '',
+        // Paise -> rupees per tier for editing; '' means "no deal on this tier".
+        custom_prices: Object.fromEntries(
+          tierList(o).map((t) => [t, o.custom_prices?.[t] != null ? String(o.custom_prices![t] / 100) : ''])
+        ),
         custom_credits_per_location: o.custom_credits_per_location ?? '',
       })
     } catch (e: any) {
@@ -130,7 +145,12 @@ export default function AdminOrgDetailPage() {
         topup_ai_credits_balance: form.topup_ai_credits_balance === '' ? null : Number(form.topup_ai_credits_balance),
         trial_ends_at: form.trial_ends_at || null,
         grace_period_ends_at: form.grace_period_ends_at || null,
-        custom_price_paise: form.custom_price_rupees === '' ? null : Math.round(Number(form.custom_price_rupees) * 100),
+        // Sent wholesale: a tier left blank is dropped, meaning standard price for it.
+        custom_prices: Object.fromEntries(
+          Object.entries(form.custom_prices as Record<string, string>)
+            .filter(([, v]) => v !== '' && v != null)
+            .map(([t, v]) => [t, Math.round(Number(v) * 100)])
+        ),
         custom_credits_per_location: form.custom_credits_per_location === '' ? null : Number(form.custom_credits_per_location),
       }
       const res = await api.patch<{ message?: string }>(`/admin/organizations/${orgId}`, body)
@@ -142,6 +162,51 @@ export default function AdminOrgDetailPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  // White-labelling is super-admin-gated: the customer's own Report-branding card in
+  // settings stays hidden until this is on, so without a control here the whole feature
+  // is unreachable outside of a manual API call.
+  const toggleAgency = async () => {
+    setSaving(true); setError('')
+    try {
+      const next = !o.is_agency
+      await api.patch(`/admin/organizations/${orgId}`, {
+        is_agency: next, reason: reason || `super-admin ${next ? 'enabled' : 'disabled'} agency white-label`,
+      })
+      setReason(''); flash(next ? 'Agency white-labelling enabled.' : 'Agency white-labelling disabled.'); load()
+    } catch (e: any) {
+      setError(e.message || 'Failed to update agency mode')
+    } finally { setSaving(false) }
+  }
+
+  // Support actions that used to require the Razorpay dashboard or a SQL edit.
+  const support = async (path: string, body: any, confirmMsg?: string) => {
+    if (confirmMsg && !confirm(confirmMsg)) return
+    setSaving(true); setError('')
+    try {
+      const res = await api.post<{ message?: string }>(
+        `/admin/organizations/${orgId}/${path}`,
+        { reason: reason || `super-admin ${path}`, ...body },
+      )
+      setReason(''); flash(res?.message || 'Done.'); load()
+    } catch (e: any) {
+      setError(e.message || 'Action failed')
+    } finally { setSaving(false) }
+  }
+
+  const toggleExtraTrial = async () => {
+    setSaving(true); setError('')
+    try {
+      const next = !o.allow_extra_trial
+      await api.patch(`/admin/organizations/${orgId}`, {
+        allow_extra_trial: next,
+        reason: reason || `super-admin ${next ? 'waived' : 'restored'} the one-trial-per-account guard`,
+      })
+      setReason(''); flash(next ? 'This account may start another trial.' : 'Trial guard restored.'); load()
+    } catch (e: any) {
+      setError(e.message || 'Failed to update the trial guard')
+    } finally { setSaving(false) }
   }
 
   const clearCustomPricing = async () => {
@@ -235,6 +300,7 @@ export default function AdminOrgDetailPage() {
   }
 
   const o = data.organization
+  const hasCustomPricing = Object.keys(o.custom_prices || {}).length > 0
 
   return (
     <div className="space-y-6">
@@ -321,8 +387,86 @@ export default function AdminOrgDetailPage() {
         <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground">
           <Meta label="Renews / ends" value={fmt(o.subscription_ends_at)} />
           <Meta label="Credits reset" value={fmt(o.ai_credits_reset_date)} />
-          <Meta label="Razorpay sub" value={o.razorpay_subscription_id || '—'} />
+          <div>
+            <div className="text-[10px] uppercase font-bold tracking-wider">Razorpay sub</div>
+            {o.razorpay_subscription_id ? (
+              // Refunds stay in Razorpay's own dashboard on purpose — an in-app refund
+              // button moves real money with no second pair of eyes. This is the
+              // click-through support needs for "refund me", one hop away.
+              <a
+                href={`https://dashboard.razorpay.com/app/subscriptions/${o.razorpay_subscription_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground underline break-words hover:text-primary"
+                title="Open this subscription in Razorpay (payments, invoices, refunds)"
+              >
+                {o.razorpay_subscription_id}
+              </a>
+            ) : (
+              <div className="text-foreground">—</div>
+            )}
+          </div>
           <Meta label="Billing cycle" value={o.billing_cycle || '—'} />
+        </div>
+
+        {/* Support actions. Each one used to mean opening the Razorpay dashboard or
+            editing the database by hand; all four are audited with the reason above. */}
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+          <button
+            onClick={() => support('reconcile', {})}
+            disabled={saving || !o.razorpay_subscription_id}
+            title={o.razorpay_subscription_id
+              ? 'Ask Razorpay what this subscription really is and apply it — for "I paid but I am still locked"'
+              : 'No Razorpay subscription on this org'}
+            className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold hover:bg-muted/40 disabled:opacity-40"
+          >
+            Reconcile payment
+          </button>
+          <button
+            onClick={() => support('extend-trial', { days: 7 },
+              'Give this org 7 more trial days?')}
+            disabled={saving || o.subscription_status !== 'trial' || !o.trial_ends_at}
+            title={o.subscription_status === 'trial' && o.trial_ends_at
+              ? 'Push the trial clock out by a week'
+              : 'Only a running trial can be extended'}
+            className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold hover:bg-muted/40 disabled:opacity-40"
+          >
+            Extend trial +7d
+          </button>
+          <button
+            onClick={() => support('cancel-subscription', { immediate: false },
+              'Cancel this mandate at the end of the paid period? They keep access until then.')}
+            disabled={saving || !o.razorpay_subscription_id}
+            className="rounded-lg border border-amber-500/40 text-amber-600 px-3 py-1.5 text-xs font-semibold hover:bg-amber-500/10 disabled:opacity-40"
+          >
+            Cancel at period end
+          </button>
+          <button
+            onClick={() => support('cancel-subscription', { immediate: true },
+              'Stop billing NOW and lock the org immediately? Use this for a refund.')}
+            disabled={saving || !o.razorpay_subscription_id}
+            className="rounded-lg border border-red-500/40 text-red-600 px-3 py-1.5 text-xs font-semibold hover:bg-red-500/10 disabled:opacity-40"
+          >
+            Cancel immediately
+          </button>
+          <button
+            onClick={toggleExtraTrial}
+            disabled={saving}
+            title="Forgive the one-trial-per-Google-account/phone guard (wrong-account signup)"
+            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${
+              o.allow_extra_trial
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+                : 'border-border bg-card hover:bg-muted/40'
+            }`}
+          >
+            {o.allow_extra_trial ? 'Extra trial allowed' : 'Allow another trial'}
+          </button>
+          {o.is_comped && (
+            <span className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-indigo-600"
+                  title="Active with no Razorpay mandate: this account pays nothing and no sweep re-checks it">
+              comped
+            </span>
+          )}
         </div>
       </section>
 
@@ -330,27 +474,58 @@ export default function AdminOrgDetailPage() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-sm font-bold uppercase tracking-wider">Enterprise custom pricing</h2>
-          {(o.custom_price_paise != null || o.custom_credits_per_location != null) && (
+          {(hasCustomPricing || o.custom_credits_per_location != null) && (
             <span className="text-[10px] font-bold uppercase text-emerald-600">Active</span>
           )}
         </div>
         <p className="text-xs text-muted-foreground mb-4">
-          Overrides standard tiers for this org only. Price is charged per location; annual = rate × 12 (no extra discount).
-          Leave blank for standard pricing. Uses the &quot;Reason&quot; field above for the audit log; click &quot;Save changes&quot; to apply.
+          A negotiated per-location rate <strong>per tier</strong>, for this org only — so a ₹799 Basic deal
+          doesn&apos;t hand them Pro at ₹799, and they can still be upsold. Tiers left blank bill the standard
+          rate. Annual = rate × 12 (no extra discount). Uses the &quot;Reason&quot; field above for the audit log;
+          click &quot;Save changes&quot; to apply.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Price per location (₹ / month)">
-            <input type="number" min={0} value={form.custom_price_rupees}
-                   onChange={(e) => setForm({ ...form, custom_price_rupees: e.target.value })}
-                   placeholder="standard" className={inputCls} />
-          </Field>
-          <Field label="AI credits per location">
+          {tierList(o).map((tier) => {
+            const std = o.standard_prices?.[tier]
+            const isCurrent = (o.plan_tier || 'basic') === tier
+            return (
+              <Field key={tier} label={`${tier} — ₹ / location / month`}>
+                <input type="number" min={0} value={form.custom_prices?.[tier] ?? ''}
+                       onChange={(e) => setForm({
+                         ...form,
+                         custom_prices: { ...form.custom_prices, [tier]: e.target.value },
+                       })}
+                       placeholder={std != null ? `standard ₹${std / 100}` : 'standard'}
+                       className={inputCls} />
+                {isCurrent && <span className="mt-1 block text-[10px] font-bold uppercase text-primary">on this tier</span>}
+              </Field>
+            )
+          })}
+        </div>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Field label="AI credits per location (all tiers)">
             <input type="number" min={0} value={form.custom_credits_per_location}
                    onChange={(e) => setForm({ ...form, custom_credits_per_location: e.target.value })}
                    placeholder="standard" className={inputCls} />
           </Field>
+          <Field label="Agency white-label (report branding)">
+            <button
+              onClick={toggleAgency}
+              disabled={saving}
+              title={o.is_agency
+                ? 'Client sees the Report branding card in settings and their logo replaces ours on exports'
+                : 'Turn on so this client can put their own logo on exported reports'}
+              className={`h-10 w-full rounded-lg border px-4 text-sm font-bold uppercase tracking-wider disabled:opacity-50 ${
+                o.is_agency
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+                  : 'border-border bg-card text-muted-foreground hover:bg-muted/40'
+              }`}
+            >
+              {o.is_agency ? 'Enabled' : 'Off'}
+            </button>
+          </Field>
           <div className="flex items-end">
-            {(o.custom_price_paise != null || o.custom_credits_per_location != null) && (
+            {(hasCustomPricing || o.custom_credits_per_location != null) && (
               <button onClick={clearCustomPricing} disabled={saving}
                       className="rounded-lg border border-red-500/40 text-red-600 px-4 py-2 text-sm font-semibold hover:bg-red-500/10 disabled:opacity-50">
                 Remove custom pricing
@@ -358,17 +533,21 @@ export default function AdminOrgDetailPage() {
             )}
           </div>
         </div>
-        {form.custom_price_rupees !== '' && (() => {
+        {(() => {
+          // Preview the rate they'd actually be billed: the tier they're on now.
+          const tier = o.plan_tier || 'basic'
+          const rate = Number(form.custom_prices?.[tier])
           const quota = Number(form.location_quota) || 0
+          if (!rate) return null
           return (
-          <p className="mt-3 text-xs text-muted-foreground">
-            Preview at quota {quota || '—'}: {quota
-              ? `₹${(Number(form.custom_price_rupees) * quota).toLocaleString('en-IN')}/mo`
-              : 'set a location quota to preview'}
-            {form.custom_credits_per_location !== '' && quota
-              ? ` · ${Number(form.custom_credits_per_location) * quota} credits/mo`
-              : ''}
-          </p>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Preview on their current tier ({tier}) at quota {quota || '—'}: {quota
+                ? `₹${(rate * quota).toLocaleString('en-IN')}/mo`
+                : 'set a location quota to preview'}
+              {form.custom_credits_per_location !== '' && quota
+                ? ` · ${Number(form.custom_credits_per_location) * quota} credits/mo`
+                : ''}
+            </p>
           )
         })()}
       </section>

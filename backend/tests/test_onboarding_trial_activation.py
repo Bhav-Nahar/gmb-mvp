@@ -25,6 +25,8 @@ from app.services.billing.subscription_service import SubscriptionService, norma
 from app.services.billing.webhook_service import WebhookService
 from app.services.billing.entitlement_service import EntitlementService
 from app.services.billing.credit_service import CreditService
+from app.core.security import create_access_token
+from app.db.session import get_db
 
 
 @compiles(JSONB, "sqlite")
@@ -47,6 +49,18 @@ def fixture_db():
     finally:
         db.close()
         Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(name="client")
+def fixture_client(db):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    def _o():
+        yield db
+    app.dependency_overrides[get_db] = _o
+    yield TestClient(app)
+    app.dependency_overrides.clear()
 
 
 def _mk_org(db, status="trial", trial_ends_at=None, sub_id=None, quota=1):
@@ -366,3 +380,196 @@ def test_abuse_guard_allows_first_trial(db):
     _add_owner(db, fresh, "new@x.com", "G-NEW", phone="+919111111111")
     with patch.object(settings, "CARD_REQUIRED_ONBOARDING", True):
         SubscriptionService.assert_trial_not_abused(db, fresh.id, phone="+919111111111")  # no raise
+
+
+# ---- paying early must activate on /confirm, not wait for the webhook -------
+
+def test_early_payment_during_trial_activates_immediately(db, client):
+    """A trial org that pays before day 7 must be ACTIVE the moment /confirm returns.
+
+    /confirm used to route every status=='trial' org into activate_trial_from_subscription,
+    which early-returns for a running clock without contacting Razorpay — so the charge
+    stayed unapplied until the subscription.charged webhook (or the 30-min sweep)."""
+    org = _mk_org(db, status="trial", trial_ends_at=NOW + timedelta(days=5), sub_id="sub_paid")
+    u = User(email="early@x.com", name="e", google_id="g_early", role="Owner",
+             is_active=True, organization_id=org.id)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    client.cookies.set("gmb_auth_token", create_access_token(u.email, token_version=u.token_version))
+
+    fake = MagicMock()
+    fake.utility.verify_subscription_payment_signature.return_value = True
+    # Razorpay charged the first cycle straight away (no start_at on an early payment).
+    fake.subscription.fetch.return_value = {
+        "id": "sub_paid", "status": "active", "payment_method": "card",
+        "current_end": int((NOW + timedelta(days=30)).timestamp()),
+        "notes": {"organization_id": str(org.id), "location_count": "2",
+                  "plan_tier": "basic", "credits": "60"},
+    }
+    fake.payment.fetch.return_value = {"id": "pay_1", "amount": 471764, "currency": "INR"}
+    with patch.object(settings, "CARD_REQUIRED_ONBOARDING", True), \
+         patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        r = client.post("/api/v1/billing/confirm", json={
+            "razorpay_payment_id": "pay_1", "razorpay_signature": "sig",
+            "razorpay_subscription_id": "sub_paid",
+        })
+    assert r.status_code == 200, r.text
+    assert r.json()["activated"] is True
+    db.refresh(org)
+    assert org.subscription_status == "active"   # immediately, not on the webhook
+    assert org.trial_ends_at is None             # trial replaced by the paid cycle
+    assert org.location_quota == 2               # entitlements from the subscription notes
+
+
+def test_onboarding_confirm_still_starts_the_trial(db, client):
+    """The onboarding path must be untouched: mandate approved, nothing charged yet."""
+    org = _mk_org(db, status="trial", trial_ends_at=None, sub_id="sub_onb")
+    u = User(email="onb@x.com", name="o", google_id="g_onb", role="Owner",
+             is_active=True, organization_id=org.id)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    client.cookies.set("gmb_auth_token", create_access_token(u.email, token_version=u.token_version))
+
+    fake = MagicMock()
+    fake.utility.verify_subscription_payment_signature.return_value = True
+    fake.subscription.fetch.return_value = {
+        "id": "sub_onb", "status": "authenticated", "payment_method": "card",
+        "charge_at": int((NOW + timedelta(days=7)).timestamp()),
+        "notes": {"organization_id": str(org.id)},
+    }
+    with patch.object(settings, "CARD_REQUIRED_ONBOARDING", True), \
+         patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        r = client.post("/api/v1/billing/confirm", json={
+            "razorpay_payment_id": "pay_2", "razorpay_signature": "sig",
+            "razorpay_subscription_id": "sub_onb",
+        })
+    assert r.status_code == 200, r.text
+    db.refresh(org)
+    assert org.subscription_status == "trial"
+    assert org.trial_ends_at is not None         # clock started, no charge applied
+
+
+def test_upi_early_payment_activates_before_the_debit_lands(db, client):
+    """Pay-now with UPI Autopay: the bank approves instantly, the debit lands later.
+    The customer must be active immediately — a failed debit is caught later by the
+    subscription.halted / .pending webhooks (past_due + grace)."""
+    org = _mk_org(db, status="trial", trial_ends_at=NOW + timedelta(days=4), sub_id="sub_upi")
+    u = User(email="upi@x.com", name="u", google_id="g_upi", role="Owner",
+             is_active=True, organization_id=org.id)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    client.cookies.set("gmb_auth_token", create_access_token(u.email, token_version=u.token_version))
+
+    fake = MagicMock()
+    fake.utility.verify_subscription_payment_signature.return_value = True
+    fake.subscription.fetch.return_value = {
+        "id": "sub_upi", "status": "authenticated", "payment_method": "upi",
+        "notes": {"organization_id": str(org.id), "location_count": "1",
+                  "plan_tier": "basic", "credits": "30"},
+    }
+    fake.payment.fetch.return_value = {"id": "pay_upi", "amount": 235882, "currency": "INR"}
+    with patch.object(settings, "CARD_REQUIRED_ONBOARDING", True), \
+         patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        r = client.post("/api/v1/billing/confirm", json={
+            "razorpay_payment_id": "pay_upi", "razorpay_signature": "sig",
+            "razorpay_subscription_id": "sub_upi",
+        })
+    assert r.status_code == 200, r.text
+    assert r.json()["activated"] is True
+    db.refresh(org)
+    assert org.subscription_status == "active"
+    # ...and the charge shows in billing history right away, not only on the webhook.
+    from app.models.billing_transaction import BillingTransaction
+    row = db.query(BillingTransaction).filter(
+        BillingTransaction.razorpay_payment_id == "pay_upi").first()
+    assert row is not None and row.amount_paise == 235882
+
+
+def test_scheduled_trial_mandate_does_not_grant_paid_access(db, client):
+    """Guard: an authenticated mandate whose first debit is days out (a trial) must NOT
+    be treated as a payment, even on the pay-now path."""
+    org = _mk_org(db, status="past_due", trial_ends_at=None, sub_id="sub_sched")
+    org.grace_period_ends_at = NOW + timedelta(days=2)
+    db.commit()
+    fake = MagicMock()
+    fake.subscription.fetch.return_value = {
+        "id": "sub_sched", "status": "authenticated",
+        "start_at": int((NOW + timedelta(days=7)).timestamp()),
+        "notes": {"organization_id": str(org.id)},
+    }
+    with patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        assert SubscriptionService.activate_paid_now(db, org.id, "pay_x") is False
+    db.refresh(org)
+    assert org.subscription_status == "past_due"
+
+
+def test_upi_pay_now_is_not_mistaken_for_a_deferred_trial_mandate(db, client):
+    """Regression, seen live: a real UPI pay-now subscription comes back 'authenticated'
+    with charge_at set to the NEXT billing date (a month out) and start_at = now. Reading
+    charge_at made that look like a scheduled trial mandate, so the payer stayed on their
+    trial with no receipt until a webhook arrived — which never came in dev at all."""
+    org = _mk_org(db, status="trial", trial_ends_at=NOW + timedelta(days=6), sub_id="sub_upi_now")
+    u = User(email="upinow@x.com", name="u", google_id="g_upinow", role="Owner",
+             is_active=True, organization_id=org.id)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    client.cookies.set("gmb_auth_token", create_access_token(u.email, token_version=u.token_version))
+
+    fake = MagicMock()
+    fake.utility.verify_subscription_payment_signature.return_value = True
+    fake.subscription.fetch.return_value = {
+        "id": "sub_upi_now", "status": "authenticated", "payment_method": "upi",
+        "start_at": int(NOW.timestamp()),                                  # billed from now
+        "charge_at": int((NOW + timedelta(days=31)).timestamp()),           # NEXT cycle
+        "current_end": int((NOW + timedelta(days=31)).timestamp()),
+        "notes": {"organization_id": str(org.id), "location_count": "2",
+                  "plan_tier": "basic", "credits": "60"},
+    }
+    fake.payment.fetch.return_value = {"id": "pay_upi_now", "amount": 399800, "currency": "INR"}
+    with patch.object(settings, "CARD_REQUIRED_ONBOARDING", True), \
+         patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        r = client.post("/api/v1/billing/confirm", json={
+            "razorpay_payment_id": "pay_upi_now", "razorpay_signature": "sig",
+            "razorpay_subscription_id": "sub_upi_now",
+        })
+    assert r.status_code == 200, r.text
+    assert r.json()["activated"] is True
+    db.refresh(org)
+    assert org.subscription_status == "active"
+    assert org.trial_ends_at is None
+
+
+def test_a_paid_count_of_one_activates_whatever_the_status_says(db):
+    """Belt and braces: if Razorpay has debited at least once, the customer is paid."""
+    org = _mk_org(db, status="trial", trial_ends_at=NOW + timedelta(days=3), sub_id="sub_paid_once")
+    fake = MagicMock()
+    fake.subscription.fetch.return_value = {
+        "id": "sub_paid_once", "status": "authenticated", "paid_count": 1,
+        "start_at": int((NOW + timedelta(days=7)).timestamp()),   # would otherwise be refused
+        "notes": {"organization_id": str(org.id), "location_count": "1",
+                  "plan_tier": "basic", "credits": "30"},
+    }
+    fake.payment.fetch.return_value = {"id": "pay_once", "amount": 235882, "currency": "INR"}
+    with patch.object(SubscriptionService, "get_razorpay_client", return_value=fake):
+        assert SubscriptionService.activate_paid_now(db, org.id, "pay_once") is True
+    db.refresh(org)
+    assert org.subscription_status == "active"
+
+
+def test_trial_length_is_capped_even_if_razorpay_reports_a_far_future_charge(db):
+    """Same field confusion as the pay-now bug, other direction: if charge_at points at
+    the next monthly cycle, the trial must still be TRIAL_DAYS, not a free month."""
+    from app.core import plan_config
+
+    org = _mk_org(db, status="trial", trial_ends_at=None, sub_id="sub_far")
+    ok = SubscriptionService.activate_trial(db, org, {
+        "status": "authenticated", "payment_method": "card",
+        "charge_at": int((NOW + timedelta(days=31)).timestamp()),
+    })
+    assert ok is True
+    cap = NOW + timedelta(days=plan_config.TRIAL_DAYS)
+    assert org.trial_ends_at.replace(tzinfo=None) <= cap.replace(tzinfo=None) + timedelta(minutes=1)
