@@ -164,6 +164,14 @@ def get_metrics(db: Session = Depends(get_db), _: User = Depends(superadmin_requ
     for org in db.query(Organization).filter(
         Organization.subscription_status == "active", Organization.deleted_at.is_(None)
     ).all():
+        # No Razorpay mandate = nothing is being billed, so this org contributes nothing.
+        # These are the comped/internal accounts (typically quota 9999) that a super-admin
+        # flipped to active by hand; pricing them would both inflate MRR and, since 9999 is
+        # far above the sellable ceiling, trip the range guard below. NOTE: this assumes
+        # Razorpay is the only way money arrives — an offline/invoiced customer would need
+        # counting separately.
+        if not org.razorpay_subscription_id:
+            continue
         qty = org.paid_location_quota or org.location_quota or 0
         if qty <= 0:
             continue

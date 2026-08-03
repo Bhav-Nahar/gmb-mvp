@@ -243,7 +243,7 @@ def test_allow_extra_trial_waives_the_abuse_guard(db):
 
 def test_metrics_report_mrr_and_conversion(db, client):
     paid = _org(db, name="Payer", subscription_status="active", location_quota=2,
-                paid_location_quota=2)
+                paid_location_quota=2, razorpay_subscription_id="sub_metrics")
     db.add(BillingTransaction(
         organization_id=paid.id, transaction_type="subscription_charge",
         amount_paise=471764, currency="INR", status="success",
@@ -452,9 +452,13 @@ def test_metrics_survive_an_org_whose_quota_cannot_be_priced(db, client):
     returned 400 and the whole Accounts page broke. Report the rest, name the skipped."""
     from app.core import plan_config
 
-    fine = _org(db, name="Priceable", subscription_status="active", location_quota=2)
+    # Both have mandates: a mandate-backed org is one we really do expect to price, which
+    # is what makes the unpriceable one an anomaly worth naming rather than a comped account.
+    fine = _org(db, name="Priceable", subscription_status="active", location_quota=2,
+                razorpay_subscription_id="sub_ok")
     broken = _org(db, name="Unpriceable", subscription_status="active",
-                  location_quota=plan_config.MAX_LOCATIONS + 50)
+                  location_quota=plan_config.MAX_LOCATIONS + 50,
+                  razorpay_subscription_id="sub_huge")
     with patch.object(settings, "SUPERADMIN_EMAILS", SUPER_EMAIL):
         _as_super(db, client)
         r = client.get("/api/v1/admin/metrics")
@@ -463,3 +467,22 @@ def test_metrics_survive_an_org_whose_quota_cannot_be_priced(db, client):
     assert m["mrr_paise"] == 2 * 199_900          # the healthy org still counted
     assert m["mrr_skipped_org_ids"] == [broken.id]
     assert fine.id not in m["mrr_skipped_org_ids"]
+
+
+def test_mrr_ignores_comped_accounts_without_flagging_them(db, client):
+    """Production shape: internal/comped orgs sit 'active' with quota 9999 and no mandate.
+    They bill nothing, so they belong outside MRR entirely — not in the skipped list, which
+    is reserved for orgs that really should be priced but cannot be."""
+    paying = _org(db, name="Payer", subscription_status="active", location_quota=2,
+                  razorpay_subscription_id="sub_real")
+    comped = _org(db, name="Internal", subscription_status="active", location_quota=9999,
+                  razorpay_subscription_id=None)
+    with patch.object(settings, "SUPERADMIN_EMAILS", SUPER_EMAIL):
+        _as_super(db, client)
+        r = client.get("/api/v1/admin/metrics")
+    assert r.status_code == 200, r.text
+    m = r.json()
+    assert m["mrr_paise"] == 2 * 199_900            # only the mandate-backed org
+    assert m["mrr_skipped_org_ids"] == []           # comped is expected, not an anomaly
+    assert comped.id not in m["mrr_skipped_org_ids"]
+    assert paying.id > 0
