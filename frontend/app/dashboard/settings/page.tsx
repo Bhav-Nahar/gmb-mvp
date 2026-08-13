@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import { BrandingSettings } from '@/components/settings/BrandingSettings'
-import { Shield, AlertTriangle, User as UserIcon, Trash2, X, Building2, Mail, CalendarDays, Globe, ChevronRight, FileClock, BellRing } from 'lucide-react'
+import { Shield, AlertTriangle, User as UserIcon, Trash2, X, Building2, Mail, CalendarDays, Globe, ChevronRight, FileClock, BellRing, MessageCircle } from 'lucide-react'
 
 interface UserProfile {
   id: number
@@ -159,6 +159,18 @@ export default function SettingsPage() {
             <p className="text-sm text-red-600 dark:text-red-400 p-8">Failed to load profile.</p>
           )}
         </section>
+
+        {/* Quick link to WhatsApp review collection */}
+        <Link href="/dashboard/settings/whatsapp" className="flex items-center justify-between rounded-xl border border-border bg-card px-5 py-4 shadow-sm hover:border-primary/40 transition-colors group">
+          <span className="flex items-center gap-3">
+            <MessageCircle className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            <span>
+              <span className="block text-sm font-bold text-foreground">WhatsApp</span>
+              <span className="block text-xs text-muted-foreground">Connect your number to ask customers for Google reviews</span>
+            </span>
+          </span>
+          <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+        </Link>
 
         {/* Quick link to activity logs */}
         <Link href="/dashboard/settings/logs" className="flex items-center justify-between rounded-xl border border-border bg-card px-5 py-4 shadow-sm hover:border-primary/40 transition-colors group">

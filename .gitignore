@@ -58,3 +58,5 @@ celerybeat.pid
 backend/app/static/uploads/
 
 env
+
+glassquickdev/

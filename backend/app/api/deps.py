@@ -287,6 +287,9 @@ def check_csrf(request: Request):
         "/api/v1/auth/google/callback",
         "/api/v1/auth/google/login",
         "/api/v1/auth/refresh",
+        # Reviewer login for Meta App Review. Unauthenticated by nature — it is
+        # what issues the session — and 404s entirely unless DEMO_LOGIN_ENABLED.
+        "/api/v1/auth/demo-login",
         "/api/v1/webhooks/razorpay",
         "/api/v1/",
         "/",
@@ -337,6 +340,9 @@ def check_billing_lock(request: Request, db: Session = Depends(get_db)):
         "/api/v1/auth/google/callback",
         "/api/v1/auth/google/login",
         "/api/v1/auth/refresh",
+        # Reviewer login for Meta App Review: unauthenticated by nature (it is
+        # what issues the session) and 404s unless DEMO_LOGIN_ENABLED.
+        "/api/v1/auth/demo-login",
         "/api/v1/billing/checkout-subscription",
         "/api/v1/billing/start-phone-trial",
         "/api/v1/billing/buy-credits",

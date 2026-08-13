@@ -67,3 +67,6 @@ __all__ = [
 
 from app.models.app_setting import AppSetting
 from app.models.competitor import TrackedCompetitor, CompetitorSnapshot
+from app.models.whatsapp_account import WhatsAppAccount
+from app.models.review_request import ReviewRequest
+from app.models.review_suppression import ReviewSuppression

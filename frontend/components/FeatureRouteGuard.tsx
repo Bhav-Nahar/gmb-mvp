@@ -9,13 +9,19 @@ import { useBillingStatus } from '@/hooks/useBilling';
 // doesn't include it shows a friendly upgrade screen instead of a raw 403. (The sidebar
 // already hides these; this covers bookmarks / typed URLs.) Matched on a path boundary so
 // /dashboard/compare (leaderboard) doesn't swallow /dashboard/comparison.
-const GATED = [
+const GATED: { prefix: string; feature: string; name: string; anyTier?: boolean }[] = [
   { prefix: '/dashboard/aeo', feature: 'aeo', name: 'AI Visibility' },
   { prefix: '/dashboard/local-rank', feature: 'local_rank', name: 'Local Rank' },
   { prefix: '/dashboard/comparison', feature: 'comparison', name: 'Comparison' },
   { prefix: '/dashboard/compare', feature: 'leaderboard', name: 'Leaderboard' },
   { prefix: '/dashboard/settings/reply-templates', feature: 'reply_templates', name: 'Reply Templates' },
   { prefix: '/dashboard/team', feature: 'team', name: 'Team members' },
+  // Newer features have no legacy Basic/Pro behaviour to preserve, so they are
+  // gated on every tier that lacks them — not just Lite. `anyTier` is what says so.
+  { prefix: '/dashboard/reviews/request', feature: 'review_requests',
+    name: 'WhatsApp review requests', anyTier: true },
+  { prefix: '/dashboard/settings/whatsapp', feature: 'review_requests',
+    name: 'WhatsApp review requests', anyTier: true },
 ];
 
 function matches(pathname: string, prefix: string) {
@@ -58,7 +64,7 @@ export function FeatureRouteGuard({ children }: { children: React.ReactNode }) {
   if (isLoading || !billing) return <>{children}</>;
   // Scope the interstitial to the Lite plan ONLY, so existing Basic/Pro orgs are never
   // affected (they keep their exact prior behavior — Local Rank etc. as before).
-  if (billing.plan_tier !== 'lite') return <>{children}</>;
+  if (billing.plan_tier !== 'lite' && !match.anyTier) return <>{children}</>;
   if (billing.features?.includes(match.feature)) return <>{children}</>;
   return <UpgradeInterstitial name={match.name} />;
 }

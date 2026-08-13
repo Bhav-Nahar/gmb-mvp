@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
-from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays, aeo, pseo, lpseo, cseo, cityseo
+from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays, aeo, pseo, lpseo, cseo, cityseo, public_review_redirect, whatsapp, whatsapp_webhook, review_campaigns, auth_demo
 from app.api import comparison, branding
 from app.api.deps import check_csrf, check_billing_lock, require_feature, require_premium
 from app.core import plan_config
@@ -115,10 +115,22 @@ app.mount("/static/uploads", StaticFiles(directory=static_uploads_path), name="s
 
 # Register routers under api/v1 prefix
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
+# Single-account reviewer login for Meta App Review. 404s unless
+# DEMO_LOGIN_ENABLED is true — see app/api/auth_demo.py.
+app.include_router(auth_demo.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(locations.router, prefix="/api/v1/locations", tags=["Locations"])
 app.include_router(microsites.router, prefix="/api/v1/locations", tags=["Microsites"],
                    dependencies=[Depends(require_premium)])
 app.include_router(public_microsites.router, prefix="/api/v1/public/microsites", tags=["Public Microsites"])
+# Review-link resolver. Public + unauthenticated: opened from a WhatsApp message
+# by a customer, gated only by an unguessable token.
+app.include_router(public_review_redirect.router, prefix="/api/v1/public/r", tags=["Public Review Links"])
+app.include_router(whatsapp.router, prefix="/api/v1/whatsapp", tags=["WhatsApp"])
+app.include_router(review_campaigns.router, prefix="/api/v1/review-requests", tags=["Review Requests"],
+                   dependencies=[Depends(require_feature(plan_config.FEATURE_REVIEW_REQUESTS))])
+# Meta webhook. Mounted under /api/v1/public/ so it inherits the CSRF exemption:
+# Meta has no session to present and authenticates with an HMAC signature instead.
+app.include_router(whatsapp_webhook.router, prefix="/api/v1/public/whatsapp/webhook", tags=["WhatsApp Webhook"])
 app.include_router(leads.router, prefix="/api/v1/locations", tags=["Leads"])
 app.include_router(push.router, prefix="/api/v1/push", tags=["Push"])
 app.include_router(dynamic_attributes.router, prefix="/api/v1/locations", tags=["Dynamic Attributes"])

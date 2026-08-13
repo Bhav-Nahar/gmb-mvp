@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import {
@@ -451,6 +452,12 @@ export default function ReviewsPage(props: any) {
               className={`rounded-full px-5 py-1.5 font-semibold transition ${view === 'analytics' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}>
               Analytics
             </button>
+            {/* A route, not a third `view`: the request flow is a page of its own,
+                so linking keeps one implementation instead of two. */}
+            <Link href="/dashboard/reviews/request"
+              className="rounded-full px-5 py-1.5 font-semibold text-muted-foreground transition hover:text-foreground">
+              Ask for reviews
+            </Link>
           </div>
 
           {view === 'analytics' && (

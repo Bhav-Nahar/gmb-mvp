@@ -75,10 +75,48 @@ class Settings(BaseSettings):
             )
         return self
 
+    # Reviewer login (Meta App Review only). Pinzo authenticates with Google;
+    # this is a single-account email/password door that exists because Meta's
+    # reviewers cannot complete a Google sign-in. OFF by default, and it must be
+    # switched off again once the review completes.
+    DEMO_LOGIN_ENABLED: bool = False
+    DEMO_LOGIN_EMAIL: str = ""
+    # scrypt hash from scripts/hash_demo_password.py — never the plaintext.
+    DEMO_LOGIN_PASSWORD_HASH: str = ""
+
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
+
+    # WhatsApp (Meta Cloud API). Pinzo is a Tech Provider: these identify OUR
+    # app, which is what lets a client authorise us during Embedded Signup.
+    # The clients' own tokens are per-organization and live encrypted in
+    # whatsapp_accounts — never here.
+    FACEBOOK_APP_ID: str = ""
+    FACEBOOK_APP_SECRET: str = ""
+    # The Embedded Signup configuration created on the Meta app.
+    WHATSAPP_ES_CONFIG_ID: str = ""
+    WHATSAPP_GRAPH_VERSION: str = "v21.0"
+    # How long before the same customer may be asked for a review again.
+    # Short windows mean repeat asks, and repeat asks are what make people block
+    # the sender — which drops the WhatsApp quality rating for EVERY message that
+    # number sends, not just the repeat. 30-90 days is the safe production range.
+    REVIEW_REQUEST_COOLDOWN_HOURS: int = 24
+
+    # Base URL baked into the review template's button. FIXED AT APPROVAL TIME
+    # and immutable afterwards, so it must be the production host even when the
+    # app runs locally — a template created from a dev machine with
+    # FRONTEND_URL=localhost is permanently useless.
+    REVIEW_LINK_BASE_URL: str = "https://pinzo.io"
+
+    # Shared with Meta when the webhook subscription is created.
+    WHATSAPP_WEBHOOK_VERIFY_TOKEN: str = ""
+    # DEV ONLY — the test WABA used to exercise the send path before Meta
+    # grants advanced access. Empty in production.
+    WHATSAPP_SYSTEM_TOKEN: str = ""
+    WHATSAPP_TEST_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_TEST_WABA_ID: str = ""
 
     # LLM Settings
     GROQ_API_KEY: str = ""
