@@ -19,6 +19,8 @@ type WhatsAppStatus = {
 type Usage = {
   month: string;
   billable_messages: number;
+  monthly_limit: number;
+  remaining: number;
   billed_by: string;
   note: string;
 };
@@ -29,10 +31,26 @@ type Stats = {
   reviews_in_period?: number | null;
 };
 
-type Accepted = { batch_id: string; queued: number };
+type Accepted = { batch_id: string; queued: number; starts_at?: string | null };
+
+// Quiet hours are enforced in IST on the server, so label them in IST too — a
+// tenant travelling abroad should still read the hour their customers will see.
+function sendWindowLabel(iso: string): string {
+  const at = new Date(iso);
+  // Compare the DAY in IST as well, or a 2am-local viewer reads "today" for a
+  // start that is tomorrow where the messages actually go out.
+  const istDay = (d: Date) => d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+  const day = istDay(at) === istDay(new Date()) ? 'today' : 'tomorrow';
+  const time = at.toLocaleTimeString('en-IN', {
+    hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata',
+  });
+  return `${time} ${day}`;
+}
 
 type PreflightRow = { phone: string; name?: string | null; will_send: boolean; reason?: string | null };
-type Preflight = { will_send: number; will_skip: number; rows: PreflightRow[] };
+// starts_at is null when sending begins immediately; set when the upload lands
+// inside quiet hours (before 9am / after 8pm IST) and the campaign will wait.
+type Preflight = { will_send: number; will_skip: number; rows: PreflightRow[]; starts_at?: string | null };
 
 type HistoryRow = {
   id: number; phone: string; customer_name?: string | null; status: string;
@@ -400,7 +418,7 @@ export default function RequestReviewsPage() {
 
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            Sent at a steady pace to protect your number&apos;s quality rating
+            Sent 9:00 AM – 8:00 PM at a steady pace to protect your number&apos;s quality rating
             {waStatus?.messaging_tier ? ` · daily limit ${waStatus.messaging_tier.replace('TIER_', '')}` : ''}.
           </p>
           <Button
@@ -411,7 +429,9 @@ export default function RequestReviewsPage() {
             {busy
               ? (preview ? 'Starting…' : 'Checking…')
               : preview
-                ? `Send ${preview.will_send} message${preview.will_send === 1 ? '' : 's'}`
+                ? preview.starts_at && preview.will_send > 0
+                  ? `Schedule ${preview.will_send} message${preview.will_send === 1 ? '' : 's'}`
+                  : `Send ${preview.will_send} message${preview.will_send === 1 ? '' : 's'}`
                 : `Check ${recipients.length || ''} number${recipients.length === 1 ? '' : 's'}`}
           </Button>
         </div>
@@ -436,13 +456,23 @@ export default function RequestReviewsPage() {
                 Nothing to send. Edit the list above and check again.
               </p>
             )}
+            {preview.starts_at && preview.will_send > 0 && (
+              <p className="mt-2 text-xs text-amber-700">
+                It&apos;s outside sending hours (9:00 AM – 8:00 PM), so this campaign will
+                start at {sendWindowLabel(preview.starts_at)}. Nothing is lost — a review
+                request that arrives at night gets reported rather than read, which costs
+                your number its quality rating.
+              </p>
+            )}
           </div>
         )}
       </div>
 
       {result && (
         <div className="rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-900">
-          Campaign started — {result.queued} queued. Messages go out over the next few minutes.
+          {result.starts_at
+            ? `Campaign scheduled — ${result.queued} queued. Sending starts at ${sendWindowLabel(result.starts_at)}, once sending hours open.`
+            : `Campaign started — ${result.queued} queued. Messages go out over the next few minutes.`}
         </div>
       )}
 
@@ -453,10 +483,23 @@ export default function RequestReviewsPage() {
               <h2 className="text-sm font-medium">Message costs — {usage.month}</h2>
               <p className="mt-0.5 text-2xl font-semibold">
                 {usage.billable_messages}
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  billable messages
+                <span className="ml-1 text-sm font-normal text-muted-foreground">
+                  / {usage.monthly_limit} messages this month
                 </span>
               </p>
+              {/* The ceiling is on the tenant's own Meta spend, so it belongs
+                  next to the count rather than being discovered when a campaign
+                  stops halfway. */}
+              {usage.remaining <= 0 ? (
+                <p className="mt-1 text-sm text-red-700">
+                  This month&apos;s limit is reached — sending is paused until next month.
+                  Contact support to raise it.
+                </p>
+              ) : usage.remaining < usage.monthly_limit * 0.1 ? (
+                <p className="mt-1 text-sm text-amber-700">
+                  {usage.remaining} messages left this month.
+                </p>
+              ) : null}
             </div>
             <a
               href="https://business.facebook.com/wa/manage/insights/"

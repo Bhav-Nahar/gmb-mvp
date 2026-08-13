@@ -1,19 +1,18 @@
 # ---------------------------------------------------------------------------
 # Single pricing model: flat per-location pricing per plan tier.
 # There are no separate "starter / growth / enterprise" SKUs. A subscription is
-# simply N locations, priced per the bands below, and what you get scales with N.
+# simply N locations at the plan's flat rate, and what you get scales with N.
 # ---------------------------------------------------------------------------
 
-# Flat per-location pricing (no volume bands — negotiated volume deals go through
-# the admin custom per-location rate instead). Tuples keep the (upper_bound, price)
-# shape the pricing service expects. All prices GST-INCLUSIVE.
-LOCATION_PRICE_TIERS = [(None, 199_900)]  # ₹1,999 / location
+# Flat per-location price (no volume bands — negotiated volume deals go through
+# the admin custom per-location rate instead). All prices GST-INCLUSIVE.
+LOCATION_PRICE = 199_900  # ₹1,999 / location
 
 # Annual billing: pay 12 months upfront at the plan's discounted per-month rate.
-# Each plan carries its own `annual_price_tiers` (≈20% off; Lite ≈25%) so the
-# headline numbers stay round — there is no global discount multiplier anymore.
+# Each plan carries its own `annual_price` (≈20% off; Lite ≈25%) so the headline
+# numbers stay round — there is no global discount multiplier anymore.
 ANNUAL_MONTHS = 12
-LOCATION_ANNUAL_PRICE_TIERS = [(None, 159_900)]  # ₹1,599 / location / mo
+LOCATION_ANNUAL_PRICE = 159_900  # ₹1,599 / location / mo
 
 # Entitlements that scale with the number of locations purchased.
 CREDITS_PER_LOCATION = 30
@@ -70,7 +69,7 @@ GST_RATE = 0.18
 # Plan tiers. The `plan_tier` column on the organization selects one.
 #   features: capability flags this tier unlocks (gated across the app).
 #   limits:   numeric caps for this tier (None/absent = unlimited).
-#   price_tiers / credits_per_location: how the tier charges / grants.
+#   price / credits_per_location: how the tier charges / grants.
 # NOTE: kept separate from the `plan` column, which remains the trial/active
 # billing-STATE flag — `plan_tier` is the product TIER, so neither overloads the other.
 # ---------------------------------------------------------------------------
@@ -110,8 +109,8 @@ _STANDARD_FEATURES = [FEATURE_SCHEDULER, FEATURE_TEAM, FEATURE_TEMPLATES, FEATUR
 PLANS = {
     "lite": {
         "name": "Lite",
-        "price_tiers": [(None, 79_900)],          # flat ₹799 / location, GST-incl.
-        "annual_price_tiers": [(None, 59_900)],   # ₹599/mo on annual (≈25% off)
+        "price": 79_900,          # flat ₹799 / location, GST-incl.
+        "annual_price": 59_900,   # ₹599/mo on annual (≈25% off)
         "credits_per_location": 10,
         "features": [],                    # none of the premium capabilities
         "limits": {
@@ -125,16 +124,16 @@ PLANS = {
     },
     "basic": {
         "name": "Basic",
-        "price_tiers": LOCATION_PRICE_TIERS,            # flat ₹1,999 / location, GST-incl.
-        "annual_price_tiers": LOCATION_ANNUAL_PRICE_TIERS,  # ₹1,599/mo on annual
+        "price": LOCATION_PRICE,                # flat ₹1,999 / location, GST-incl.
+        "annual_price": LOCATION_ANNUAL_PRICE,  # ₹1,599/mo on annual
         "credits_per_location": CREDITS_PER_LOCATION,   # 30
         "features": _STANDARD_FEATURES + [FEATURE_AEO],
         "limits": {LIMIT_COMPETITORS: 3},
     },
     "pro": {
         "name": "Pro",
-        "price_tiers": [(None, 299_900)],          # flat ₹2,999 / location, GST-incl.
-        "annual_price_tiers": [(None, 239_900)],   # ₹2,399/mo on annual
+        "price": 299_900,          # flat ₹2,999 / location, GST-incl.
+        "annual_price": 239_900,   # ₹2,399/mo on annual
         "credits_per_location": 45,
         # WhatsApp review requests are Pro-only: the tenant pays Meta directly for
         # the messages, so this is a reason to be on Pro rather than a cost to us.

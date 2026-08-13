@@ -32,9 +32,14 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.config import settings
-from app.core.security import create_access_token, decode_access_token_payload, encrypt_token
+from app.core.security import (
+    create_access_token, decode_access_token_payload, decrypt_token, encrypt_token,
+)
 from app.models.whatsapp_account import WhatsAppAccount
-from app.services.whatsapp_service import GRAPH, WhatsAppError, _raise_meta_error
+from app.services import whatsapp_errors, whatsapp_service
+from app.services.whatsapp_service import (
+    GRAPH, WhatsAppError, _raise_meta_error, template_status_by_waba,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +93,21 @@ _ES_EXTRAS = {
 }
 
 
+def app_id() -> str:
+    return _app_credentials()[0]
+
+
+def es_config_id() -> str:
+    config_id = (getattr(settings, "WHATSAPP_ES_CONFIG_ID", "") or "").strip()
+    if not config_id:
+        raise WhatsAppError("WHATSAPP_ES_CONFIG_ID is not configured")
+    return config_id
+
+
+def graph_version() -> str:
+    return (getattr(settings, "WHATSAPP_GRAPH_VERSION", "") or "v21.0").strip()
+
+
 def build_connect_url(organization_id: int) -> str:
     """The Meta-hosted Embedded Signup URL to send the tenant to.
 
@@ -100,14 +120,9 @@ def build_connect_url(organization_id: int) -> str:
     as a cross-check. That was the right call for security reasons and it pays
     off here too — a flow that silently drops state still works.
     """
-    app_id, _ = _app_credentials()
-    config_id = (getattr(settings, "WHATSAPP_ES_CONFIG_ID", "") or "").strip()
-    if not config_id:
-        raise WhatsAppError("WHATSAPP_ES_CONFIG_ID is not configured")
-
     query = urlencode({
-        "app_id": app_id,
-        "config_id": config_id,
+        "app_id": app_id(),
+        "config_id": es_config_id(),
         "extras": json.dumps(_ES_EXTRAS, separators=(",", ":")),
         "state": make_state(organization_id),
     })
@@ -144,15 +159,23 @@ def _post(path: str, token: str, payload: Optional[dict] = None) -> dict[str, An
     return body
 
 
-def exchange_code(code: str) -> str:
-    """Short-lived signup code -> the client's business access token."""
+def exchange_code(code: str, *, use_redirect_uri: bool = True) -> str:
+    """Short-lived signup code -> the client's business access token.
+
+    The JS-SDK signup popup returns the code without ever visiting a redirect
+    URI, and Meta then rejects an exchange that sends one ("redirect_uri
+    mismatch" against a URI the browser never used). The redirect flow requires
+    it. Hence the switch rather than a constant.
+    """
     app_id, app_secret = _app_credentials()
-    body = _get("/oauth/access_token", {
+    params = {
         "client_id": app_id,
         "client_secret": app_secret,
         "code": code,
-        "redirect_uri": whatsapp_redirect_uri(),
-    })
+    }
+    if use_redirect_uri:
+        params["redirect_uri"] = whatsapp_redirect_uri()
+    body = _get("/oauth/access_token", params)
     token = body.get("access_token")
     if not token:
         raise WhatsAppError(f"Meta returned no access token for that code: {body}")
@@ -195,6 +218,23 @@ def subscribe_app(waba_id: str, token: str) -> None:
     _post(f"/{waba_id}/subscribed_apps", token)
 
 
+def is_app_subscribed(waba_id: str, token: str) -> bool:
+    """Ask Meta whether our app is really on their WABA's subscriber list.
+
+    A successful subscribe call is not proof that stayed true: the tenant can
+    remove the app at Meta, and a failed subscribe during onboarding leaves no
+    trace anywhere else. Since the opt-out mechanism depends entirely on those
+    webhooks arriving, this is checked rather than assumed.
+    """
+    our_app_id = app_id()
+    body = _get(f"/{waba_id}/subscribed_apps", {"access_token": token})
+    for entry in body.get("data") or []:
+        app = entry.get("whatsapp_business_api_data") or {}
+        if str(app.get("id") or "") == str(our_app_id):
+            return True
+    return False
+
+
 def register_number(phone_number_id: str, token: str, pin: Optional[str] = None) -> str:
     """Activate the number for Cloud API sending. Returns the PIN used.
 
@@ -208,15 +248,21 @@ def register_number(phone_number_id: str, token: str, pin: Optional[str] = None)
     return pin
 
 
-def ensure_review_template(waba_id: str, token: str, redirect_base: str) -> dict[str, Any]:
+def ensure_review_template(waba_id: str, token: str, redirect_base: str,
+                           name: str = REVIEW_TEMPLATE_NAME) -> dict[str, Any]:
     """Create the review-request template on the tenant's WABA.
 
     The button's base URL is fixed at approval time and only its suffix varies,
     which is exactly why it points at Pinzo and not at Google: one approved
     template then serves every location the tenant owns.
+
+    On the "already exists" path the template's REAL status is read back from
+    Meta. An existing template is not necessarily a working one — it can be
+    pending, or rejected months ago — and treating it as approved is how an
+    account goes `ready` and then fails every single send with 132001.
     """
     payload = {
-        "name": REVIEW_TEMPLATE_NAME,
+        "name": name,
         "language": "en",
         "category": "MARKETING",
         "components": [
@@ -247,9 +293,10 @@ def ensure_review_template(waba_id: str, token: str, redirect_base: str) -> dict
         text = f"{err.user_title or ''} {err.user_msg or ''} {err}".lower()
         if "already exists" in text:
             # Not a failure: a tenant reconnecting must not be blocked by their
-            # own previous onboarding.
+            # own previous onboarding. Report what it is actually doing, though.
             logger.info("[wa-onboarding] template already exists on WABA %s", waba_id)
-            return {"status": "EXISTS"}
+            existing = template_status_by_waba(waba_id, token, name) or "PENDING"
+            return {"status": existing, "existed": True}
         if "being deleted" in text:
             # Meta holds a deleted template's name for ~a minute before the
             # language slot frees up. Transient, and worth saying so plainly —
@@ -275,19 +322,15 @@ def ensure_review_template_versioned(waba_id: str, token: str, redirect_base: st
 
     Returns (name_used, meta_response).
     """
-    global REVIEW_TEMPLATE_NAME
     base = REVIEW_TEMPLATE_NAME
-    original = base
 
     for version in range(1, max_versions + 1):
         candidate = base if version == 1 else f"{base}_v{version}"
-        REVIEW_TEMPLATE_NAME = candidate
         try:
-            result = ensure_review_template(waba_id, token, redirect_base)
-            if result.get("status") == "EXISTS":
-                # Already there and usable — nothing to create.
-                return candidate, result
-            return candidate, result
+            # The name is a PARAMETER, not a mutated module global: two tenants
+            # onboarding at the same time would otherwise read each other's
+            # candidate name out from under themselves and store the wrong one.
+            return candidate, ensure_review_template(waba_id, token, redirect_base, candidate)
         except WhatsAppError as err:
             # Match on Meta's SUBCODE, not prose: 2388023 covers both
             # "already exists" and "being deleted", and the message text gets
@@ -302,8 +345,6 @@ def ensure_review_template_versioned(waba_id: str, token: str, redirect_base: st
             if name_unavailable:
                 continue                      # that name is unusable; try the next
             raise
-        finally:
-            REVIEW_TEMPLATE_NAME = original
 
     raise WhatsAppError(
         "Could not create the message template — every name variant is currently "
@@ -311,7 +352,8 @@ def ensure_review_template_versioned(waba_id: str, token: str, redirect_base: st
     )
 
 
-def complete_signup(db, organization_id: int, code: str) -> WhatsAppAccount:
+def complete_signup(db, organization_id: int, code: str, *,
+                    use_redirect_uri: bool = True) -> WhatsAppAccount:
     """Run the whole sequence and persist the result.
 
     Partial success is normal and is stored as a status rather than rolled back:
@@ -325,7 +367,7 @@ def complete_signup(db, organization_id: int, code: str) -> WhatsAppAccount:
         account = WhatsAppAccount(organization_id=organization_id)
         db.add(account)
 
-    token = exchange_code(code)
+    token = exchange_code(code, use_redirect_uri=use_redirect_uri)
     account.access_token = encrypt_token(token)
     account.connected_at = account.connected_at or datetime.now(timezone.utc)
     account.status = WhatsAppAccount.STATUS_CONNECTED
@@ -348,17 +390,21 @@ def complete_signup(db, organization_id: int, code: str) -> WhatsAppAccount:
         account.quality_rating = numbers[0].get("quality_rating")
     db.commit()
 
-    try:
-        subscribe_app(waba_id, token)
-    except WhatsAppError as err:
-        # Not fatal to the connection, but it does mean no delivery receipts —
-        # say so plainly rather than letting it look healthy.
-        logger.warning("[wa-onboarding] subscribe failed for %s: %s", waba_id, err)
-        account.status_detail = f"Connected, but webhook subscription failed: {err}"
+    # Webhooks are load-bearing for opt-outs, so the subscribe is verified rather
+    # than trusted, and the result is stored — `can_send` refuses to unlock bulk
+    # sending while this is false instead of letting a silent tenant discover it.
+    account.app_subscribed = _ensure_subscribed(waba_id, token)
+    if not account.app_subscribed:
+        account.status_detail = (
+            "Connected, but Pinzo could not subscribe to your WhatsApp account's updates. "
+            "Delivery receipts and opt-outs would not reach us, so sending stays locked. "
+            "Use “Check again” — this usually clears on its own."
+        )
 
     if account.phone_number_id:
         try:
-            register_number(account.phone_number_id, token)
+            account.registration_pin = encrypt_token(
+                register_number(account.phone_number_id, token))
             account.status = WhatsAppAccount.STATUS_NUMBER_REGISTERED
         except WhatsAppError as err:
             account.status_detail = (
@@ -370,13 +416,18 @@ def complete_signup(db, organization_id: int, code: str) -> WhatsAppAccount:
     db.commit()
 
     try:
-        result = ensure_review_template(waba_id, token, _redirect_base())
-        account.template_name = REVIEW_TEMPLATE_NAME
+        # Versioned: a tenant whose previous template name is still in Meta's
+        # "being deleted" hold gets the next version rather than a failed signup.
+        name, result = ensure_review_template_versioned(waba_id, token, _redirect_base())
+        account.template_name = name
         account.template_status = result.get("status") or "PENDING"
         account.status = (WhatsAppAccount.STATUS_READY
-                          if account.template_status in ("APPROVED", "EXISTS")
+                          if account.template_status == "APPROVED"
                           else WhatsAppAccount.STATUS_TEMPLATE_PENDING)
-        if account.status == WhatsAppAccount.STATUS_TEMPLATE_PENDING:
+        # Do not clobber the subscription warning: there is one status_detail and
+        # "we can't receive your opt-outs" outranks "your template is in review",
+        # because only one of the two needs the tenant to do something.
+        if account.status == WhatsAppAccount.STATUS_TEMPLATE_PENDING and account.app_subscribed:
             account.status_detail = ("Your review template is with Meta for approval — "
                                      "usually under an hour. Sending unlocks automatically.")
     except WhatsAppError as err:
@@ -385,6 +436,135 @@ def complete_signup(db, organization_id: int, code: str) -> WhatsAppAccount:
     account.last_synced_at = datetime.now(timezone.utc)
     db.commit()
     return account
+
+
+def _ensure_subscribed(waba_id: str, token: str) -> bool:
+    """Subscribe, then confirm. Never raises — a connection is still worth
+    keeping without webhooks, it just must not be called ready."""
+    try:
+        subscribe_app(waba_id, token)
+    except WhatsAppError as err:
+        logger.warning("[wa-onboarding] subscribe failed for %s: %s", waba_id, err)
+    try:
+        return is_app_subscribed(waba_id, token)
+    except WhatsAppError as err:
+        logger.warning("[wa-onboarding] subscription check failed for %s: %s", waba_id, err)
+        return False
+
+
+# ── Ongoing account state ─────────────────────────────────────────────────────
+
+def refresh_account(db, account: WhatsAppAccount, *, unpark_payment: bool = False) -> bool:
+    """Re-read this account's state from Meta and recover it where we can.
+
+    This is the difference between self-serve and a support ticket. Every block
+    an account can hit — no payment method, quality too low, access revoked — is
+    fixed on Meta's side, by the tenant, and we are the only ones who can notice
+    it happened. Without a path back out, `payment_required` and `disabled` are
+    one-way doors that need a database edit to open.
+
+    What Meta can actually tell us bounds what this can do:
+      * quality and tier    read directly, so `disabled` recovers automatically
+      * template approval   read directly
+      * a live token        proven by the call succeeding; failure with an auth
+                            code is the only reliable signal of a revoked
+                            connection
+      * a payment method    NOT readable. There is no field for "this WABA can
+                            be billed", so the only test is a real send. Hence
+                            `unpark_payment`: a tenant who says they have fixed
+                            it gets optimistically unparked and the next send
+                            re-parks the account if they were wrong. The hourly
+                            sweep does not do this, because flipping the UI back
+                            to "Ready" unprompted would be a lie half the time.
+
+    Returns True when the account became sendable during this call.
+    """
+    was_blocked = not account.can_test
+    token = decrypt_token(account.access_token) if account.access_token else None
+    if not token:
+        _mark_reauth(account, "No WhatsApp access token is stored for this account.")
+        db.commit()
+        return False
+
+    try:
+        info = whatsapp_service.get_phone_number_info(account)
+    except WhatsAppError as err:
+        if whatsapp_errors.is_reauth(err.code, f"{err.user_msg or ''} {err}"):
+            _mark_reauth(account, whatsapp_errors.explain(190).message)
+            db.commit()
+            return False
+        raise
+
+    if info:
+        account.quality_rating = info.get("quality_rating") or account.quality_rating
+        account.messaging_tier = info.get("messaging_limit_tier") or account.messaging_tier
+        account.display_phone_number = (info.get("display_phone_number")
+                                        or account.display_phone_number)
+        account.verified_name = info.get("verified_name") or account.verified_name
+
+    if account.waba_id:
+        # Re-subscribing an already-subscribed app is a no-op at Meta, so this
+        # doubles as the repair for an onboarding whose subscribe call failed.
+        if not account.app_subscribed:
+            account.app_subscribed = _ensure_subscribed(account.waba_id, token)
+        if account.template_name and account.template_status != "APPROVED":
+            try:
+                status = template_status_by_waba(account.waba_id, token, account.template_name)
+                if status:
+                    account.template_status = status
+            except WhatsAppError as err:
+                logger.warning("[wa-refresh] template status failed for org %s: %s",
+                               account.organization_id, err)
+
+    _recover_status(account, unpark_payment=unpark_payment)
+    account.last_synced_at = datetime.now(timezone.utc)
+    db.commit()
+    return was_blocked and account.can_test
+
+
+def _mark_reauth(account: WhatsAppAccount, detail: str) -> None:
+    account.status = WhatsAppAccount.STATUS_REAUTH_REQUIRED
+    account.status_detail = detail
+    logger.warning("[wa-refresh] org %s needs to reconnect", account.organization_id)
+
+
+def _recover_status(account: WhatsAppAccount, *, unpark_payment: bool) -> None:
+    """Move the account out of a blocked state once the reason is gone."""
+    quality_ok = (account.quality_rating or "").upper() != "RED"
+
+    # A low quality rating outranks every other recovery: unblocking a number
+    # Meta is already unhappy with is how a throttle turns into a permanent ban.
+    if not quality_ok:
+        if account.status != WhatsAppAccount.STATUS_REAUTH_REQUIRED:
+            account.status = WhatsAppAccount.STATUS_DISABLED
+            account.status_detail = (
+                "Sending is paused because WhatsApp rated this number's quality as low. "
+                "It recovers on its own after a period of good sending.")
+        return
+
+    if account.status == WhatsAppAccount.STATUS_DISABLED:
+        # Meta reports quality directly, so recovery here is a fact, not a guess.
+        # A RED number recovers on its own after a period of good sending, and
+        # nothing else in the system would ever notice that it had.
+        _unblock(account)
+    elif account.status == WhatsAppAccount.STATUS_REAUTH_REQUIRED:
+        # The token just worked, so whatever invalidated it no longer applies.
+        _unblock(account)
+    elif account.status == WhatsAppAccount.STATUS_PAYMENT_REQUIRED and unpark_payment:
+        _unblock(account)
+    # A healthy account still tracks template approval, which is what unlocks the
+    # first send after signup.
+    elif (account.status == WhatsAppAccount.STATUS_TEMPLATE_PENDING
+          and account.template_status == "APPROVED"):
+        _unblock(account)
+
+
+def _unblock(account: WhatsAppAccount) -> None:
+    approved = account.template_status == "APPROVED"
+    account.status = (WhatsAppAccount.STATUS_READY if approved
+                      else WhatsAppAccount.STATUS_TEMPLATE_PENDING)
+    account.status_detail = None if approved else (
+        "Your review template is with Meta for approval. Sending unlocks automatically.")
 
 
 def _redirect_base() -> str:

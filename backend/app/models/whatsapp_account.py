@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, func, Text, UniqueConstraint
+from sqlalchemy import (Column, Integer, String, DateTime, Boolean, ForeignKey, func, Text,
+                        UniqueConstraint, text)
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 
@@ -31,6 +32,16 @@ class WhatsAppAccount(Base):
     STATUS_TEMPLATE_PENDING = "template_pending"  # review template submitted, awaiting Meta
     STATUS_READY = "ready"                        # can send
     STATUS_DISABLED = "disabled"                  # switched off by admin, or quality too low
+    # The tenant revoked our access at Meta (or the token was invalidated some
+    # other way). Distinct from `disabled` because the fix is different and only
+    # they can do it: reconnect. Without this state a revoked token looks like
+    # every message failing for no reason, on an account still reporting "ready".
+    STATUS_REAUTH_REQUIRED = "reauth_required"
+
+    # States we can leave on our own once Meta's answer changes, versus the ones
+    # that need the tenant to do something. Used by the recovery sweep so a
+    # tenant is never permanently stuck in a state they have already fixed.
+    RECOVERABLE_STATUSES = (STATUS_PAYMENT_REQUIRED, STATUS_DISABLED, STATUS_REAUTH_REQUIRED)
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"),
@@ -41,8 +52,10 @@ class WhatsAppAccount(Base):
     waba_id = Column(String, nullable=True, index=True)
     # Indexed because the inbound webhook routes by it: one callback URL
     # receives events for EVERY subscribed WABA, so `phone_number_id -> org`
-    # is the lookup on every single incoming event.
-    phone_number_id = Column(String, nullable=True, index=True)
+    # is the lookup on every single incoming event. UNIQUE for the same reason:
+    # that lookup takes .first(), so two rows sharing a number id would route
+    # one tenant's delivery receipts and opt-outs to another tenant at random.
+    phone_number_id = Column(String, nullable=True, index=True, unique=True)
     display_phone_number = Column(String, nullable=True)
     verified_name = Column(String, nullable=True)
 
@@ -68,6 +81,32 @@ class WhatsAppAccount(Base):
     template_name = Column(String, nullable=True)
     template_status = Column(String, nullable=True)   # PENDING | APPROVED | REJECTED
 
+    # The PIN used to register the number for Cloud API sending. Meta asks for
+    # this same PIN again on any re-registration, so throwing it away means the
+    # number can only be recovered by the tenant turning off two-step at Meta.
+    # Encrypted: it is a second factor on their phone number.
+    registration_pin = Column(Text, nullable=True)
+
+    # Whether our app is actually subscribed to their WABA's webhooks. Stored
+    # rather than assumed: the subscribe call can fail while everything else
+    # succeeds, and the result is a tenant who sends fine but silently receives
+    # no delivery receipts and — the part that matters — no opt-outs.
+    app_subscribed = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+
+    # When a real, billed message last went out successfully from this account.
+    # Bulk sending stays locked until this is set, so the first message a tenant
+    # ever pays for is a test to their own phone rather than 300 failures to
+    # their customers — the failure modes that only appear on a live send
+    # (no payment method, template not really approved, number not registered)
+    # surface at setup, with someone watching.
+    verified_send_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Per-tenant ceiling on messages Meta may bill them for in a calendar month.
+    # Meta's own limit is a throughput tier, not a spend limit, so without this
+    # one bad upload is an unbounded charge on the tenant's card. NULL means the
+    # application default applies.
+    monthly_message_limit = Column(Integer, nullable=True)
+
     connected_at = Column(DateTime(timezone=True), nullable=True)
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -83,5 +122,29 @@ class WhatsAppAccount(Base):
     )
 
     @property
-    def can_send(self) -> bool:
+    def can_test(self) -> bool:
+        """Ready as far as Meta's setup goes — enough to send ONE test message."""
         return self.status == self.STATUS_READY
+
+    @property
+    def can_send(self) -> bool:
+        """Ready for real campaigns.
+
+        Three separate facts, because each one has burned a real onboarding:
+        Meta says the account is set up, webhooks reach us (or opt-outs go in a
+        bin), and one live message has actually been delivered and paid for.
+        """
+        return (self.status == self.STATUS_READY
+                and self.app_subscribed
+                and self.verified_send_at is not None)
+
+    @property
+    def setup_blocker(self) -> str | None:
+        """Which of the three `can_send` facts is missing, for the UI to act on."""
+        if self.status != self.STATUS_READY:
+            return "status"
+        if not self.app_subscribed:
+            return "webhooks"
+        if self.verified_send_at is None:
+            return "test_send"
+        return None

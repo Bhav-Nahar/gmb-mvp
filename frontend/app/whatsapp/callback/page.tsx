@@ -50,7 +50,10 @@ function WhatsAppCallback() {
     }
 
     api
-      .post('/whatsapp/connect', { code, state })
+      // source MUST say 'redirect': this code DID travel through a redirect URI,
+      // and Meta rejects an exchange that omits the URI the browser actually
+      // used. The backend defaults to the SDK popup, which is the other flow.
+      .post('/whatsapp/connect', { code, state, source: 'redirect' })
       .then(() => router.replace('/dashboard/settings/whatsapp?connected=1'))
       .catch((err: unknown) => {
         setPhase('error');

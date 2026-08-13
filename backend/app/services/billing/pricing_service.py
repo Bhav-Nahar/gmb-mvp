@@ -32,25 +32,18 @@ class PricingService:
     def compute_monthly_price_paise(location_count: int, plan_tier: str = "basic",
                                     custom_per_location_paise: int | None = None,
                                     annual: bool = False) -> int:
-        """Monthly total. With a negotiated per-location rate (enterprise custom pricing)
-        it's a flat `count * rate`; otherwise the plan's flat per-location price applies
-        (the tier loop supports banded pricing but every plan is a single flat band).
-        With annual=True the plan's discounted annual rate is used instead."""
+        """Monthly total: locations x the per-location rate. A negotiated rate
+        (enterprise custom pricing) wins; otherwise the plan's flat price applies,
+        or its discounted annual rate when annual=True.
+
+        ponytail: flat multiply, no volume bands. Volume deals go through the admin
+        custom per-location rate instead — if real banded pricing ever ships, that's
+        a bracket walk over a (upper_bound, price) list here."""
         PricingService.validate_location_count(location_count)
         if custom_per_location_paise is not None:
             return location_count * custom_per_location_paise
-        total = 0
-        prev_bound = 0
         plan = plan_config.get_plan(plan_tier)
-        tiers = plan["annual_price_tiers"] if annual else plan["price_tiers"]
-        for upper, price in tiers:
-            band_top = location_count if upper is None else min(location_count, upper)
-            slots_in_band = max(0, band_top - prev_bound)
-            total += slots_in_band * price
-            prev_bound = upper if upper is not None else prev_bound
-            if upper is not None and location_count <= upper:
-                break
-        return total
+        return location_count * plan["annual_price" if annual else "price"]
 
     @staticmethod
     def compute_price_paise(location_count: int, interval: str = "monthly", plan_tier: str = "basic",

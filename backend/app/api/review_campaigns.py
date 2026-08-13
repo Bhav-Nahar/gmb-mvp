@@ -22,7 +22,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.deps import admin_required, get_current_user
+from app.api.deps import (admin_required, get_current_user, get_user_location_ids,
+                          staff_required)
+from app.core.authorization import assert_location_access
 from app.db.session import get_db
 from app.models.activity_log import ActivityLog
 from app.models.location import Location
@@ -32,6 +34,10 @@ from app.models.user import User
 from app.models.review_suppression import ReviewSuppression
 from app.models.whatsapp_account import WhatsAppAccount
 from app.services import review_request_service as rr
+# Message accounting lives with the sender, not here: the batch task enforces the
+# same ceiling this endpoint displays, and two copies of "what counts as billable"
+# would drift apart immediately.
+from app import tasks_whatsapp as wa_tasks
 # Dispatch through the CONFIGURED app instance, exactly as every other endpoint
 # here does. Not task.delay(): FastAPI runs sync endpoints in a threadpool, and
 # Celery's current_app is thread-local — in a worker thread @shared_task
@@ -68,6 +74,10 @@ class SendRequest(BaseModel):
 class SendAccepted(BaseModel):
     batch_id: str
     queued: int
+    # Set when the campaign lands inside quiet hours and the first message waits
+    # until morning. Both entry points return it — the CSV upload never calls
+    # preflight, so it has no other way to learn this.
+    starts_at: Optional[datetime] = None
 
 
 class CampaignStats(BaseModel):
@@ -84,7 +94,25 @@ class CampaignStats(BaseModel):
     reviews_in_period: Optional[int] = None
 
 
+def _scope(db: Session, user: User, q, column, location_id: Optional[int]):
+    """Restrict a read query to the locations this user may see.
+
+    An explicit location_id is authorized outright (403 if it isn't theirs) rather
+    than silently filtered to nothing — a Store Manager poking at another store's
+    id deserves an answer, not an empty list that reads like "no campaigns yet".
+    """
+    if location_id:
+        assert_location_access(db, user, location_id)
+        return q.filter(column == location_id)
+    allowed = get_user_location_ids(user, db)  # None = whole org (Owner/Admin)
+    return q if allowed is None else q.filter(column.in_(allowed))
+
+
 def _guard(db: Session, user: User, location_id: int) -> Location:
+    # Store/Regional Managers send for their OWN stores only. Owners and Admins
+    # pass through unrestricted; the org filter below still applies to everyone.
+    assert_location_access(db, user, location_id)
+
     location = db.query(Location).filter(
         Location.id == location_id,
         Location.organization_id == user.organization_id,
@@ -96,12 +124,27 @@ def _guard(db: Session, user: User, location_id: int) -> Location:
         WhatsAppAccount.organization_id == user.organization_id,
     ).first()
     if not account or not account.can_send:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(account.status_detail if account and account.status_detail
-                    else "Connect WhatsApp in Settings before sending review requests."),
-        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=_not_ready_reason(account))
     return location
+
+
+# Each blocker names the ONE thing to do next. "WhatsApp is not ready" sends a
+# tenant to support; "send yourself a test message first" does not.
+def _not_ready_reason(account: Optional[WhatsAppAccount]) -> str:
+    if not account:
+        return "Connect WhatsApp in Settings before sending review requests."
+    blocker = account.setup_blocker
+    if blocker == "webhooks":
+        return ("Pinzo isn't receiving updates from your WhatsApp account yet, so opt-outs and "
+                "delivery reports would be lost. Open Settings → WhatsApp and press "
+                "“Check again”.")
+    if blocker == "test_send":
+        return ("Send yourself a test message first — Settings → WhatsApp. It's one message, "
+                "and it proves your Meta payment method and template work before your "
+                "customers see anything.")
+    return (account.status_detail
+            or "WhatsApp isn't ready yet — see Settings → WhatsApp.")
 
 
 def _dispatch(db: Session, user: User, location: Location,
@@ -162,12 +205,16 @@ def _dispatch(db: Session, user: User, location: Location,
     )
     logger.info("[review-campaign] queued %s (%s recipients) for org %s",
                 batch_id, len(unique), user.organization_id)
-    return SendAccepted(batch_id=batch_id, queued=len(unique))
+    # The task itself re-checks and defers; this is only what the UI promises.
+    delay = wa_tasks.seconds_until_send_window()
+    return SendAccepted(batch_id=batch_id, queued=len(unique),
+                        starts_at=(datetime.now(timezone.utc) + timedelta(seconds=delay)
+                                   if delay else None))
 
 
 @router.post("/send", response_model=SendAccepted, status_code=status.HTTP_202_ACCEPTED)
 def send(payload: SendRequest, db: Session = Depends(get_db),
-         current_user: User = Depends(admin_required)):
+         current_user: User = Depends(staff_required)):
     if not payload.consent_confirmed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -186,7 +233,7 @@ async def upload_csv(
     consent_confirmed: bool = Form(False),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(admin_required),
+    current_user: User = Depends(staff_required),
 ):
     if not consent_confirmed:
         raise HTTPException(
@@ -243,6 +290,10 @@ class Preflight(BaseModel):
     will_send: int
     will_skip: int
     rows: list[PreflightRow]
+    # None when sending starts immediately. Otherwise sending is inside quiet
+    # hours and the campaign will wait — the UI has to say so, or a 10pm upload
+    # returns 202 and looks broken until morning.
+    starts_at: Optional[datetime] = None
 
 
 @router.post("/preflight", response_model=Preflight)
@@ -277,9 +328,12 @@ def preflight(payload: PreflightRequest, db: Session = Depends(get_db),
         else:
             rows.append(PreflightRow(phone=phone, name=r.name, will_send=True))
 
+    delay = wa_tasks.seconds_until_send_window()
     return Preflight(will_send=sum(1 for r in rows if r.will_send),
                      will_skip=sum(1 for r in rows if not r.will_send),
-                     rows=rows)
+                     rows=rows,
+                     starts_at=(datetime.now(timezone.utc) + timedelta(seconds=delay)
+                                if delay else None))
 
 
 class HistoryRow(BaseModel):
@@ -302,8 +356,7 @@ def history(location_id: Optional[int] = None, batch_id: Optional[str] = None,
     support actually gets asked, and aggregate counts cannot answer it."""
     q = db.query(ReviewRequest).filter(
         ReviewRequest.organization_id == current_user.organization_id)
-    if location_id:
-        q = q.filter(ReviewRequest.location_id == location_id)
+    q = _scope(db, current_user, q, ReviewRequest.location_id, location_id)
     if batch_id:
         q = q.filter(ReviewRequest.batch_id == batch_id)
     return q.order_by(ReviewRequest.id.desc()).limit(min(limit, 500)).all()
@@ -374,39 +427,43 @@ def remove_suppression(suppression_id: int, db: Session = Depends(get_db),
 class UsageMonth(BaseModel):
     month: str
     billable_messages: int
+    monthly_limit: int
+    remaining: int
     billed_by: str
     note: str
 
 
 @router.get("/usage", response_model=UsageMonth)
 def usage(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Messages Meta will bill this org for, this calendar month.
+    """Messages Meta will bill this org for, this calendar month, and the ceiling.
 
     Pinzo charges a flat subscription and takes no cut of messaging — Meta bills
     the tenant directly on their own WhatsApp account. This number is therefore
     an estimate for the tenant's own planning, not an invoice: it counts what we
-    handed to Meta, and Meta's own price per conversation is the authority.
+    handed to Meta, and Meta's own price per message is the authority.
+
+    Reminders are counted. Each one is a separately billed message, and leaving
+    them out under-reported the tenant's bill by up to three times — the fastest
+    way to lose someone's trust is for their card to be charged more than we
+    showed them.
     """
-    now = datetime.now(timezone.utc)
-    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    count = db.query(func.count(ReviewRequest.id)).filter(
-        ReviewRequest.organization_id == current_user.organization_id,
-        ReviewRequest.created_at >= start,
-        # Only messages Meta accepted cost money. Skips never reached Meta, and
-        # a rejected send opens no conversation.
-        ReviewRequest.status.in_([
-            ReviewRequest.STATUS_SENT, ReviewRequest.STATUS_DELIVERED,
-            ReviewRequest.STATUS_READ, ReviewRequest.STATUS_CLICKED,
-        ]),
-    ).scalar() or 0
+    account = db.query(WhatsAppAccount).filter(
+        WhatsAppAccount.organization_id == current_user.organization_id,
+    ).first()
+    count = wa_tasks.billable_this_month(db, current_user.organization_id)
+    limit = wa_tasks.monthly_limit(account) if account else wa_tasks.DEFAULT_MONTHLY_LIMIT
 
     return UsageMonth(
-        month=start.strftime("%B %Y"),
+        month=datetime.now(timezone.utc).strftime("%B %Y"),
         billable_messages=count,
+        monthly_limit=limit,
+        remaining=max(0, limit - count),
         billed_by="Meta",
-        note=("Meta bills these to your WhatsApp Business Account at their own rates. "
-              "Pinzo adds no markup and takes no per-message fee. See the exact charges "
-              "in WhatsApp Manager \u2192 Insights."),
+        note=("Meta bills these to your WhatsApp Business Account at their marketing-message "
+              "rate, reminders included \u2014 each one is a separate message. Pinzo adds no markup "
+              "and takes no per-message fee. Sending stops at the monthly limit above so a "
+              "mistaken upload can't run up your Meta bill. See exact charges in "
+              "WhatsApp Manager \u2192 Insights."),
     )
 
 
@@ -422,8 +479,7 @@ def stats(location_id: Optional[int] = None, batch_id: Optional[str] = None, day
     q = db.query(ReviewRequest.status, func.count(ReviewRequest.id)).filter(
         ReviewRequest.organization_id == current_user.organization_id,
     )
-    if location_id:
-        q = q.filter(ReviewRequest.location_id == location_id)
+    q = _scope(db, current_user, q, ReviewRequest.location_id, location_id)
     if batch_id:
         q = q.filter(ReviewRequest.batch_id == batch_id)
     else:
@@ -439,8 +495,7 @@ def stats(location_id: Optional[int] = None, batch_id: Optional[str] = None, day
         Review.organization_id == current_user.organization_id,
         Review.review_created_at >= since,
     )
-    if location_id:
-        rq = rq.filter(Review.location_id == location_id)
+    rq = _scope(db, current_user, rq, Review.location_id, location_id)
 
     return CampaignStats(
         reviews_in_period=rq.scalar() or 0,
