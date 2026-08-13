@@ -4,12 +4,22 @@ import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { RefreshCw, AlertTriangle, ArrowRight } from 'lucide-react'
 import { beginGoogleLogin } from '@/lib/oauth'
+import { api } from '@/lib/api'
 
 function LoginContent() {
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [expiredAlert, setExpiredAlert] = useState(false)
+  // Email/password sign-in exists for ONE account: the Meta App Review
+  // reviewer, who cannot complete a Google sign-in (unfamiliar-device
+  // challenges, no access to the account's 2FA). Hidden unless the flag is on,
+  // and the backend 404s the endpoint when its own flag is off — two switches,
+  // because this is a password door on an otherwise Google-only app.
+  const demoLoginEnabled = process.env.NEXT_PUBLIC_DEMO_LOGIN === 'true'
+  const [demoEmail, setDemoEmail] = useState('')
+  const [demoPassword, setDemoPassword] = useState('')
+  const [demoBusy, setDemoBusy] = useState(false)
 
   useEffect(() => {
     // Alert if session expired
@@ -34,6 +44,20 @@ function LoginContent() {
       setError(friendlyMessage)
     }
   }, [searchParams])
+
+  const handleDemoLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setDemoBusy(true)
+    setError('')
+    try {
+      await api.post('/auth/demo-login', { email: demoEmail, password: demoPassword })
+      // Same cookies as the Google flow, so the normal post-login route works.
+      window.location.href = '/dashboard'
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed')
+      setDemoBusy(false)
+    }
+  }
 
   const handleContinueWithGoogle = async () => {
     setError('')
@@ -115,6 +139,35 @@ function LoginContent() {
             )}
           </button>
         </div>
+
+        {demoLoginEnabled && (
+          <form onSubmit={handleDemoLogin} className="mt-6 space-y-3 border-t border-border/50 pt-6">
+            <p className="text-xs text-muted-foreground">Or sign in with email</p>
+            <input
+              type="email"
+              required
+              value={demoEmail}
+              onChange={(e) => setDemoEmail(e.target.value)}
+              placeholder="Email"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <input
+              type="password"
+              required
+              value={demoPassword}
+              onChange={(e) => setDemoPassword(e.target.value)}
+              placeholder="Password"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={demoBusy}
+              className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+            >
+              {demoBusy ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+        )}
 
         <div className="pt-6 border-t border-border/50 text-center">
           <p className="text-xs text-muted-foreground/60">

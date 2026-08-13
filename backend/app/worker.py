@@ -60,9 +60,24 @@ celery.autodiscover_tasks(["app"])
 import app.tasks_leaderboard # Explicitly import to register tasks
 import app.tasks_comparison # Explicitly import to register tasks
 import app.tasks_reports # Explicitly import to register tasks
+import app.tasks_whatsapp # Explicitly import to register tasks
 
 # Periodic Celery Beat Scheduling
 celery.conf.beat_schedule = {
+    "send-review-reminders": {
+        "task": "app.tasks_whatsapp.send_review_reminders_task",
+        "schedule": 3600.0,  # Hourly, but each row is only eligible once its own
+                             # 24h gap has passed — the hourly tick just means a
+                             # reminder goes out near the right time rather than
+                             # all of a day's reminders landing at midnight.
+    },
+    "sync-whatsapp-accounts": {
+        "task": "app.tasks_whatsapp.sync_whatsapp_accounts_task",
+        "schedule": 3600.0,  # Hourly. The webhook reports template approval and quality
+                             # changes in real time; this only repairs state after a
+                             # missed callback, so it is cheap (one Graph call per
+                             # connected account) and never urgent.
+    },
     "sync-locations-periodic": {
         "task": "app.tasks.sync_all_organizations_task",
         "schedule": 86400.0, # Every 24 hours (86400 seconds) — Google profile/review

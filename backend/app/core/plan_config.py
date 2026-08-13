@@ -85,6 +85,7 @@ FEATURE_LOCAL_RANK = "local_rank"      # geo-grid rank scans
 FEATURE_MICROSITE = "microsite"        # published microsite
 FEATURE_AEO = "aeo"                    # AI-search visibility (AEO) scans
 FEATURE_GOOGLE_UPDATES = "google_updates"  # detect + accept/reject Google's own edits
+FEATURE_REVIEW_REQUESTS = "review_requests"  # ask customers for Google reviews over WhatsApp
 
 # AEO: both Basic and Pro get one manual sync per location per calendar month.
 # The tier differs by DEPTH (Basic covers Google AI surfaces only; Pro adds the
@@ -135,7 +136,10 @@ PLANS = {
         "price_tiers": [(None, 299_900)],          # flat ₹2,999 / location, GST-incl.
         "annual_price_tiers": [(None, 239_900)],   # ₹2,399/mo on annual
         "credits_per_location": 45,
-        "features": _STANDARD_FEATURES + [FEATURE_LOCAL_RANK, FEATURE_MICROSITE, FEATURE_AEO],
+        # WhatsApp review requests are Pro-only: the tenant pays Meta directly for
+        # the messages, so this is a reason to be on Pro rather than a cost to us.
+        "features": _STANDARD_FEATURES + [FEATURE_LOCAL_RANK, FEATURE_MICROSITE, FEATURE_AEO,
+                                          FEATURE_REVIEW_REQUESTS],
         "limits": {LIMIT_COMPETITORS: 10},
     },
 }
