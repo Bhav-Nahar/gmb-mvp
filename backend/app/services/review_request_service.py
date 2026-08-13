@@ -34,13 +34,10 @@ logger = logging.getLogger(__name__)
 def cooldown_hours() -> int:
     return max(0, int(getattr(settings, "REVIEW_REQUEST_COOLDOWN_HOURS", 24)))
 
-# Meta error codes that mean "this number will never work", as opposed to a
-# transient failure. These get suppressed permanently: retrying them burns
-# quality score for a delivery that cannot happen.
-PERMANENT_FAILURE_CODES = {
-    131026,   # message undeliverable — not a WhatsApp user
-    131047,   # re-engagement required (outside the window with no valid template)
-}
+# Which failures are permanent lives in whatsapp_errors and nowhere else. A
+# second copy here drifted from it once already — the webhook suppressed a code
+# this path did not — and "is this number dead" must not depend on which code
+# path noticed.
 
 
 def new_token() -> str:
@@ -92,9 +89,16 @@ def send_review_request(
     source: str = "manual",
     batch_id: Optional[str] = None,
     default_country_code: str = "91",
+    is_test: bool = False,
 ) -> ReviewRequest:
     """Send one review request. Always returns a row — including for skips, so
     the campaign view can show exactly what happened to every number uploaded.
+
+    `is_test` is the setup smoke test an admin sends to their own phone. It is
+    the one send allowed before the account is fully unlocked — that is the whole
+    point of it — and it ignores the frequency cap, because an admin testing
+    twice in a day is not a customer being pestered. Suppression is still
+    honoured: if that number has opted out, it has opted out.
     """
     location = db.query(Location).filter(
         Location.id == location_id,
@@ -115,7 +119,7 @@ def send_review_request(
                        ReviewRequest.STATUS_SKIPPED, error_code="suppressed",
                        error_detail="This number has opted out or is on the do-not-contact list")
 
-    if recently_messaged(db, organization_id, phone):
+    if not is_test and recently_messaged(db, organization_id, phone):
         return _record(db, organization_id, location_id, phone, customer_name, source, batch_id,
                        ReviewRequest.STATUS_SKIPPED, error_code="frequency_cap",
                        error_detail=_cooldown_message())
@@ -123,7 +127,8 @@ def send_review_request(
     account = db.query(WhatsAppAccount).filter(
         WhatsAppAccount.organization_id == organization_id,
     ).first()
-    if not account or not account.can_send:
+    ready = account is not None and (account.can_test if is_test else account.can_send)
+    if not ready:
         state = account.status if account else "not connected"
         raise ValueError(f"WhatsApp is not ready for this organization ({state})")
 
@@ -145,13 +150,18 @@ def send_review_request(
     except WhatsAppError as err:
         row.status = ReviewRequest.STATUS_FAILED
         row.error_code = str(err.code) if err.code is not None else None
-        row.error_detail = (err.detail or str(err))[:1000]
+        # Prefer our plain-English mapping over Meta's prose: this string is read
+        # by the tenant in the campaign history, and "131026" explains nothing.
+        row.error_detail = (whatsapp_errors.explain(err.code).message
+                            if whatsapp_errors.is_known(err.code)
+                            else (err.detail or str(err)))[:1000]
         db.commit()
         # A billing failure is not this recipient's fault and will hit every
         # remaining number identically. Park the account so the batch loop stops
         # on its next iteration and the tenant is told what to fix, instead of
         # grinding through the list collecting the same error 500 times.
-        if whatsapp_errors.is_billing(err.code, f"{err.detail or ''} {err}"):
+        text = f"{err.detail or ''} {err.user_msg or ''} {err}"
+        if whatsapp_errors.is_billing(err.code, text):
             account.status = WhatsAppAccount.STATUS_PAYMENT_REQUIRED
             account.status_detail = whatsapp_errors.explain(err.code).message
             db.commit()
@@ -159,7 +169,17 @@ def send_review_request(
                          organization_id, err.code)
             return row
 
-        if err.code in PERMANENT_FAILURE_CODES:
+        # Access revoked. Park it the same way — every remaining number in the
+        # batch will fail identically, and the tenant needs to reconnect, not to
+        # wonder why 400 messages failed.
+        if whatsapp_errors.is_reauth(err.code, text):
+            account.status = WhatsAppAccount.STATUS_REAUTH_REQUIRED
+            account.status_detail = whatsapp_errors.explain(190).message
+            db.commit()
+            logger.error("[review-request] org=%s parked: reconnect required", organization_id)
+            return row
+
+        if whatsapp_errors.is_permanent(err.code):
             suppress(db, organization_id, phone, ReviewSuppression.REASON_FAILED,
                      note=f"Meta error {err.code}")
         logger.warning("[review-request] send failed org=%s phone=%s code=%s",
@@ -169,6 +189,11 @@ def send_review_request(
     row.status = ReviewRequest.STATUS_SENT
     row.wamid = wamid
     row.sent_at = datetime.now(timezone.utc)
+    # A send Meta accepted is the only available proof that this account can
+    # actually be billed — which is what the pre-campaign test send is for. Any
+    # successful send counts, so an account that was already working keeps
+    # working after this gate was introduced.
+    account.verified_send_at = account.verified_send_at or row.sent_at
     db.commit()
     return row
 

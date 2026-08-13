@@ -374,7 +374,7 @@ def get_organization(
         # Every tier's standard rate, so the panel can show what a negotiated rate is
         # being discounted FROM without hardcoding the price sheet in the frontend.
         "standard_prices": {
-            tier: plan_config.get_plan(tier)["price_tiers"][-1][1] for tier in plan_config.PLANS
+            tier: plan_config.get_plan(tier)["price"] for tier in plan_config.PLANS
         },
     })
 

@@ -29,13 +29,18 @@ def wired(db, monkeypatch):
     db.add(WhatsAppAccount(
         organization_id=org.id, waba_id="w", phone_number_id="p",
         access_token=encrypt_token("t"), template_name="review",
-        template_status="APPROVED", status=WhatsAppAccount.STATUS_READY))
+        template_status="APPROVED", status=WhatsAppAccount.STATUS_READY,
+        # A fully unlocked account: Meta setup done, webhooks proven, one live
+        # send already paid for. All three are required to send for real.
+        app_subscribed=True, verified_send_at=datetime.now(timezone.utc)))
     db.commit()
 
     sent: list[str] = []
     monkeypatch.setattr(whatsapp_service, "send_template",
                         lambda *a, **kw: sent.append(kw["to"]) or "wamid.x")
     monkeypatch.setattr(tasks, "SEND_INTERVAL_SECONDS", 0)
+    # Inside quiet hours, or every one of these no-ops when the suite runs at night.
+    monkeypatch.setattr(tasks, "seconds_until_send_window", lambda *a, **kw: 0)
     monkeypatch.setattr(tasks, "SessionLocal", lambda: db)
     monkeypatch.setattr(db, "close", lambda: None)   # the task closes its session
     return org, loc, sent

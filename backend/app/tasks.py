@@ -38,6 +38,34 @@ def _is_retryable_publish_error(e) -> bool:
     return isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError))
 
 
+# One publish-retry policy, in one place. It used to be pasted at five call sites
+# and had drifted: the media-delete path never retried a Google 5xx (it listed only
+# network errors), two paths recorded google_error_code and three didn't, and the
+# shard path hardcoded its own limit of 3. Change the policy here, not there.
+PUBLISH_MAX_RETRIES = 3
+
+# Wait before retry n (0-based): 60s, 120s, 240s.
+def _retry_countdown(attempt: int) -> int:
+    return 60 * (2 ** attempt)
+
+
+def _should_retry_publish(e, attempt: int) -> bool:
+    """Worth another attempt? Retryable error AND attempts left."""
+    return _is_retryable_publish_error(e) and attempt < PUBLISH_MAX_RETRIES
+
+
+def _google_error_code(e) -> str | None:
+    """Short code for the failure, stored on the row so a revoked token is
+    distinguishable from a rejected payload without reading stack traces."""
+    import httpx
+    from app.providers.gbp.auth import PermanentAuthError
+    if isinstance(e, PermanentAuthError):
+        return "AUTH_REVOKED"
+    if isinstance(e, httpx.HTTPStatusError):
+        return str(e.response.status_code)
+    return None
+
+
 def _provider_error_data(e) -> dict:
     """Best-effort structured body from a failed provider HTTP call."""
     import httpx
@@ -1557,9 +1585,8 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
         logger.error(f"PublishJob {job_id} failed: {str(e)}")
         db.rollback()
         
-        # Decide if error is retryable or not
-        is_retryable = _is_retryable_publish_error(e)
-            
+        retrying = _should_retry_publish(e, self.request.retries)
+
         # Capture scalar values from the detached ORM objects BEFORE opening a new session,
         # since accessing lazy-loaded attrs on detached objects raises DetachedInstanceError.
         _job_post_id = getattr(job, '__dict__', {}).get('post_id') if job else None
@@ -1574,17 +1601,15 @@ def process_publish_job_task(self, job_id: int, organization_id: int) -> dict:
                 # Capture status details from the exception safely
                 err_data = _provider_error_data(e)
                 
-                if is_retryable and self.request.retries < self.max_retries:
+                if retrying:
                     job_record.status = PublishJobStatus.RETRYING.value
                     job_record.last_error = str(e)
                     job_record.retry_count = self.request.retries + 1
                     job_record.provider_response = err_data
                     job_db.commit()
-                    
-                    # Celery retry countdown
-                    countdown = 60 * (2 ** self.request.retries)
+
                     job_db.close()
-                    raise self.retry(exc=e, countdown=countdown)
+                    raise self.retry(exc=e, countdown=_retry_countdown(self.request.retries))
                 else:
                     # Mark permanent or final run failure
                     job_record.status = PublishJobStatus.FAILED.value
@@ -2050,8 +2075,6 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
                 # Savepoint auto-rolled back; outer session is still valid.
                 logger.error(f"Job {job_id} in shard failed: {str(e)}")
 
-                is_retryable = _is_retryable_publish_error(e)
-
                 err_data = _provider_error_data(e)
 
                 try:
@@ -2061,16 +2084,19 @@ def process_campaign_shard_task(self, job_ids: list, organization_id: int, campa
                     post_record = db.query(Post).filter(Post.id == post_id_val).first() if post_id_val else None
 
                     if job_record:
+                        # This path re-dispatches with apply_async rather than
+                        # self.retry, so Celery's own counter never advances — the
+                        # attempt number has to come from the row.
                         current_retries = job_record.retry_count
-                        if is_retryable and current_retries < 3:
+                        if _should_retry_publish(e, current_retries):
                             job_record.status = PublishJobStatus.RETRYING.value
                             job_record.last_error = str(e)
                             job_record.retry_count = current_retries + 1
                             job_record.provider_response = err_data
                             db.commit()
 
-                            countdown = 60 * (2 ** current_retries)
-                            retry_key = f"campaign:{campaign_id}:retry_registered:{job_id}:{current_retries + 1}"
+                            countdown = _retry_countdown(current_retries)
+                            retry_key =f"campaign:{campaign_id}:retry_registered:{job_id}:{current_retries + 1}"
                             if r.set(retry_key, "1", ex=86400, nx=True):
                                 r.incr(f"campaign:{campaign_id}:pending_shards")
                                 db.query(Campaign).filter(Campaign.id == campaign_id).update(
@@ -2892,7 +2918,6 @@ def check_scheduled_posts_task() -> dict:
 def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
     import redis
     import logging
-    import httpx
     import asyncio
     from app.core.config import settings
     from app.core.listing_fields import FIELD_MAP
@@ -2903,7 +2928,6 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
     from app.models.location_edit import LocationEdit
     from app.models.location import Location
     from app.providers.factory import ProviderFactory
-    from app.providers.gbp.auth import PermanentAuthError
     
     logger = logging.getLogger(__name__)
     
@@ -2962,19 +2986,12 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
             
         except Exception as e:
             logger.error(f"PublishListingEdit {edit_id} failed: {str(e)}")
-            is_retryable = _is_retryable_publish_error(e)
-            google_error_code = None
-            if isinstance(e, PermanentAuthError):
-                google_error_code = "AUTH_REVOKED"
-            elif isinstance(e, httpx.HTTPStatusError):
-                google_error_code = str(e.response.status_code)
-                
-            if is_retryable and self.request.retries < self.max_retries:
+            if _should_retry_publish(e, self.request.retries):
                 # Let celery handle retry; leave it in Publishing state
-                countdown = 60 * (2 ** self.request.retries)
                 db.close()
-                raise self.retry(exc=e, countdown=countdown)
+                raise self.retry(exc=e, countdown=_retry_countdown(self.request.retries))
             else:
+                google_error_code = _google_error_code(e)
                 ListingEditService.mark_failed(
                     db,
                     edit_id=edit.id,
@@ -2996,12 +3013,10 @@ def publish_listing_edit_task(self, edit_id: int, organization_id: int) -> dict:
 def publish_location_media_task(self, media_id: int, organization_id: int) -> dict:
     """Publish a LocationMedia row's asset to the location's GBP photo gallery."""
     import logging
-    import httpx
     from app.db.session import SessionLocal
     from app.models.location_media import LocationMedia, LocationMediaStatus
     from app.models.location import Location
     from app.providers.factory import ProviderFactory
-    from app.providers.gbp.auth import PermanentAuthError
     from app.services.health_score_service import HealthScoreService
 
     logger = logging.getLogger(__name__)
@@ -3078,21 +3093,13 @@ def publish_location_media_task(self, media_id: int, organization_id: int) -> di
 
         except Exception as e:
             logger.error(f"PublishLocationMedia {media_id} failed: {str(e)}")
-            is_retryable = _is_retryable_publish_error(e)
-            google_error_code = None
-            if isinstance(e, PermanentAuthError):
-                google_error_code = "AUTH_REVOKED"
-            elif isinstance(e, httpx.HTTPStatusError):
-                google_error_code = str(e.response.status_code)
-
-            if is_retryable and self.request.retries < self.max_retries:
-                countdown = 60 * (2 ** self.request.retries)
+            if _should_retry_publish(e, self.request.retries):
                 db.close()
-                raise self.retry(exc=e, countdown=countdown)
+                raise self.retry(exc=e, countdown=_retry_countdown(self.request.retries))
 
             media.publish_status = LocationMediaStatus.FAILED
             media.failure_reason = str(e)
-            media.google_error_code = google_error_code
+            media.google_error_code = _google_error_code(e)
             db.commit()
             return {"status": "failed", "reason": str(e)}
     finally:
@@ -3107,12 +3114,10 @@ def publish_location_media_task(self, media_id: int, organization_id: int) -> di
 def delete_location_media_task(self, media_id: int, organization_id: int) -> dict:
     """Delete a gallery photo from Google, then soft-delete the local record."""
     import logging
-    import httpx
     from app.db.session import SessionLocal
     from app.models.location_media import LocationMedia
     from app.models.location import Location
     from app.providers.factory import ProviderFactory
-    from app.providers.gbp.auth import PermanentAuthError
     from app.services.health_score_service import HealthScoreService
 
     logger = logging.getLogger(__name__)
@@ -3136,12 +3141,13 @@ def delete_location_media_task(self, media_id: int, organization_id: int) -> dic
                 run_async(provider.delete_location_media(location.google_location_id, media_key))
             except Exception as e:
                 logger.error(f"DeleteLocationMedia {media_id} failed: {str(e)}")
-                is_retryable = isinstance(e, (httpx.RequestError, TimeoutError, ConnectionError))
-                if is_retryable and self.request.retries < self.max_retries:
-                    countdown = 60 * (2 ** self.request.retries)
+                if _should_retry_publish(e, self.request.retries):
                     db.close()
-                    raise self.retry(exc=e, countdown=countdown)
-                # Non-retryable (e.g. already gone on Google) — fall through to local delete.
+                    raise self.retry(exc=e, countdown=_retry_countdown(self.request.retries))
+                # Non-retryable (404 already gone on Google, bad request, revoked
+                # token) — fall through to the local delete. A 5xx now retries here
+                # like everywhere else; it used to fall straight through and mark the
+                # photo deleted locally while it was still live on Google.
 
         media.is_deleted = True
         media.deleted_at = datetime.datetime.now(timezone.utc)

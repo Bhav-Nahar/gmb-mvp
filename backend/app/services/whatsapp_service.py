@@ -214,11 +214,19 @@ def get_phone_number_info(account: WhatsAppAccount) -> dict[str, Any]:
     )
 
 
-def get_template_status(account: WhatsAppAccount, name: str) -> Optional[str]:
-    """PENDING | APPROVED | REJECTED, or None when the template does not exist."""
-    if not account.waba_id:
-        return None
-    body = _get(f"/{account.waba_id}/message_templates", _token(account),
-                {"name": name, "limit": 1})
+def template_status_by_waba(waba_id: str, token: str, name: str) -> Optional[str]:
+    """PENDING | APPROVED | REJECTED, or None when the template does not exist.
+
+    Takes a raw token because onboarding needs this before there is an account
+    row to read one from — and "does this template actually work" is a question
+    both onboarding and the hourly sync have to ask.
+    """
+    body = _get(f"/{waba_id}/message_templates", token, {"name": name, "limit": 1})
     data = body.get("data") or []
     return data[0].get("status") if data else None
+
+
+def get_template_status(account: WhatsAppAccount, name: str) -> Optional[str]:
+    if not account.waba_id:
+        return None
+    return template_status_by_waba(account.waba_id, _token(account), name)

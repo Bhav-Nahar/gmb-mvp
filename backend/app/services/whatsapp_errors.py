@@ -21,9 +21,20 @@ class ErrorMeaning(NamedTuple):
     # Worth trying again shortly (Meta pacing, transient server error) as opposed
     # to a fault in the message itself.
     retryable: bool = False
+    # Our access to their account is gone. Nothing about the message is wrong and
+    # no retry helps — the tenant has to reconnect. Left undetected, this looks
+    # like every message failing at random on a healthy-looking account.
+    reauth: bool = False
 
 
 _CODES: dict[int, ErrorMeaning] = {
+    # Authorisation. 190 is Meta's OAuthException: the tenant removed Pinzo in
+    # Business Settings, changed the owning account, or Meta invalidated the
+    # token. 133004/131057 are the account-level equivalents.
+    190: ErrorMeaning(
+        "Pinzo's access to your WhatsApp account has ended — this happens if the connection "
+        "was removed in Meta Business Settings. Reconnect WhatsApp to start sending again.",
+        False, reauth=True),
     131026: ErrorMeaning(
         "This number isn't on WhatsApp, or can't receive messages.", True),
     131047: ErrorMeaning(
@@ -73,6 +84,14 @@ def explain(code: Optional[int | str]) -> ErrorMeaning:
         return _FALLBACK
 
 
+def is_known(code: Optional[int | str]) -> bool:
+    """Whether we have a human explanation, i.e. whether it beats Meta's prose."""
+    try:
+        return int(code) in _CODES
+    except (TypeError, ValueError):
+        return False
+
+
 def is_permanent(code: Optional[int | str]) -> bool:
     return explain(code).permanent
 
@@ -94,3 +113,19 @@ def is_billing(code: Optional[int | str], text: str = "") -> bool:
 
 def is_retryable(code: Optional[int | str]) -> bool:
     return explain(code).retryable
+
+
+def is_reauth(code: Optional[int | str], text: str = "") -> bool:
+    """Has our access to this tenant's account been withdrawn?
+
+    Text-checked as well as code-checked, like billing: Meta returns the token
+    failures under a couple of different codes, and mistaking one for an ordinary
+    send failure means an account that can never work again still shows as ready
+    and keeps burning attempts.
+    """
+    if explain(code).reauth:
+        return True
+    lowered = (text or "").lower()
+    return any(term in lowered for term in
+               ("access token", "session has been invalidated", "session is invalid",
+                "oauthexception", "cannot parse access token", "has not authorized"))

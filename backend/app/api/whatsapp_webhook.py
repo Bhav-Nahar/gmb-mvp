@@ -31,6 +31,7 @@ from app.models.review_suppression import ReviewSuppression
 from app.models.whatsapp_account import WhatsAppAccount
 from app.services import whatsapp_errors
 from app.services.review_request_service import suppress
+from app.services.whatsapp_onboarding_service import REVIEW_TEMPLATE_NAME
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -54,15 +55,21 @@ def verify(request: Request):
 def _signature_ok(raw: bytes, header: Optional[str]) -> bool:
     """Verify Meta signed this exact body with our app secret.
 
-    Fails CLOSED when the secret is configured but the signature is absent or
-    wrong. If no secret is configured we accept and log loudly — that is a
-    development convenience, and it says so in the log rather than pretending
-    the endpoint is protected.
+    Fails CLOSED, including when the secret is simply missing. This endpoint is
+    unauthenticated by necessity, and what arrives on it suppresses phone
+    numbers, disables accounts and marks messages failed — so an unset
+    environment variable must not turn it into an open one. In development,
+    where there is often no app at all, it stays permissive and says so.
     """
     secret = (settings.FACEBOOK_APP_SECRET or "").strip()
     if not secret:
-        logger.warning("[wa-webhook] FACEBOOK_APP_SECRET unset — accepting UNVERIFIED webhook")
-        return True
+        if settings.APP_ENV == "development":
+            logger.warning("[wa-webhook] FACEBOOK_APP_SECRET unset — accepting UNVERIFIED "
+                           "webhook (development only)")
+            return True
+        logger.error("[wa-webhook] FACEBOOK_APP_SECRET unset in %s — REJECTING webhook. "
+                     "Delivery receipts and opt-outs are being lost.", settings.APP_ENV)
+        return False
     if not header or not header.startswith("sha256="):
         return False
     expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
@@ -171,6 +178,12 @@ def _status_update(db: Session, account: WhatsAppAccount, st: dict[str, Any]) ->
         if whatsapp_errors.is_permanent(code):
             suppress(db, account.organization_id, row.phone,
                      ReviewSuppression.REASON_FAILED, note=f"Meta error {code}")
+        # An auth failure is not about this recipient at all — our access is gone,
+        # and every other send will fail the same way until the tenant reconnects.
+        elif whatsapp_errors.is_reauth(code, row.error_detail or ""):
+            account.status = WhatsAppAccount.STATUS_REAUTH_REQUIRED
+            account.status_detail = whatsapp_errors.explain(190).message
+            db.commit()
         logger.info("[wa-webhook] %s failed: %s", wamid, row.error_detail)
         return
 
@@ -214,10 +227,25 @@ def _template_update(db: Session, waba_id: Optional[str], value: dict[str, Any])
     account = db.query(WhatsAppAccount).filter(
         WhatsAppAccount.waba_id == str(waba_id),
     ).first() if waba_id else None
-    if not account or value.get("message_template_name") != account.template_name:
+    if not account:
         return
 
+    name = value.get("message_template_name")
     event = (value.get("event") or "").upper()
+
+    # A template we submitted but did not switch to yet — the case where a tenant
+    # re-created the template while an approved one was still in service. Adopt
+    # it once Meta approves, which is what the create endpoint promised would
+    # happen; before this, that newer version was orphaned.
+    if name != account.template_name:
+        if event == "APPROVED" and name and str(name).startswith(REVIEW_TEMPLATE_NAME):
+            account.template_name = name
+            account.template_status = event
+            db.commit()
+            logger.info("[wa-webhook] adopted newly approved template %s (org %s)",
+                        name, account.organization_id)
+        return
+
     account.template_status = event
     if event == "APPROVED" and account.status == WhatsAppAccount.STATUS_TEMPLATE_PENDING:
         account.status = WhatsAppAccount.STATUS_READY
