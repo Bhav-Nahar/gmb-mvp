@@ -3,7 +3,9 @@ import { marketName } from '@/lib/markets'
 // Sibling of lib/pseo.ts — served under /{locale}/local-seo-services/, a SEPARATE
 // backend table (lpseo_pages). Rendered by components/lpseo/LpseoLanding.tsx.
 
-export interface LpseoPair { title: string; detail: string }
+// `example` is a third, optional part: the search-intent rows carry "what this wins
+// for the business" alongside the description. Only that section authors it.
+export interface LpseoPair { title: string; detail: string; example?: string }
 export interface LpseoQa { q: string; a: string }
 export interface LpseoService { channel: string; work: string; outcome: string }
 export interface LpseoCompareRow { point: string; agency: string; software: string; pinzo: string }

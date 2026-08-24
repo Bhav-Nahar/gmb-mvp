@@ -410,6 +410,9 @@ export default function LpseoLanding({ page, siblings = [], livePaths = new Set<
                   <span className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-xs font-extrabold text-primary">{i + 1}</span>
                   <h3 className="text-sm font-bold text-foreground">{it.title}</h3>
                   {it.detail && <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{it.detail}</p>}
+                  {/* The authored payoff line. The card used to render title + detail
+                      only, so ten of these were stored on every page and shown on none. */}
+                  {it.example && <p className="mt-2.5 border-t border-border/60 pt-2.5 text-xs leading-relaxed text-foreground">{it.example}</p>}
                 </article>
               ))}
             </div>
