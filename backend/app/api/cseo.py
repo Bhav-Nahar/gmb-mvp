@@ -366,6 +366,8 @@ CONTENT_LIST_COLS += [
     "hero_trust", "why_matters_points", "gbp_categories", "gbp_services",
     "gbp_attributes", "review_themes", "post_ideas", "photo_checklist",
     "neighborhoods", "single_points", "multi_points", "ai_signals", "audit_points",
+    # The package ships the cost drivers as a plain list of ten, not "label::value".
+    "cost_drivers",
 ]
 CONTENT_PAIR_COLS += [
     "problems", "solutions", "monthly_workflow", "review_examples",
@@ -378,9 +380,15 @@ CONTENT_TUPLE_COLS += [
     "related_cards",
 ]
 # One "label::value" cell rather than a list of them: {"title","detail"}.
-CONTENT_SOLO_PAIR_COLS = ["cost_drivers", "policy"]
+# A cell with no "::" is the value, not the label: a lone string is body copy, and
+# storing it as the title left the renderer (which keys off `detail`) with nothing
+# to draw, so the whole policy block silently disappeared from the global pillar.
+CONTENT_SOLO_PAIR_COLS = ["policy"]
 # "eyebrow::heading::intro" -> the approved header of one section. The heading and
 # the eyebrow are approved copy too, so they are imported rather than hardcoded.
+# A cell with only one part is that section's HEADING. Treating it as the eyebrow
+# rendered all 14 approved section titles as uppercase pills and left the page with
+# a single h2 in total.
 CONTENT_SECTION_COLS = [
     "sec_answer", "sec_why", "sec_services", "sec_ai", "sec_models", "sec_process",
     "sec_deliverables", "sec_proof", "sec_pricing", "sec_comparison", "sec_markets",
@@ -484,13 +492,15 @@ def _row_to_page_in(row: dict[str, str]) -> CseoPageIn:
             content[col] = [_map_tuple(col, item.split("::")) for item in _split_list(row[col])]
     for col in CONTENT_SOLO_PAIR_COLS:
         if (row.get(col) or "").strip():
-            title, _, detail = row[col].partition("::")
+            title, sep, detail = row[col].partition("::")
+            if not sep:  # a lone value is the body copy, not a heading for nothing
+                title, detail = "", title
             content[col] = {"title": title.strip(), "detail": detail.strip()}
     for col in CONTENT_SECTION_COLS:
         if (row.get(col) or "").strip():
-            eyebrow, heading, intro = (row[col].split("::", 2) + ["", ""])[:3]
-            content[col] = {"eyebrow": eyebrow.strip(), "heading": heading.strip(),
-                            "intro": intro.strip()}
+            parts = [p.strip() for p in row[col].split("::", 2)]
+            eyebrow, heading, intro = (parts + ["", ""])[:3] if len(parts) > 1 else ("", parts[0], "")
+            content[col] = {"eyebrow": eyebrow, "heading": heading, "intro": intro}
     for col in CONTENT_QA_COLS:
         if (row.get(col) or "").strip():
             content[col] = _split_faqs(row[col])

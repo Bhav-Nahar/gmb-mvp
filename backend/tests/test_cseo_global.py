@@ -115,8 +115,26 @@ def test_section_header_splits_into_eyebrow_heading_and_intro():
     c = _row_to_page_in(row).content
     assert c["sec_services"] == {"eyebrow": "Complete service scope",
                                  "heading": "What is included?", "intro": "One program."}
-    # A header may be an eyebrow on its own; the missing parts stay empty, not None.
-    assert c["sec_audit"] == {"eyebrow": "Free Local SEO audit", "heading": "", "intro": ""}
+    # A one-part header is the HEADING, so the section still renders an h2. Reading it
+    # as an eyebrow gave the global pillar 14 uppercase pills and one h2 in total.
+    assert c["sec_audit"] == {"eyebrow": "", "heading": "Free Local SEO audit", "intro": ""}
+
+
+def test_a_lone_solo_pair_value_is_body_copy_not_a_title():
+    # The renderer keys the policy block off `detail`; a lone value stored as the
+    # title dropped the block, its four source links included.
+    row = {"country": "global", "policy": "This service model follows Google's guidance."}
+    assert _row_to_page_in(row).content["policy"] == {
+        "title": "", "detail": "This service model follows Google's guidance."}
+    row = {"country": "global", "policy": "Sources::Google guidance."}
+    assert _row_to_page_in(row).content["policy"] == {
+        "title": "Sources", "detail": "Google guidance."}
+
+
+def test_cost_drivers_is_a_list():
+    row = {"country": "global", "cost_drivers": "Number of locations|Website condition"}
+    assert _row_to_page_in(row).content["cost_drivers"] == [
+        "Number of locations", "Website condition"]
 
 
 def test_engagement_model_keeps_its_cta():
