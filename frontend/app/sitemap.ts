@@ -4,7 +4,6 @@ import {
   listLpseoPages, lpseoPath, isLpseoPillar,
   industryHubPath as lpseoIndustryHubPath, rootHubPath as lpseoRootHubPath,
 } from '@/lib/lpseo'
-import { getCseoPillar } from '@/lib/cseo'
 import { FEATURES } from '@/lib/features'
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.pinzo.io'
@@ -63,10 +62,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // Local-SEO pages (/local-seo-services) — same hub + leaf shape as pSEO.
   const lpseo = await listLpseoPages() // published + indexable only
-  // Only an INDEXABLE pillar belongs here. A sitemap entry for a noindex page is a
-  // contradictory signal: it asks Google to crawl a URL that then refuses indexing.
-  const gp = await getCseoPillar('global')
-  const globalPillar = gp && gp.index_status === 'index' ? gp : null
   const lpRootHubs = new Map<string, Date | undefined>()
   const lpIndustryHubs = new Map<string, Date | undefined>()
   for (const p of lpseo) {
@@ -95,14 +90,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // once the respective type has published pages, so an empty hub never enters the map.
   const globalIndexRoutes: MetadataRoute.Sitemap = [
     ...(pseo.length > 0 ? [{ url: `${SITE_URL}/gbp-management` }] : []),
-    // The bare /local-seo-services is the global pillar when one is published; it
-    // no longer depends on there being indexable leaves. Trailing slash matches the
-    // pillar's canonical.
-    ...(globalPillar
-      ? [{ url: `${SITE_URL}/local-seo-services/`, lastModified: globalPillar.updated_at ? new Date(globalPillar.updated_at) : undefined }]
-      : lpseo.length > 0
-        ? [{ url: `${SITE_URL}/local-seo-services` }]
-        : []),
+    // The bare /local-seo-services is the approved static global pillar
+    // (public/local-seo-services.html), so it always exists and is always listed.
+    // No trailing slash: the router 308s that form and the page self-canonicalises
+    // without it.
+    { url: `${SITE_URL}/local-seo-services` },
   ]
 
   return [...staticRoutes, ...globalIndexRoutes, ...hubRoutes, ...leafRoutes, ...lpseoHubRoutes, ...lpseoLeafRoutes]
