@@ -71,6 +71,7 @@ services:
       - DEMO_LOGIN_EMAIL=${DEMO_LOGIN_EMAIL:-}
       - DEMO_LOGIN_PASSWORD_HASH=${DEMO_LOGIN_PASSWORD_HASH:-}
       - FRONTEND_URL=${FRONTEND_URL}
+      - ADDITIONAL_CORS_ORIGINS=${ADDITIONAL_CORS_ORIGINS:-}
       - RESEND_API_KEY=${RESEND_API_KEY:-}
       - LEAD_EMAIL_FROM=${LEAD_EMAIL_FROM:-Pinzo Leads <leads@pinzo.io>}
       - REVALIDATE_SECRET=${REVALIDATE_SECRET}
@@ -225,7 +226,7 @@ services:
       dockerfile: Dockerfile
       # NEXT_PUBLIC_* must be available at build time to be inlined into the bundle.
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
         NEXT_PUBLIC_RAZORPAY_KEY: ${RAZORPAY_KEY_ID}
         NEXT_PUBLIC_CARD_REQUIRED_ONBOARDING: ${NEXT_PUBLIC_CARD_REQUIRED_ONBOARDING:-false}
@@ -235,7 +236,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
       - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - NEXT_PUBLIC_RAZORPAY_KEY=${RAZORPAY_KEY_ID}
       - NEXT_PUBLIC_CARD_REQUIRED_ONBOARDING=${NEXT_PUBLIC_CARD_REQUIRED_ONBOARDING:-false}

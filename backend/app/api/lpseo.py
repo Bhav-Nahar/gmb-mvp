@@ -727,6 +727,11 @@ CONTENT_LIST_COLS = [
 # {"title","detail"}
 CONTENT_PAIR_COLS = ["search_intents", "value_props", "city_factors", "proof_points",
                      "deliverables", "audit_checklist", "workflow_weeks", "journey_stages"]
+# ...except this one, which is {"title","detail","example"}. The search-behaviour
+# cards render a third part: what the work wins for the business. A plain pair split
+# partitions on the FIRST "::" only, so a three-part row arrived as
+# detail="description :: payoff" and the card printed the separator on the page.
+CONTENT_TRIPLE_COL = "search_intents"
 # {"q","a"}
 CONTENT_QA_COLS = ["faqs"]
 # Typed dicts, see _map_tuple.
@@ -755,6 +760,21 @@ PACKAGE_ALIASES = {
 # gbp_categories, gbp_attributes, post_ideas, photo_checklist, review_examples.
 # They parse fine and are simply not stored (the reference template renders no such
 # section). Unknown columns have always been ignored, so they need no declaration.
+
+
+def _split_intents(cell: str) -> list[dict]:
+    """`title :: detail :: example` rows, the third part optional. Splitting on every
+    "::" rather than partitioning is the point: a partition leaves ":: example" glued
+    onto the description."""
+    out = []
+    for item in _split_list(cell):
+        parts = [p.strip() for p in item.split("::", 2)]
+        title, detail, example = (parts + ["", ""])[:3]
+        row = {"title": title, "detail": detail}
+        if example:
+            row["example"] = example
+        out.append(row)
+    return out
 
 
 def _subsplit(cell: str) -> list[str]:
@@ -812,7 +832,8 @@ def _row_to_page_in(row: dict[str, str]) -> LpseoPageIn:
             content[col] = _split_list(row[col])
     for col in CONTENT_PAIR_COLS:
         if (row.get(col) or "").strip():
-            content[col] = _split_pairs(row[col])
+            content[col] = (_split_intents(row[col]) if col == CONTENT_TRIPLE_COL
+                            else _split_pairs(row[col]))
     for col in CONTENT_QA_COLS:
         if (row.get(col) or "").strip():
             content[col] = [{"q": p["title"], "a": p["detail"]} for p in _split_pairs(row[col])]

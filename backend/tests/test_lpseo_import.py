@@ -243,3 +243,20 @@ def test_guard_lets_a_pillar_through(db, monkeypatch):
         [["Dentists", "", "in", "industry_pillar", "100"]], monkeypatch,
     )
     assert res["created"] == 1 and res["failed"] == 0
+
+
+def test_search_intent_keeps_its_third_part():
+    """The search-behaviour card renders title, description AND the payoff line. A
+    plain pair split partitions on the first "::" only, which left the payoff glued
+    to the description and printed the separator on the page."""
+    from app.api.lpseo import _row_to_page_in
+    row = {"industry_label": "Dentists", "city_label": "Mumbai", "country": "in",
+           "search_intents": "Google Maps and GBP::Categories, services and photos."
+                             "::Improves visibility for nearby treatment searches."
+                             "|Dental website SEO::Metadata and page structure."}
+    intents = _row_to_page_in(row).content["search_intents"]
+    assert intents[0] == {"title": "Google Maps and GBP",
+                          "detail": "Categories, services and photos.",
+                          "example": "Improves visibility for nearby treatment searches."}
+    # A two-part row stays a plain pair: no empty example to render.
+    assert intents[1] == {"title": "Dental website SEO", "detail": "Metadata and page structure."}
