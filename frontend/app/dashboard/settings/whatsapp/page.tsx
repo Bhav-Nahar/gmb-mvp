@@ -251,7 +251,7 @@ export default function WhatsAppSettingsPage() {
       const FB = await loadFacebookSdk(cfg.app_id, cfg.graph_version);
 
       FB.login(
-        async (response) => {
+        (response) => {
           const code = response?.authResponse?.code;
           stopListening();
           if (!code) {
@@ -262,14 +262,16 @@ export default function WhatsAppSettingsPage() {
             setBusy(false);
             return;
           }
-          try {
-            await api.post('/whatsapp/connect', { code, source: 'sdk' });
-            await load();
-          } catch (err) {
-            setError(err instanceof Error ? err.message : 'Could not finish connecting.');
-          } finally {
-            setBusy(false);
-          }
+          (async () => {
+            try {
+              await api.post('/whatsapp/connect', { code, source: 'sdk' });
+              await load();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : 'Could not finish connecting.');
+            } finally {
+              setBusy(false);
+            }
+          })();
         },
         {
           config_id: cfg.config_id,
