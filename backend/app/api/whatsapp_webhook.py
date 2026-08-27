@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Request, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -29,9 +30,11 @@ from app.db.session import get_db
 from app.models.review_request import ReviewRequest
 from app.models.review_suppression import ReviewSuppression
 from app.models.whatsapp_account import WhatsAppAccount
+from app.models.whatsapp_message import WhatsAppMessage
 from app.services import whatsapp_errors
 from app.services.review_request_service import suppress
 from app.services.whatsapp_onboarding_service import REVIEW_TEMPLATE_NAME
+from app.services.whatsapp_service import normalize_phone
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -147,6 +150,12 @@ def _status_update(db: Session, account: WhatsAppAccount, st: dict[str, Any]) ->
     if not wamid or state not in ("sent", "delivered", "read", "failed"):
         return
 
+    # An inbox reply and a review request are both outbound messages that get
+    # receipts, but they live in different tables. Try the inbox first: it is
+    # the smaller, hotter table, and a wamid belongs to exactly one of the two.
+    if _message_status(db, wamid, state, st):
+        return
+
     row = db.query(ReviewRequest).filter(ReviewRequest.wamid == wamid).first()
     if not row:
         return
@@ -190,23 +199,100 @@ def _status_update(db: Session, account: WhatsAppAccount, st: dict[str, Any]) ->
     db.commit()
 
 
-def _inbound(db: Session, account: WhatsAppAccount, msg: dict[str, Any]) -> None:
-    """Inbound messages exist here for one reason: catching opt-outs.
+def _message_status(db: Session, wamid: str, state: str, st: dict[str, Any]) -> bool:
+    """Patch an inbox message's delivery status. Returns True if it was ours.
 
-    Pinzo is not an inbox — a tenant replying to their own customers happens in
-    WhatsApp itself. But someone who types STOP has withdrawn consent, and
-    ignoring that is both a policy breach and the fastest way to collect the
-    blocks that destroy a sender's quality rating.
+    Statuses arrive out of order (a `read` can beat its `delivered`), so the
+    status only ever moves forward through the ladder — otherwise a late
+    receipt would downgrade a message the tenant already saw marked read.
     """
-    text = ((msg.get("text") or {}).get("body") or "").strip().lower()
-    button = ((msg.get("button") or {}).get("text") or "").strip().lower()
-    said = text or button
-    if said and said in OPT_OUT_WORDS:
-        phone = str(msg.get("from") or "")
-        if phone:
-            suppress(db, account.organization_id, phone,
-                     ReviewSuppression.REASON_OPT_OUT, note=f'Replied "{said}"')
-            logger.info("[wa-webhook] opt-out from %s (org %s)", phone, account.organization_id)
+    row = db.query(WhatsAppMessage).filter(WhatsAppMessage.wamid == wamid).first()
+    if not row:
+        return False
+
+    ladder = [WhatsAppMessage.STATUS_SENT, WhatsAppMessage.STATUS_DELIVERED,
+              WhatsAppMessage.STATUS_READ]
+    if state == "failed":
+        err = (st.get("errors") or [{}])[0]
+        row.status = WhatsAppMessage.STATUS_FAILED
+        row.error_detail = (
+            (err.get("error_data") or {}).get("details")
+            or err.get("title")
+            or whatsapp_errors.explain(err.get("code")).message
+        )[:1000]
+    elif row.status != WhatsAppMessage.STATUS_FAILED and state in ladder:
+        current = ladder.index(row.status) if row.status in ladder else -1
+        if ladder.index(state) > current:
+            row.status = state
+    db.commit()
+    return True
+
+
+def _inbound(db: Session, account: WhatsAppAccount, msg: dict[str, Any]) -> None:
+    """Store the customer's message, then handle opt-outs.
+
+    Storing comes first and is never skipped. An opt-out is still a message the
+    tenant should be able to see in the thread — silently dropping it is how
+    "why did they stop replying?" becomes a support ticket.
+    """
+    # Normalised to the same form outbound numbers are stored in. Meta's wa_id
+    # is digits-only but not guaranteed to be byte-identical to what we dialled
+    # (trunk prefixes, and country quirks like Argentina's 9 / Mexico's 1), and
+    # every match we make afterwards — the thread merge, the suppression list —
+    # is an equality test on this string. Falls back to the raw value rather
+    # than dropping a message we cannot parse.
+    phone = normalize_phone(str(msg.get("from") or "")) or str(msg.get("from") or "")
+    wamid = msg.get("id")
+    text = ((msg.get("text") or {}).get("body") or "").strip()
+    button = ((msg.get("button") or {}).get("text") or "").strip()
+
+    if phone:
+        _store_inbound(db, account, msg, phone, wamid, text or button)
+
+    # Opt-out matching is on the whole trimmed message, lowercased.
+    said = (text or button).lower()
+    if said and said in OPT_OUT_WORDS and phone:
+        suppress(db, account.organization_id, phone,
+                 ReviewSuppression.REASON_OPT_OUT, note=f'Replied "{said}"')
+        logger.info("[wa-webhook] opt-out from %s (org %s)", phone, account.organization_id)
+
+
+def _store_inbound(db: Session, account: WhatsAppAccount, msg: dict[str, Any],
+                   phone: str, wamid: Optional[str], body: str) -> None:
+    """Write one inbound message, ignoring Meta's retries.
+
+    Meta re-delivers any webhook it did not get a fast 200 for, so the same
+    reply arrives more than once. `wamid` is unique in the table; we check first
+    (cheap, indexed) and still catch the race, because two retries can land in
+    parallel workers and the check alone would let both through.
+    """
+    if wamid and db.query(WhatsAppMessage.id).filter(
+            WhatsAppMessage.wamid == str(wamid)).first():
+        return
+
+    kind = str(msg.get("type") or "text")
+    if not body and kind != "text":
+        # Media, location, contacts, stickers — we don't render them yet, but an
+        # empty bubble reads as a bug, so the thread says what arrived.
+        body = f"[{kind}]"
+
+    row = WhatsAppMessage(
+        organization_id=account.organization_id,
+        phone=phone,
+        direction=WhatsAppMessage.DIRECTION_IN,
+        body=body or None,
+        message_type=kind,
+        wamid=str(wamid) if wamid else None,
+        status=WhatsAppMessage.STATUS_RECEIVED,
+        created_at=_ts(msg.get("timestamp")),
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost the race against a parallel retry. The message is stored either
+        # way, which is all we wanted.
+        db.rollback()
 
 
 def _preferences(db: Session, value: dict[str, Any]) -> None:

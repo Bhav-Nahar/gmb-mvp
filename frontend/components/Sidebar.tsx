@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2, Sparkles, History } from 'lucide-react'
+import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2, Sparkles, History, MessageCircle } from 'lucide-react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
@@ -29,6 +29,29 @@ export default function Sidebar({
     staleTime: 5 * 60_000,
   })
   const changeCount = changes?.count ?? 0
+
+  // Read before the badge query below needs it; `userRole` proper is defined
+  // further down alongside the other display fields.
+  const userRoleEarly = user?.role || ''
+
+  // Conversations where the customer wrote last and the 24-hour reply window is
+  // still open. Unlike an unread count this cannot go stale — it clears itself
+  // when the tenant replies or when the window closes.
+  // Owner/Admin only, matching the backend gate — otherwise every Viewer and
+  // Store Manager session polls a 403 once a minute, forever.
+  const canUseInbox = !!userRoleEarly && ['Owner', 'Admin'].includes(userRoleEarly)
+  const { data: waiting } = useQuery<{ count: number }>({
+    queryKey: ['whatsapp-needs-reply'],
+    queryFn: () => api.get('/whatsapp/inbox/needs-reply'),
+    enabled: !!user && canUseInbox,
+    staleTime: 60_000,
+    // A tenant on a plan without WhatsApp, or with no account connected, gets a
+    // 403/400 here. One attempt, no retry loop, and refetching stops after a
+    // failure so the badge just stays absent.
+    refetchInterval: (query) => (query.state.error ? false : 60_000),
+    retry: false,
+  })
+  const waitingCount = waiting?.count ?? 0
 
   const userName = user?.name || 'Google User'
   const userRole = user?.role || ''
@@ -79,11 +102,28 @@ export default function Sidebar({
     { label: 'Activity Logs', href: '/dashboard/settings/logs', icon: FileClock },
   ]
 
+  // WhatsApp is its own group, not a corner of Reviews. Everything the tenant
+  // does on their own number lives here: asking for reviews, reading what the
+  // customer wrote back, and the connection itself.
+  // Ask for Review is Owner/Admin too (api/whatsapp.py is admin_required
+  // throughout), so the whole group is hidden rather than half of it 403ing.
+  const whatsappChildren: { label: string; href: string; icon: any; badge?: number }[] = [
+    { label: 'Ask for Review', href: '/dashboard/reviews/request', icon: MessageSquare },
+    { label: 'Inbox', href: '/dashboard/whatsapp/inbox', icon: MessageCircle,
+      badge: waitingCount },
+    { label: 'Settings', href: '/dashboard/settings/whatsapp', icon: Settings },
+  ]
+
   const inSettings = pathname === '/dashboard/team' || pathname?.startsWith('/dashboard/settings')
   const [settingsOpen, setSettingsOpen] = useState<boolean>(!!inSettings)
 
   const inInsights = pathname?.startsWith('/dashboard/insights') || pathname === '/dashboard/comparison'
   const [insightsOpen, setInsightsOpen] = useState<boolean>(!!inInsights)
+
+  const inWhatsapp = pathname?.startsWith('/dashboard/whatsapp')
+    || pathname?.startsWith('/dashboard/reviews/request')
+    || pathname?.startsWith('/dashboard/settings/whatsapp')
+  const [whatsappOpen, setWhatsappOpen] = useState<boolean>(!!inWhatsapp)
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {
@@ -152,6 +192,58 @@ export default function Sidebar({
             </Link>
           )
         })}
+
+        {/* WhatsApp group — hidden for roles the backend refuses. */}
+        {canUseInbox && (
+        <div>
+          <button
+            onClick={() => setWhatsappOpen(o => !o)}
+            className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${inWhatsapp ? 'text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}
+          >
+            <span className="flex items-center gap-3">
+              <MessageCircle className={`h-4 w-4 shrink-0 ${inWhatsapp ? 'text-primary' : 'text-muted-foreground/60'}`} />
+              WhatsApp
+            </span>
+            <span className="ml-auto flex items-center gap-2">
+              {/* Shown while collapsed, so a waiting customer is visible without
+                  opening the group. */}
+              {!whatsappOpen && !!waitingCount && (
+                <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-600">
+                  {waitingCount > 99 ? '99+' : waitingCount}
+                </span>
+              )}
+              <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${whatsappOpen ? 'rotate-180' : ''}`} />
+            </span>
+          </button>
+          {whatsappOpen && (
+            <div className="mt-1 ml-3 pl-3 border-l border-border/60 space-y-1">
+              {whatsappChildren.map((item) => {
+                const active = isActive(item.href)
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={onClose}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                      active
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                    }`}
+                  >
+                    <item.icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground/60'}`} />
+                    <span>{item.label}</span>
+                    {!!item.badge && (
+                      <span className="ml-auto rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-600">
+                        {item.badge > 99 ? '99+' : item.badge}
+                      </span>
+                    )}
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+        </div>
+        )}
 
         {/* Insights group */}
         <div>

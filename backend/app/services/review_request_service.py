@@ -6,6 +6,7 @@ cap, and only then does a message get sent. Every skip is recorded as a row so
 "why didn't this customer get it" is answerable months later.
 """
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -47,9 +48,38 @@ def new_token() -> str:
 
 
 def is_suppressed(db: Session, organization_id: int, phone: str) -> bool:
-    return db.query(ReviewSuppression.id).filter(
+    """Has this number opted out — on any plausible formatting of it?
+
+    Exact match first, then the last 8 digits. The suffix test exists because
+    the two sides of this comparison come from different places: the number we
+    hold was typed or uploaded by the tenant, while an opt-out is recorded
+    against the `wa_id` Meta reports on the inbound message, and those are not
+    guaranteed to be the same string. Trunk-prefix zeros and country quirks
+    (Argentina's 9, Mexico's 1) are the usual causes.
+
+    Getting this wrong is not a cosmetic bug: a STOP recorded under one
+    spelling and a campaign sent to the other means messaging someone who
+    withdrew consent. So the check is deliberately loose — a false positive
+    costs one unsent review request, a false negative is a policy breach.
+
+    Last 8 digits, not fewer: 8 is short enough to survive a country-code or
+    trunk difference and long enough that two real customers of one tenant
+    colliding is not a practical concern.
+    """
+    if db.query(ReviewSuppression.id).filter(
         ReviewSuppression.organization_id == organization_id,
         ReviewSuppression.phone == phone,
+    ).first() is not None:
+        return True
+
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if len(digits) < 8:
+        return False
+    # Suffix match. A trailing LIKE cannot use the btree index, but this scans
+    # one organization's suppression list — hundreds of rows, not the table.
+    return db.query(ReviewSuppression.id).filter(
+        ReviewSuppression.organization_id == organization_id,
+        ReviewSuppression.phone.like(f"%{digits[-8:]}"),
     ).first() is not None
 
 

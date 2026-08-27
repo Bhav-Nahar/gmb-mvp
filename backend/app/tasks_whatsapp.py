@@ -7,12 +7,12 @@ drops the quality rating, and throttles the tenant's number for everyone. The
 throttle here is therefore a feature, not politeness.
 """
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
 from sqlalchemy import func
 
+from app.core.redis_client import get_redis as _get_redis
 from app.db.session import SessionLocal
 from app.models.location import Location
 from app.models.review_request import ReviewRequest
@@ -48,7 +48,8 @@ FEATURE_FLAG = "whatsapp_review_collection_enabled"
 CHUNK_SIZE = 10
 CHUNK_INTERVAL_SECONDS = 20
 
-# Kept for the reminder loop, which sends a handful of messages at a time.
+# No longer used to sleep anywhere — both send paths pace themselves by
+# re-enqueuing with a countdown. Kept because tests still patch it to 0.
 SEND_INTERVAL_SECONDS = 2.0
 
 # Quiet hours. A review ask is MARKETING-category, and a marketing WhatsApp at
@@ -87,50 +88,74 @@ DEFAULT_DAILY_CAP = 250
 DEFAULT_MONTHLY_LIMIT = 3000
 
 
-def _sent_today(db, organization_id: int) -> int:
-    """Messages Meta accepted from this org in the last 24h.
+# Statuses that mean Meta accepted the message and will bill for it.
+BILLED_STATUSES = [
+    ReviewRequest.STATUS_SENT, ReviewRequest.STATUS_DELIVERED,
+    ReviewRequest.STATUS_READ, ReviewRequest.STATUS_CLICKED,
+]
 
-    Reminders reuse their original row, so they are counted by their reminder
-    timestamps rather than by row creation — otherwise a day of reminders is
-    invisible to the cap and quietly overruns the tenant's Meta tier.
+def _billable_between(db, organization_id: int, since: datetime) -> int:
+    """Messages Meta will bill this org for, in the period starting `since`.
+
+    A first send is attributed to when it was SENT, not when its row was
+    created. The previous version filtered on `created_at`, which put a request
+    uploaded on the 30th and sent on the 1st in the wrong month — and since the
+    reminder side was counted separately, such a send landed in NEITHER month's
+    total and slipped past the cap entirely.
+
+    `coalesce(sent_at, created_at)` because a handful of rows predate `sent_at`;
+    falling back keeps them counted rather than silently free.
+
+    ponytail: a row's reminders are all attributed to the period containing its
+    first send, since `reminder_count` is a counter and only the LAST reminder
+    has a timestamp. Reminders fire within 7 days, so the skew is bounded and
+    only shows up on rows that straddle a boundary. What matters is that every
+    message is counted exactly once, which is what was broken. A per-send ledger
+    row is the upgrade if exact per-month attribution is ever needed.
     """
-    since = datetime.now(timezone.utc) - timedelta(hours=24)
-    delivered = [
-        ReviewRequest.STATUS_SENT, ReviewRequest.STATUS_DELIVERED,
-        ReviewRequest.STATUS_READ, ReviewRequest.STATUS_CLICKED,
-    ]
+    sent_at = func.coalesce(ReviewRequest.sent_at, ReviewRequest.created_at)
+
     first_sends = db.query(func.count(ReviewRequest.id)).filter(
         ReviewRequest.organization_id == organization_id,
-        ReviewRequest.created_at >= since,
-        ReviewRequest.status.in_(delivered),
+        sent_at >= since,
+        ReviewRequest.status.in_(BILLED_STATUSES),
     ).scalar() or 0
-    reminders = db.query(func.count(ReviewRequest.id)).filter(
+
+    # Every reminder is its own billed marketing message, so the counter is
+    # summed rather than counted — counting rows under-reports by up to 2x.
+    # Attributed by last_reminder_at, falling back to the send time: a row
+    # carrying reminder_count with no timestamp (older data) must still be
+    # counted, or its reminders are billed by Meta and invisible here.
+    reminded_at = func.coalesce(ReviewRequest.last_reminder_at, sent_at)
+    reminders = db.query(
+        func.coalesce(func.sum(ReviewRequest.reminder_count), 0),
+    ).filter(
         ReviewRequest.organization_id == organization_id,
-        ReviewRequest.last_reminder_at >= since,
+        reminded_at >= since,
     ).scalar() or 0
-    return first_sends + reminders
+
+    return int(first_sends) + int(reminders)
+
+
+def _sent_today(db, organization_id: int) -> int:
+    """Messages Meta accepted from this org in the last 24h — the tier cap."""
+    return _billable_between(db, organization_id,
+                             datetime.now(timezone.utc) - timedelta(hours=24))
 
 
 def billable_this_month(db, organization_id: int) -> int:
     """Messages Meta will bill this org for, this calendar month.
 
-    Every reminder is a separate billed marketing message, so `reminder_count` is
-    added rather than ignored: counting rows alone under-reports the tenant's bill
-    by up to three times, which is worse than not showing a number at all.
+    Every reminder is a separate billed marketing message, so reminders are
+    counted alongside first sends. Both are counted by their SEND time: the
+    previous version filtered on `created_at` and summed `reminder_count`, which
+    attributed a reminder to the month the request was uploaded rather than the
+    month Meta billed it — so spend that crossed a month boundary was counted in
+    neither month, and the cap let the tenant past it.
     """
-    start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    rows = db.query(
-        func.count(ReviewRequest.id),
-        func.coalesce(func.sum(ReviewRequest.reminder_count), 0),
-    ).filter(
-        ReviewRequest.organization_id == organization_id,
-        ReviewRequest.created_at >= start,
-        ReviewRequest.status.in_([
-            ReviewRequest.STATUS_SENT, ReviewRequest.STATUS_DELIVERED,
-            ReviewRequest.STATUS_READ, ReviewRequest.STATUS_CLICKED,
-        ]),
-    ).first()
-    return int(rows[0] or 0) + int(rows[1] or 0)
+    start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0,
+                                               second=0, microsecond=0)
+    return _billable_between(db, organization_id, start)
 
 
 def monthly_limit(account: WhatsAppAccount) -> int:
@@ -298,6 +323,14 @@ def _record_dropped(db, organization_id: int, location_id: int, rest: list[dict]
 MAX_REMINDERS = 2
 REMINDER_AFTER_HOURS = 24
 
+# Reminders are chunked and re-enqueued for the same reason campaigns are: this
+# loop used to take 500 rows and sleep SEND_INTERVAL_SECONDS between each, which
+# held a worker thread for up to 16 minutes every hour. The pacing that matters
+# (not firing hundreds of marketing messages in one burst) is preserved by the
+# countdown between chunks, not by sleeping inside one.
+REMINDER_CHUNK = 20
+REMINDER_CHUNK_INTERVAL_SECONDS = 40
+
 
 @shared_task(name="app.tasks_whatsapp.send_review_reminders_task")
 def send_review_reminders_task() -> dict:
@@ -335,11 +368,30 @@ def send_review_reminders_task() -> dict:
             # Nothing older than a week: a review ask that stale reads as a
             # random message from a business the customer has forgotten.
             ReviewRequest.sent_at >= now - timedelta(days=7),
-        ).order_by(ReviewRequest.id).limit(500).all()
+        ).order_by(ReviewRequest.id).limit(REMINDER_CHUNK).all()
+
+        # Hoisted out of the loop: a chunk is nearly always one or two orgs, and
+        # re-querying the account, the location and both spend aggregates per row
+        # was ~4 queries a row (two of them COUNTs) for answers that do not change
+        # within a chunk. Spend is re-read per org after each send instead.
+        accounts: dict[int, WhatsAppAccount | None] = {}
+        locations: dict[int, Location | None] = {}
+        spend: dict[int, tuple[int, int]] = {}
+
+        def _account_for_org(org_id: int):
+            if org_id not in accounts:
+                accounts[org_id] = db.query(WhatsAppAccount).filter(
+                    WhatsAppAccount.organization_id == org_id).first()
+            return accounts[org_id]
+
+        def _location(loc_id: int):
+            if loc_id not in locations:
+                locations[loc_id] = db.query(Location).filter(
+                    Location.id == loc_id).first()
+            return locations[loc_id]
 
         for row in rows:
-            account = db.query(WhatsAppAccount).filter(
-                WhatsAppAccount.organization_id == row.organization_id).first()
+            account = _account_for_org(row.organization_id)
             if not account or not account.can_send:
                 continue
 
@@ -356,17 +408,21 @@ def send_review_reminders_task() -> dict:
                 continue
 
             # Reminders are billed and throttled exactly like first sends, so they
-            # answer to the same two ceilings. Checked per row because a long
-            # reminder run can cross the line partway through.
-            if _sent_today(db, row.organization_id) >= (account.daily_send_limit
-                                                        or DEFAULT_DAILY_CAP):
+            # answer to the same two ceilings. Read once per org, then advanced
+            # locally after each send — a chunk cannot cross a cap unnoticed, and
+            # it costs two aggregates per org instead of two per row.
+            if row.organization_id not in spend:
+                spend[row.organization_id] = (_sent_today(db, row.organization_id),
+                                              billable_this_month(db, row.organization_id))
+            today, month = spend[row.organization_id]
+            if today >= (account.daily_send_limit or DEFAULT_DAILY_CAP):
                 summary["capped"] += 1
                 continue
-            if billable_this_month(db, row.organization_id) >= monthly_limit(account):
+            if month >= monthly_limit(account):
                 summary["capped"] += 1
                 continue
 
-            location = db.query(Location).filter(Location.id == row.location_id).first()
+            location = _location(row.location_id)
             if not location:
                 continue
             try:
@@ -393,7 +449,15 @@ def send_review_reminders_task() -> dict:
             row.status = ReviewRequest.STATUS_SENT   # a fresh send, awaiting delivery again
             db.commit()
             summary["reminded"] += 1
-            time.sleep(SEND_INTERVAL_SECONDS)
+            spend[row.organization_id] = (today + 1, month + 1)
+
+        # A full chunk means there is probably more waiting. Re-enqueue rather
+        # than waiting for the next hourly tick, so a large backlog still drains
+        # today — the rows stay eligible either way, this only sets the pace.
+        if len(rows) >= REMINDER_CHUNK and summary["reminded"]:
+            celery.send_task("app.tasks_whatsapp.send_review_reminders_task",
+                             countdown=REMINDER_CHUNK_INTERVAL_SECONDS)
+            summary["requeued"] = True
 
         logger.info("[wa-reminder] %s", summary)
         return summary
@@ -460,3 +524,67 @@ def _tier_to_cap(tier: str | None) -> int | None:
         "TIER_100K": 100_000,
         "TIER_UNLIMITED": 1_000_000,
     }.get((tier or "").upper())
+
+
+# Rows deleted per statement. Small enough that the DELETE never holds a lock
+# long enough to stall an inbound webhook write, which is the only thing that
+# competes with it on this table.
+PURGE_BATCH = 5_000
+
+
+@shared_task(name="app.tasks_whatsapp.purge_old_messages_task")
+def purge_old_messages_task() -> str:
+    """Delete inbox messages past the retention window.
+
+    These rows are a third party's personal data — a customer's number and what
+    they typed — so keeping them indefinitely is a compliance problem long
+    before it is a disk problem. Retention is therefore on by default rather
+    than something a tenant has to ask for.
+
+    Deleted in batches: one unbounded DELETE over a year of a large tenant's
+    messages would hold row locks long enough to make inbound webhooks time
+    out, and a webhook Meta cannot deliver fast is a webhook it retries.
+    """
+    from app.core.config import settings
+    from app.models.whatsapp_message import WhatsAppMessage
+
+    days = settings.WHATSAPP_MESSAGE_RETENTION_DAYS
+    if not days or days <= 0:
+        return "skipped: retention disabled"
+
+    r = _get_redis()
+    lock = r.lock("lock:purge_whatsapp_messages", timeout=1800)
+    if not lock.acquire(blocking=False):
+        return "skipped: another purge in progress"
+
+    db = SessionLocal()
+    deleted = 0
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        while True:
+            ids = [row[0] for row in db.query(WhatsAppMessage.id).filter(
+                WhatsAppMessage.created_at < cutoff,
+            ).limit(PURGE_BATCH).all()]
+            if not ids:
+                break
+            db.query(WhatsAppMessage).filter(
+                WhatsAppMessage.id.in_(ids),
+            ).delete(synchronize_session=False)
+            db.commit()
+            deleted += len(ids)
+            # A batch short of the limit means the table is drained.
+            if len(ids) < PURGE_BATCH:
+                break
+        if deleted:
+            logger.info("[wa-purge] deleted %s messages older than %s days", deleted, days)
+        return f"deleted {deleted}"
+    except Exception as err:  # pragma: no cover - defensive; beat retries tomorrow
+        db.rollback()
+        logger.exception("[wa-purge] failed: %s", err)
+        return f"failed: {err}"
+    finally:
+        db.close()
+        try:
+            lock.release()
+        except Exception:
+            pass

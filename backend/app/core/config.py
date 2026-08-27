@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     # number sends, not just the repeat. 30-90 days is the safe production range.
     REVIEW_REQUEST_COOLDOWN_HOURS: int = 24
 
+    # How long inbox messages are kept. These rows are a third party's personal
+    # data — a customer's phone number and what they wrote — held by us on the
+    # tenant's behalf, so "forever by default" is not a defensible position
+    # under DPDP/GDPR. One year covers the review-dispute and support cases a
+    # tenant actually reaches back for. 0 disables the purge entirely.
+    WHATSAPP_MESSAGE_RETENTION_DAYS: int = 365
+
     # Base URL baked into the review template's button. FIXED AT APPROVAL TIME
     # and immutable afterwards, so it must be the production host even when the
     # app runs locally — a template created from a dev machine with

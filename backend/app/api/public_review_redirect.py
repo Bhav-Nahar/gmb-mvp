@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import rate_limiter
 from app.db.session import get_db
 from app.models.location import Location
 from app.models.review_request import ReviewRequest
@@ -50,7 +51,15 @@ def google_review_url(location: Location) -> str | None:
     return None
 
 
-@router.get("/{token}")
+# Unauthenticated and public, so it is worth bounding. A token is 16 random
+# bytes, which makes guessing one infeasible rather than merely slow — this is
+# not the thing standing between an attacker and a link. It stops the endpoint
+# being a free amplifier: unbounded, every request is a DB lookup and a write on
+# first click.
+_redirect_rate_limit = rate_limiter("review_redirect", limit=120, window_seconds=60)
+
+
+@router.get("/{token}", dependencies=[Depends(_redirect_rate_limit)])
 def resolve_review_link(token: str, db: Session = Depends(get_db)):
     """Resolve a review token to its destination and record the click.
 
