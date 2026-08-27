@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, engine
 from app.core.config import settings
 from app.worker import celery  # Must be initialized before routers are imported
-from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays, aeo, pseo, lpseo, cseo, cityseo, public_review_redirect, whatsapp, whatsapp_webhook, review_campaigns, auth_demo
+from app.api import auth, locations, users, reviews, posts, media, listing_edits, insights, dynamic_attributes, billing, location_media, reply_templates, descriptions, local_rank, admin, leaderboard, microsites, public_microsites, leads, push, holidays, aeo, pseo, lpseo, cseo, cityseo, public_review_redirect, whatsapp, whatsapp_inbox, whatsapp_webhook, review_campaigns, auth_demo
 from app.api import comparison, branding
 from app.api.deps import check_csrf, check_billing_lock, require_feature, require_premium
 from app.core import plan_config
@@ -126,6 +126,7 @@ app.include_router(public_microsites.router, prefix="/api/v1/public/microsites",
 # by a customer, gated only by an unguessable token.
 app.include_router(public_review_redirect.router, prefix="/api/v1/public/r", tags=["Public Review Links"])
 app.include_router(whatsapp.router, prefix="/api/v1/whatsapp", tags=["WhatsApp"])
+app.include_router(whatsapp_inbox.router, prefix="/api/v1/whatsapp/inbox", tags=["WhatsApp Inbox"])
 app.include_router(review_campaigns.router, prefix="/api/v1/review-requests", tags=["Review Requests"],
                    dependencies=[Depends(require_feature(plan_config.FEATURE_REVIEW_REQUESTS))])
 # Meta webhook. Mounted under /api/v1/public/ so it inherits the CSRF exemption:

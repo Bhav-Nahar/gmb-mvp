@@ -22,6 +22,8 @@ const GATED: { prefix: string; feature: string; name: string; anyTier?: boolean 
     name: 'WhatsApp review requests', anyTier: true },
   { prefix: '/dashboard/settings/whatsapp', feature: 'review_requests',
     name: 'WhatsApp review requests', anyTier: true },
+  { prefix: '/dashboard/whatsapp', feature: 'review_requests',
+    name: 'WhatsApp inbox', anyTier: true },
 ];
 
 function matches(pathname: string, prefix: string) {

@@ -185,6 +185,42 @@ def send_template(
     return messages[0]["id"]
 
 
+def send_text(account: WhatsAppAccount, to: str, body: str) -> str:
+    """Send one free-form text message. Returns Meta's message id (wamid).
+
+    Only legal inside the 24-hour customer service window — the period after the
+    customer's last inbound message. Outside it Meta rejects the send (code
+    131047) and only an approved template can go out. The window is checked by
+    the caller against stored messages rather than here, because the answer is a
+    database question and this module deliberately holds no session.
+    """
+    if not account.phone_number_id:
+        raise WhatsAppError("This organization has no WhatsApp phone number registered")
+
+    text = (body or "").strip()
+    if not text:
+        raise WhatsAppError("Message is empty")
+    # Meta's hard cap on a text body. Truncating silently would send something
+    # the user did not write, so this is an error they can see and fix.
+    if len(text) > 4096:
+        raise WhatsAppError("Message is too long (limit 4096 characters)")
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "text",
+        # Link previews are off: they leak a fetch of whatever the tenant pasted
+        # and make the bubble height unpredictable in the thread.
+        "text": {"preview_url": False, "body": text},
+    }
+    res = _post(f"/{account.phone_number_id}/messages", _token(account), payload)
+    messages = res.get("messages") or []
+    if not messages:
+        raise WhatsAppError(f"WhatsApp accepted the request but returned no message id: {res}")
+    return messages[0]["id"]
+
+
 def create_template(account: WhatsAppAccount, payload: dict[str, Any]) -> dict[str, Any]:
     """Create a message template on the tenant's WABA (onboarding).
 

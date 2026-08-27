@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2, Sparkles, History } from 'lucide-react'
+import { LogOut, User as UserIcon, RefreshCw, Layers, MapPin, TrendingUp, MessageSquare, Calendar, Users, Settings, CreditCard, Search, ChevronDown, FileClock, X, Grid3x3, ShieldCheck, Trophy, BarChart2, Sparkles, History, MessageCircle } from 'lucide-react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
@@ -79,11 +79,25 @@ export default function Sidebar({
     { label: 'Activity Logs', href: '/dashboard/settings/logs', icon: FileClock },
   ]
 
+  // WhatsApp is its own group, not a corner of Reviews. Everything the tenant
+  // does on their own number lives here: asking for reviews, reading what the
+  // customer wrote back, and the connection itself.
+  const whatsappChildren = [
+    { label: 'Ask for Review', href: '/dashboard/reviews/request', icon: MessageSquare },
+    { label: 'Inbox', href: '/dashboard/whatsapp/inbox', icon: MessageCircle },
+    { label: 'Settings', href: '/dashboard/settings/whatsapp', icon: Settings },
+  ]
+
   const inSettings = pathname === '/dashboard/team' || pathname?.startsWith('/dashboard/settings')
   const [settingsOpen, setSettingsOpen] = useState<boolean>(!!inSettings)
 
   const inInsights = pathname?.startsWith('/dashboard/insights') || pathname === '/dashboard/comparison'
   const [insightsOpen, setInsightsOpen] = useState<boolean>(!!inInsights)
+
+  const inWhatsapp = pathname?.startsWith('/dashboard/whatsapp')
+    || pathname?.startsWith('/dashboard/reviews/request')
+    || pathname?.startsWith('/dashboard/settings/whatsapp')
+  const [whatsappOpen, setWhatsappOpen] = useState<boolean>(!!inWhatsapp)
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {
@@ -152,6 +166,42 @@ export default function Sidebar({
             </Link>
           )
         })}
+
+        {/* WhatsApp group */}
+        <div>
+          <button
+            onClick={() => setWhatsappOpen(o => !o)}
+            className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${inWhatsapp ? 'text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}
+          >
+            <span className="flex items-center gap-3">
+              <MessageCircle className={`h-4 w-4 shrink-0 ${inWhatsapp ? 'text-primary' : 'text-muted-foreground/60'}`} />
+              WhatsApp
+            </span>
+            <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${whatsappOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {whatsappOpen && (
+            <div className="mt-1 ml-3 pl-3 border-l border-border/60 space-y-1">
+              {whatsappChildren.map((item) => {
+                const active = isActive(item.href)
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={onClose}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                      active
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                    }`}
+                  >
+                    <item.icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground/60'}`} />
+                    <span>{item.label}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Insights group */}
         <div>
