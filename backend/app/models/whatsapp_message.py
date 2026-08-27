@@ -30,12 +30,15 @@ class WhatsAppMessage(Base):
     STATUS_RECEIVED = "received"   # inbound; there is nothing to deliver
 
     id = Column(Integer, primary_key=True, index=True)
+    # No index=True on either column: the composite indexes below lead on
+    # organization_id and cover every query. A standalone index on each is one
+    # more thing to write on every inbound webhook for nothing.
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"),
-                             nullable=False, index=True)
+                             nullable=False)
 
     # E.164 without the leading '+', matching review_requests.phone and Meta's
     # `to` field, so the two tables join and merge without reformatting.
-    phone = Column(String, nullable=False, index=True)
+    phone = Column(String, nullable=False)
 
     direction = Column(String, nullable=False)
     body = Column(Text, nullable=True)

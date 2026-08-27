@@ -150,6 +150,12 @@ celery.conf.beat_schedule = {
         "task": "app.tasks.enforce_upi_remandate_grace_task",
         "schedule": crontab(hour=4, minute=0), # Daily at 4AM UTC — re-lock past-grace UPI orgs
     },
+    "purge-old-whatsapp-messages": {
+        "task": "app.tasks_whatsapp.purge_old_messages_task",
+        "schedule": crontab(hour=3, minute=45), # Daily 3:45AM UTC — drops inbox messages
+                            # past WHATSAPP_MESSAGE_RETENTION_DAYS (365d). Batched, so it
+                            # never holds locks long enough to stall an inbound webhook.
+    },
     "purge-soft-deleted-accounts": {
         "task": "app.tasks.purge_soft_deleted_accounts_task",
         "schedule": crontab(hour=3, minute=30), # Daily 3:30AM UTC — hard-purge accounts

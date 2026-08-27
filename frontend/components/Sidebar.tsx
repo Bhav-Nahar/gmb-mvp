@@ -30,6 +30,29 @@ export default function Sidebar({
   })
   const changeCount = changes?.count ?? 0
 
+  // Read before the badge query below needs it; `userRole` proper is defined
+  // further down alongside the other display fields.
+  const userRoleEarly = user?.role || ''
+
+  // Conversations where the customer wrote last and the 24-hour reply window is
+  // still open. Unlike an unread count this cannot go stale — it clears itself
+  // when the tenant replies or when the window closes.
+  // Owner/Admin only, matching the backend gate — otherwise every Viewer and
+  // Store Manager session polls a 403 once a minute, forever.
+  const canUseInbox = !!userRoleEarly && ['Owner', 'Admin'].includes(userRoleEarly)
+  const { data: waiting } = useQuery<{ count: number }>({
+    queryKey: ['whatsapp-needs-reply'],
+    queryFn: () => api.get('/whatsapp/inbox/needs-reply'),
+    enabled: !!user && canUseInbox,
+    staleTime: 60_000,
+    // A tenant on a plan without WhatsApp, or with no account connected, gets a
+    // 403/400 here. One attempt, no retry loop, and refetching stops after a
+    // failure so the badge just stays absent.
+    refetchInterval: (query) => (query.state.error ? false : 60_000),
+    retry: false,
+  })
+  const waitingCount = waiting?.count ?? 0
+
   const userName = user?.name || 'Google User'
   const userRole = user?.role || ''
   const userAvatar = user?.avatar || null
@@ -82,9 +105,12 @@ export default function Sidebar({
   // WhatsApp is its own group, not a corner of Reviews. Everything the tenant
   // does on their own number lives here: asking for reviews, reading what the
   // customer wrote back, and the connection itself.
-  const whatsappChildren = [
+  // Ask for Review is Owner/Admin too (api/whatsapp.py is admin_required
+  // throughout), so the whole group is hidden rather than half of it 403ing.
+  const whatsappChildren: { label: string; href: string; icon: any; badge?: number }[] = [
     { label: 'Ask for Review', href: '/dashboard/reviews/request', icon: MessageSquare },
-    { label: 'Inbox', href: '/dashboard/whatsapp/inbox', icon: MessageCircle },
+    { label: 'Inbox', href: '/dashboard/whatsapp/inbox', icon: MessageCircle,
+      badge: waitingCount },
     { label: 'Settings', href: '/dashboard/settings/whatsapp', icon: Settings },
   ]
 
@@ -167,7 +193,8 @@ export default function Sidebar({
           )
         })}
 
-        {/* WhatsApp group */}
+        {/* WhatsApp group — hidden for roles the backend refuses. */}
+        {canUseInbox && (
         <div>
           <button
             onClick={() => setWhatsappOpen(o => !o)}
@@ -177,7 +204,16 @@ export default function Sidebar({
               <MessageCircle className={`h-4 w-4 shrink-0 ${inWhatsapp ? 'text-primary' : 'text-muted-foreground/60'}`} />
               WhatsApp
             </span>
-            <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${whatsappOpen ? 'rotate-180' : ''}`} />
+            <span className="ml-auto flex items-center gap-2">
+              {/* Shown while collapsed, so a waiting customer is visible without
+                  opening the group. */}
+              {!whatsappOpen && !!waitingCount && (
+                <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-600">
+                  {waitingCount > 99 ? '99+' : waitingCount}
+                </span>
+              )}
+              <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${whatsappOpen ? 'rotate-180' : ''}`} />
+            </span>
           </button>
           {whatsappOpen && (
             <div className="mt-1 ml-3 pl-3 border-l border-border/60 space-y-1">
@@ -196,12 +232,18 @@ export default function Sidebar({
                   >
                     <item.icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground/60'}`} />
                     <span>{item.label}</span>
+                    {!!item.badge && (
+                      <span className="ml-auto rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-600">
+                        {item.badge > 99 ? '99+' : item.badge}
+                      </span>
+                    )}
                   </Link>
                 )
               })}
             </div>
           )}
         </div>
+        )}
 
         {/* Insights group */}
         <div>

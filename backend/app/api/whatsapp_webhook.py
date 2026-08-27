@@ -34,6 +34,7 @@ from app.models.whatsapp_message import WhatsAppMessage
 from app.services import whatsapp_errors
 from app.services.review_request_service import suppress
 from app.services.whatsapp_onboarding_service import REVIEW_TEMPLATE_NAME
+from app.services.whatsapp_service import normalize_phone
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -234,7 +235,13 @@ def _inbound(db: Session, account: WhatsAppAccount, msg: dict[str, Any]) -> None
     tenant should be able to see in the thread — silently dropping it is how
     "why did they stop replying?" becomes a support ticket.
     """
-    phone = str(msg.get("from") or "")
+    # Normalised to the same form outbound numbers are stored in. Meta's wa_id
+    # is digits-only but not guaranteed to be byte-identical to what we dialled
+    # (trunk prefixes, and country quirks like Argentina's 9 / Mexico's 1), and
+    # every match we make afterwards — the thread merge, the suppression list —
+    # is an equality test on this string. Falls back to the raw value rather
+    # than dropping a message we cannot parse.
+    phone = normalize_phone(str(msg.get("from") or "")) or str(msg.get("from") or "")
     wamid = msg.get("id")
     text = ((msg.get("text") or {}).get("body") or "").strip()
     button = ((msg.get("button") or {}).get("text") or "").strip()

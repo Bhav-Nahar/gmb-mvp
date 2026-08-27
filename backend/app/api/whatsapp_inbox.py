@@ -18,23 +18,40 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_feature
+from app.api.deps import admin_required, get_current_user, require_feature
 from app.core import plan_config
+from app.core.rate_limit import rate_limiter
 from app.db.session import get_db
 from app.models.review_request import ReviewRequest
+from app.models.review_suppression import ReviewSuppression
 from app.models.user import User
 from app.models.whatsapp_account import WhatsAppAccount
 from app.models.whatsapp_message import WhatsAppMessage
 from app.services import review_request_service, whatsapp_service
-from app.services.whatsapp_service import WhatsAppError
+from app.services.whatsapp_service import WhatsAppError, normalize_phone
 
 logger = logging.getLogger(__name__)
 
+# Owner/Admin only, for the whole router — reads included.
+#
+# A conversation here is (organization, phone) and carries NO location, because
+# the WABA is one org-level number and a cold inbound belongs to no store. So
+# there is no honest way to scope this inbox the way review campaigns scope
+# themselves (`review_campaigns._scope`): any store-level role admitted here
+# would read every customer in the org, including stores they do not manage.
+# Everything else that acts on the tenant's WhatsApp number is already
+# `admin_required` (see api/whatsapp.py), and this is stricter than that needs
+# to be rather than looser.
+#
+# Widening this to let managers answer is a one-line change to `staff_required`
+# — but it should be a deliberate decision about who may read customer messages,
+# not a default.
 router = APIRouter(dependencies=[
     Depends(require_feature(plan_config.FEATURE_REVIEW_REQUESTS)),
+    Depends(admin_required),
 ])
 
 WINDOW = timedelta(hours=24)
@@ -148,23 +165,26 @@ def list_conversations(
 
     phones = [r["phone"] for r in ordered]
 
-    # Names come from review requests — the only place a customer name is ever
-    # captured. Ordered ascending so the newest upload overwrites and wins.
-    names: dict[str, str] = {}
-    for phone, name in (db.query(ReviewRequest.phone, ReviewRequest.customer_name)
-                        .filter(ReviewRequest.organization_id == org_id,
-                                ReviewRequest.phone.in_(phones),
-                                ReviewRequest.customer_name.isnot(None))
-                        .order_by(ReviewRequest.created_at.asc()).all()):
-        names[phone] = name
+    # The three lookups below all take the same shape on purpose: group to one
+    # row per phone in SQL, then join back. Fetching every row for these phones
+    # and folding in Python is what this used to do, and it grew linearly with a
+    # tenant's history on a query the UI runs every 15 seconds.
+    previews = _latest_per_phone(
+        db, WhatsAppMessage, WhatsAppMessage.body, org_id, phones)
 
-    previews: dict[str, str] = {}
-    for phone, body in (db.query(WhatsAppMessage.phone, WhatsAppMessage.body)
-                        .filter(WhatsAppMessage.organization_id == org_id,
-                                WhatsAppMessage.phone.in_(phones))
-                        .order_by(WhatsAppMessage.created_at.asc()).all()):
-        if body:
-            previews[phone] = body
+    # Names come from review requests — the only place a customer name is ever
+    # captured. Latest upload wins.
+    names = _latest_per_phone(
+        db, ReviewRequest, ReviewRequest.customer_name, org_id, phones,
+        extra=ReviewRequest.customer_name.isnot(None))
+
+    # One query, not one per conversation.
+    suppressed = {
+        row[0] for row in db.query(ReviewSuppression.phone).filter(
+            ReviewSuppression.organization_id == org_id,
+            ReviewSuppression.phone.in_(phones),
+        ).all()
+    }
 
     return [
         Conversation(
@@ -174,10 +194,84 @@ def list_conversations(
             last_message_at=r["last_message_at"],
             last_inbound_at=r["last_inbound_at"],
             window_open=_window_open(r["last_inbound_at"]),
-            suppressed=review_request_service.is_suppressed(db, org_id, r["phone"]),
+            suppressed=r["phone"] in suppressed,
         )
         for r in ordered
     ]
+
+
+def _latest_per_phone(db: Session, model, column, org_id: int,
+                      phones: list[str], extra=None) -> dict[str, Any]:
+    """{phone: column} taken from each phone's most recent row.
+
+    Written as a group-then-join rather than Postgres' DISTINCT ON so the same
+    query runs under SQLite in the test suite. Both sides hit the
+    (organization_id, phone, created_at) index, and it returns one row per
+    phone instead of the tenant's whole history.
+    """
+    if not phones:
+        return {}
+    filters = [model.organization_id == org_id, model.phone.in_(phones)]
+    if extra is not None:
+        filters.append(extra)
+
+    latest = (db.query(model.phone.label("phone"),
+                       func.max(model.created_at).label("mx"))
+              .filter(*filters).group_by(model.phone).subquery())
+
+    rows = (db.query(model.phone, column)
+            .join(latest, and_(model.phone == latest.c.phone,
+                               model.created_at == latest.c.mx))
+            .filter(*filters).all())
+    return {phone: value for phone, value in rows if value}
+
+
+@router.get("/needs-reply")
+def needs_reply_count(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """How many conversations are waiting on the tenant, for the sidebar badge.
+
+    "Waiting" is defined without any read state: the newest message in the
+    thread is inbound, and the 24-hour window is still open. That is exactly the
+    set where the tenant can still act and the clock is running, which is the
+    only thing a badge should be shouting about. Read/unread would need
+    per-message state and a mark-read call; this needs neither and cannot go
+    stale.
+    """
+    org_id = current_user.organization_id
+    cutoff = datetime.now(timezone.utc) - WINDOW
+
+    rows = (db.query(
+                WhatsAppMessage.phone,
+                func.max(WhatsAppMessage.created_at).filter(
+                    WhatsAppMessage.direction == WhatsAppMessage.DIRECTION_IN
+                ).label("last_in"),
+                func.max(WhatsAppMessage.created_at).filter(
+                    WhatsAppMessage.direction == WhatsAppMessage.DIRECTION_OUT
+                ).label("last_out"),
+            )
+            .filter(WhatsAppMessage.organization_id == org_id,
+                    # Only threads with activity inside the window can qualify,
+                    # so the scan is bounded by a day of messages rather than
+                    # the tenant's whole history.
+                    WhatsAppMessage.created_at >= cutoff)
+            .group_by(WhatsAppMessage.phone)
+            .all())
+
+    waiting = 0
+    for _phone, last_in, last_out in rows:
+        if last_in is None or not _window_open(last_in):
+            continue
+        # Compare the two sides directly rather than testing whether the newest
+        # message overall IS the newest inbound: those two timestamps can be
+        # equal (SQLite truncates to the second, and a tie is possible in
+        # Postgres), and an equality test then reads an answered thread as
+        # unanswered. A tie counts as answered — the badge should under-nag.
+        if last_out is None or last_in > last_out:
+            waiting += 1
+    return {"count": waiting}
 
 
 @router.get("/conversations/{phone}", response_model=list[Message])
@@ -192,6 +286,9 @@ def get_thread(
     came" with nothing above it and no idea what was asked.
     """
     org_id = current_user.organization_id
+    # Stored E.164 has no leading '+'. Normalising means a client that passes
+    # "+919..." gets its thread instead of a confusing empty one.
+    phone = normalize_phone(phone) or phone
     out: list[Message] = []
 
     for m in (db.query(WhatsAppMessage)
@@ -227,8 +324,23 @@ def get_thread(
     return out[-THREAD_LIMIT:]
 
 
+# A reply inside the 24-hour window is a service message and carries no
+# per-message charge under Meta's current pricing, which is why it is not
+# subject to the monthly spend ceiling that guards template sends
+# (tasks_whatsapp.DEFAULT_MONTHLY_LIMIT). That makes the ceiling here a
+# throughput one instead: a runaway script or a stuck retry loop would
+# otherwise hammer Meta with no bound at all, and burn the tenant's quality
+# rating even while each message is free. Generous enough that a human agent,
+# or several, will never see it.
+#
+# ponytail: if Meta ever prices service messages, this needs to become a real
+# spend cap counted out of whatsapp_messages, not a rate limit.
+_reply_rate_limit = rate_limiter("whatsapp_inbox_reply", limit=60, window_seconds=60)
+
+
 @router.post("/conversations/{phone}/reply", response_model=Message,
-             status_code=status.HTTP_201_CREATED)
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(_reply_rate_limit)])
 def reply(
     phone: str,
     payload: ReplyIn,
@@ -237,6 +349,7 @@ def reply(
 ):
     """Send a free-form reply, inside the 24-hour window only."""
     org_id = current_user.organization_id
+    phone = normalize_phone(phone) or phone
     account = _account(db, org_id)
 
     if account.status != WhatsAppAccount.STATUS_READY:

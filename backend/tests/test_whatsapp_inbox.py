@@ -277,3 +277,142 @@ def test_we_can_reply_to_a_cold_inbound_without_ever_sending_a_template(db, acco
 
     assert out.direction == WhatsAppMessage.DIRECTION_OUT
     assert sent["to"] == CUSTOMER
+
+
+# ── Retention ─────────────────────────────────────────────────────────────────
+
+def _msg(account, *, days_old: int, wamid: str) -> WhatsAppMessage:
+    return WhatsAppMessage(
+        organization_id=account.organization_id, phone=CUSTOMER,
+        direction=WhatsAppMessage.DIRECTION_IN, body="old", wamid=wamid,
+        status=WhatsAppMessage.STATUS_RECEIVED,
+        created_at=datetime.now(timezone.utc) - timedelta(days=days_old))
+
+
+def test_the_purge_drops_messages_past_the_retention_window(db, account, monkeypatch):
+    """A customer's number and words are their personal data, not ours to keep
+    forever. Default is one year."""
+    from app.core.config import settings
+    from app import tasks_whatsapp
+
+    db.add_all([_msg(account, days_old=400, wamid="w.old"),
+                _msg(account, days_old=300, wamid="w.recent")])
+    db.commit()
+
+    monkeypatch.setattr(settings, "WHATSAPP_MESSAGE_RETENTION_DAYS", 365)
+    monkeypatch.setattr(tasks_whatsapp, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+
+    result = tasks_whatsapp.purge_old_messages_task()
+
+    assert "deleted 1" in result
+    remaining = [m.wamid for m in db.query(WhatsAppMessage).all()]
+    assert remaining == ["w.recent"]
+
+
+def test_setting_retention_to_zero_disables_the_purge(db, account, monkeypatch):
+    """An escape hatch for a tenant with a contractual reason to keep more —
+    explicit, rather than a silent surprise."""
+    from app.core.config import settings
+    from app import tasks_whatsapp
+
+    db.add(_msg(account, days_old=5000, wamid="w.ancient"))
+    db.commit()
+
+    monkeypatch.setattr(settings, "WHATSAPP_MESSAGE_RETENTION_DAYS", 0)
+
+    assert "disabled" in tasks_whatsapp.purge_old_messages_task()
+    assert db.query(WhatsAppMessage).count() == 1
+
+
+# ── The sidebar badge ─────────────────────────────────────────────────────────
+
+def test_an_unanswered_reply_inside_the_window_needs_a_reply(db, account, user):
+    _deliver(db, account, body="are you open?")
+    assert inbox.needs_reply_count(db, user) == {"count": 1}
+
+
+def test_answering_clears_the_badge(db, account, user, monkeypatch):
+    _deliver(db, account, body="are you open?")
+    monkeypatch.setattr(inbox.whatsapp_service, "send_text",
+                        lambda acc, to, body: "wamid.answer")
+
+    inbox.reply(CUSTOMER, inbox.ReplyIn(body="Yes"), db, user)
+
+    assert inbox.needs_reply_count(db, user) == {"count": 0}
+
+
+def test_a_reply_we_can_no_longer_send_is_not_counted(db, account, user):
+    """Past the window there is nothing the tenant can do from the inbox, so
+    nagging them with a badge is just noise."""
+    _deliver(db, account, ts=datetime.now(timezone.utc) - timedelta(days=2))
+    assert inbox.needs_reply_count(db, user) == {"count": 0}
+
+
+# ── Who may read a customer's messages ────────────────────────────────────────
+
+def test_the_inbox_is_owner_admin_only(db):
+    """A conversation carries no location, so any store-level role admitted here
+    would read every customer in the org. A Viewer could also SEND on the
+    business's number, which is worse."""
+    from app.api.deps import admin_required
+    from app.core.roles import ADMIN_ROLES, Role
+
+    allowed = set(admin_required.allowed_roles)
+    assert allowed == set(ADMIN_ROLES)
+    for role in (Role.VIEWER, Role.STORE_MANAGER, Role.REGIONAL_MANAGER):
+        assert role not in allowed
+
+
+def test_the_router_actually_carries_the_admin_gate(db):
+    """The gate is on the router, not each route — assert it is really wired, or
+    a new endpoint added later inherits nothing."""
+    from app.api.deps import admin_required
+
+    gates = [d.dependency for d in inbox.router.dependencies]
+    assert admin_required in gates
+
+
+def test_a_phone_with_a_plus_finds_the_same_thread(db, account, user):
+    """Stored E.164 has no '+'. An API client that sends one should not be told
+    the conversation does not exist."""
+    _deliver(db, account, body="hello")
+
+    assert len(inbox.get_thread(f"+{CUSTOMER}", db, user)) == 1
+
+
+# ── Phone-format drift between what we dial and what Meta reports ─────────────
+#
+# Learned from wacrm, which hit this in production (its issue #212): the
+# `wa_id` on an inbound message is not guaranteed to be the same string as the
+# number the tenant uploaded. Every match we make is an equality test, and the
+# one that matters is the suppression list.
+
+def test_an_opt_out_suppresses_a_differently_formatted_number(db, account):
+    """The STOP arrives under Meta's wa_id; the campaign holds the tenant's
+    upload. If those two spellings do not match, we message someone who
+    withdrew consent — a policy breach, not a cosmetic bug."""
+    from app.services import review_request_service as rr
+
+    _deliver(db, account, body="STOP")
+
+    # Same subscriber, written the way a tenant might have uploaded it: a trunk
+    # zero after the country code.
+    variant = CUSTOMER[:2] + "0" + CUSTOMER[2:]
+    assert variant != CUSTOMER
+    assert rr.is_suppressed(db, account.organization_id, variant) is True
+
+
+def test_suppression_still_requires_a_real_number(db, account):
+    """The suffix match must not degrade into "any short string matches"."""
+    from app.services import review_request_service as rr
+
+    _deliver(db, account, body="STOP")
+    assert rr.is_suppressed(db, account.organization_id, "12345") is False
+    assert rr.is_suppressed(db, account.organization_id, "919000000001") is False
+
+
+def test_an_inbound_number_is_stored_normalised(db, account):
+    """So the thread merge against review_requests lines up on one spelling."""
+    _deliver(db, account, body="hi")
+    assert db.query(WhatsAppMessage).one().phone == CUSTOMER

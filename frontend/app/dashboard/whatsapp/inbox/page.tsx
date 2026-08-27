@@ -17,12 +17,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Check, CheckCheck, Clock, XCircle, Search, MessageCircle, Star, Ban,
+  AlertTriangle, ChevronLeft,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
 const POLL_MS = 15_000;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
+
+type WhatsAppStatus = {
+  connected: boolean;
+  status: string;
+  status_detail: string | null;
+  can_send: boolean;
+};
 
 type Conversation = {
   phone: string;
@@ -106,6 +114,9 @@ export default function WhatsAppInboxPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [account, setAccount] = useState<WhatsAppStatus | null>(null);
+  // Mobile is one pane at a time: the list, or the thread you tapped into.
+  const [mobileThread, setMobileThread] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const active = conversations.find((c) => c.phone === selected) || null;
@@ -130,18 +141,47 @@ export default function WhatsAppInboxPage() {
     }
   }, []);
 
+  // Fetched once, not polled: a blocked account is fixed on Meta's side over
+  // minutes, and the tenant lands back here through Settings anyway.
+  useEffect(() => {
+    api.get<WhatsAppStatus>('/whatsapp/status')
+      .then(setAccount)
+      .catch(() => setAccount(null));
+  }, []);
+
+  // Polling pauses while the tab is hidden. A tenant who leaves the inbox open
+  // in a background tab all day would otherwise cost ~5,700 requests a day
+  // doing nothing, and the first poll on return refreshes it anyway.
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const onChange = () => setVisible(!document.hidden);
+    document.addEventListener('visibilitychange', onChange);
+    return () => document.removeEventListener('visibilitychange', onChange);
+  }, []);
+
   useEffect(() => {
     loadConversations();
+    if (!visible) return;
     const t = setInterval(loadConversations, POLL_MS);
     return () => clearInterval(t);
-  }, [loadConversations]);
+  }, [loadConversations, visible]);
 
   useEffect(() => {
     if (!selected) return;
     loadThread(selected);
+    if (!visible) return;
     const t = setInterval(() => loadThread(selected), POLL_MS);
     return () => clearInterval(t);
-  }, [selected, loadThread]);
+  }, [selected, loadThread, visible]);
+
+  // The header countdown ticks on its own, so an open tab does not sit showing
+  // "3h 12m left" for a quarter of an hour.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!visible) return;
+    const t = setInterval(() => tick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, [visible]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -189,9 +229,27 @@ export default function WhatsAppInboxPage() {
   const left = active ? windowLeft(active.last_inbound_at) : null;
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] overflow-hidden rounded-xl border border-border bg-card">
+    <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
+      {/* Sending is blocked at the account level — say so here rather than
+          letting the tenant discover it as a failed reply. Reading the inbox
+          still works, so this is a banner, not a takeover. */}
+      {account && account.connected && !account.can_send && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+          <span className="font-semibold">You cannot send WhatsApp messages right now.</span>
+          <span className="text-muted-foreground">
+            {account.status_detail || 'Your WhatsApp account needs attention.'}
+          </span>
+          <Link href="/dashboard/settings/whatsapp" className="font-semibold text-primary">
+            Fix in settings →
+          </Link>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card">
       {/* ── Conversation list ─────────────────────────────────────────── */}
-      <aside className="flex w-80 shrink-0 flex-col border-r border-border">
+      {/* Below md only one pane shows at a time: the list, or the thread. */}
+      <aside className={`${mobileThread ? 'hidden' : 'flex'} w-full shrink-0 flex-col border-r border-border md:flex md:w-80`}>
         <div className="space-y-3 border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
             <MessageCircle className="h-4 w-4 text-primary" />
@@ -236,7 +294,7 @@ export default function WhatsAppInboxPage() {
             return (
               <button
                 key={c.phone}
-                onClick={() => setSelected(c.phone)}
+                onClick={() => { setSelected(c.phone); setMobileThread(true); }}
                 className={`flex w-full items-start gap-3 border-b border-border/50 px-4 py-3 text-left transition-colors ${
                   isActive ? 'bg-primary/10' : 'hover:bg-muted/40'
                 }`}
@@ -280,7 +338,7 @@ export default function WhatsAppInboxPage() {
       </aside>
 
       {/* ── Thread ────────────────────────────────────────────────────── */}
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className={`${mobileThread ? 'flex' : 'hidden'} min-w-0 flex-1 flex-col md:flex`}>
         {!active && (
           <p className="m-auto text-sm text-muted-foreground">Select a conversation</p>
         )}
@@ -288,6 +346,13 @@ export default function WhatsAppInboxPage() {
         {active && (
           <>
             <header className="flex items-center gap-3 border-b border-border px-5 py-3">
+              <button
+                onClick={() => setMobileThread(false)}
+                className="-ml-2 rounded-lg p-1.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground md:hidden"
+                aria-label="Back to conversations"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-bold">
                 {initial(active)}
               </span>
@@ -408,6 +473,7 @@ export default function WhatsAppInboxPage() {
           </>
         )}
       </section>
+      </div>
     </div>
   );
 }
