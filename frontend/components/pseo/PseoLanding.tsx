@@ -7,6 +7,7 @@ import { MarketingHeader } from '@/components/MarketingHeader'
 import { MarketingFooter } from '@/components/MarketingFooter'
 import { buildPseoJsonLd, industryHubPath, rootHubPath, pseoPath, type PseoPageData, type PseoListItem } from '@/lib/pseo'
 import { SectionHeading } from '@/components/seo/sections'
+import { SHOW_PRICES, PRICE_CTA } from '@/lib/pricingDisplay'
 
 /**
  * Programmatic SEO landing page (industry x city), 13-section template.
@@ -26,7 +27,7 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
   const isIndia = page.country === 'in'
   const fromPrice = isIndia ? '₹799' : '$8'
   const pricingHref = isIndia ? '/pricing' : '/pricing?ccy=usd'
-  const whatsappDemo = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo for my ${industry.toLowerCase()} business in ${city}.`)
+  const whatsappDemo = 'https://wa.me/919869855079?text=' + encodeURIComponent(`Hi, I'd like a Pinzo demo for my ${industry.toLowerCase()} business in ${city}.`)
 
 
   const CtaButtons = ({ location }: { location: string }) => (
@@ -127,9 +128,11 @@ export default function PseoLanding({ page, siblings = [] }: { page: PseoPageDat
           ))}
         </div>
         <p className="text-xs font-medium text-muted-foreground">
-          Plans from <span className="font-semibold text-foreground">{fromPrice}/mo</span>
+          {SHOW_PRICES
+            ? <>Plans from <span className="font-semibold text-foreground">{fromPrice}/mo</span></>
+            : <span className="font-semibold text-foreground">{PRICE_CTA} for pricing</span>}
           {' · '}
-          <Link href={pricingHref} className="underline underline-offset-2 hover:text-foreground">see full pricing</Link>
+          <Link href={pricingHref} className="underline underline-offset-2 hover:text-foreground">see what&apos;s included</Link>
         </p>
       </section>
 

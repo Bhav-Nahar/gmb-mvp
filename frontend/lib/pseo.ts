@@ -1,4 +1,5 @@
 import { marketName } from '@/lib/markets'
+import { SHOW_PRICES } from '@/lib/pricingDisplay'
 // pSEO (industry x city) landing pages: fetch + metadata + JSON-LD helpers.
 // Rendered by components/pseo/PseoLanding.tsx via the [slug] route fallback.
 
@@ -168,11 +169,13 @@ export function buildPseoJsonLd(page: PseoPageData) {
       applicationCategory: 'BusinessApplication',
       operatingSystem: 'Web',
       publisher: { '@id': orgId },
-      // Must match the visible "Plans from" price (Lite plan; same 1 USD = ₹100 peg
-      // as the page) — structured data contradicting on-page pricing is a Google flag.
-      offers: page.country === 'in'
-        ? { '@type': 'Offer', price: '799', priceCurrency: 'INR', description: 'Plans from ₹799/month (incl. GST) after a 7-day free trial. Free audit, no card required.' }
-        : { '@type': 'Offer', price: '8', priceCurrency: 'USD', description: 'Plans from $8/month after a 7-day free trial. Free audit, no card required.' },
+      // Must match what the page shows. Prices are hidden on-page (SHOW_PRICES), so the
+      // Offer carries no amount — structured data contradicting on-page pricing is a Google flag.
+      offers: SHOW_PRICES
+        ? (page.country === 'in'
+          ? { '@type': 'Offer', price: '799', priceCurrency: 'INR', description: 'Plans from ₹799/month (incl. GST) after a 7-day free trial. Free audit, no card required.' }
+          : { '@type': 'Offer', price: '8', priceCurrency: 'USD', description: 'Plans from $8/month after a 7-day free trial. Free audit, no card required.' })
+        : { '@type': 'Offer', availability: 'https://schema.org/InStock', description: 'Custom pricing on request. Free audit, no card required, then a 7-day free trial.' },
     },
     {
       '@type': 'Service',

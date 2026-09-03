@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
+import { WHATSAPP_BASE } from '@/lib/pricingDisplay';
 
-// Overridable per-environment; falls back to the number used on the marketing homepage.
-const NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '917715845972';
-const HREF = `https://wa.me/${NUMBER}?text=${encodeURIComponent("Hi, I have a question about Pinzo.")}`;
+// Single source of truth for the sales number, shared with the marketing pages.
+const HREF = `${WHATSAPP_BASE}?text=${encodeURIComponent("Hi, I have a question about Pinzo.")}`;
 const NUDGE_DELAY_MS = 10_000;
 const DISMISS_KEY = 'wa_nudge_dismissed';
 

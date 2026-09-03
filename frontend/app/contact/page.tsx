@@ -43,12 +43,12 @@ export default function ContactPage() {
             <div className="flex items-center gap-3 mt-2 text-foreground">
               <span className="text-indigo-500 font-bold">WhatsApp:</span>
               <a
-                href="https://wa.me/917715845972"
+                href="https://wa.me/919869855079"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline decoration-indigo-500/40 underline-offset-4 hover:decoration-indigo-500"
               >
-                +91 7715845972
+                +91 9869855079
               </a>
             </div>
           </section>
