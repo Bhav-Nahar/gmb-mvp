@@ -52,6 +52,7 @@ import {
   Store,
 } from 'lucide-react'
 import { useQuote } from '@/hooks/useBilling'
+import { SHOW_PRICES, PRICE_CTA, PRICE_CTA_NOTE, WHATSAPP_BASE } from '@/lib/pricingDisplay'
 import { INDIA_PATH, INDIA_PINS } from './indiaMap'
 
 // ── Small client-side animation helpers (no deps; IntersectionObserver + rAF) ──
@@ -677,9 +678,9 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
   const [pricingLocations, setPricingLocations] = useState<number>(5)
   const [pricingInterval, setPricingInterval] = useState<'monthly' | 'annual'>('monthly')
   const [pricingUsd, setPricingUsd] = useState(false)
-  const { data: liteQuote } = useQuote(pricingLocations, pricingInterval, 'lite', true)
-  const { data: basicQuote } = useQuote(pricingLocations, pricingInterval, 'basic', true)
-  const { data: proQuote } = useQuote(pricingLocations, pricingInterval, 'pro', true)
+  const { data: liteQuote } = useQuote(pricingLocations, pricingInterval, 'lite', SHOW_PRICES)
+  const { data: basicQuote } = useQuote(pricingLocations, pricingInterval, 'basic', SHOW_PRICES)
+  const { data: proQuote } = useQuote(pricingLocations, pricingInterval, 'pro', SHOW_PRICES)
 
   // Display-only FX (1 USD = 100 INR). Razorpay still charges/settles in INR; this just
   // shows US visitors a familiar number. ponytail: hardcoded peg, swap for live FX if it drifts.
@@ -815,7 +816,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                   View Pricing <ArrowRight className="h-4 w-4" />
                 </button>
               ) : (
-                <a href="https://wa.me/917715845972?text=Hi%2C%20I%27d%20like%20to%20book%20a%20Pinzo%20demo." onClick={() => trackWhatsAppClick('hero')} target="_blank" rel="noopener noreferrer" className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
+                <a href="https://wa.me/919869855079?text=Hi%2C%20I%27d%20like%20to%20book%20a%20Pinzo%20demo." onClick={() => trackWhatsAppClick('hero')} target="_blank" rel="noopener noreferrer" className="flex w-full min-w-[150px] items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-6 py-3.5 text-sm font-semibold text-muted-foreground transition-all hover:bg-muted/50 hover:text-foreground sm:w-auto">
                   Book a Demo <ArrowRight className="h-4 w-4" />
                 </a>
               )}
@@ -1299,6 +1300,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
           </div>
         </Reveal>
 
+        {SHOW_PRICES && (
         <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
           <div className="flex items-center justify-center rounded-full bg-muted/40 p-1.5 backdrop-blur-md border border-border/50 shadow-inner">
             <button onClick={() => setPricingInterval('monthly')} className={`rounded-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-300 ${pricingInterval === 'monthly' ? 'bg-background text-foreground shadow-md scale-105' : 'text-muted-foreground hover:text-foreground'}`}>Monthly</button>
@@ -1319,6 +1321,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
             <input type="range" min={1} max={50} value={pricingLocations} onChange={(e) => setPricingLocations(Number(e.target.value))} className="w-full cursor-pointer accent-primary transition-all" aria-label="Number of locations" />
           </div>
         </div>
+        )}
 
         <div className="mx-auto grid max-w-7xl grid-cols-1 items-stretch gap-6 md:grid-cols-2 xl:grid-cols-4 pt-6">
           {/* LITE — per-location like Basic/Pro, driven by the shared slider */}
@@ -1330,17 +1333,21 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Lite</span>
               <p className="text-xs font-medium text-muted-foreground">The essentials at the lowest price: reviews & posts, AI-assisted.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{liteQuote ? fmtRupees(Math.round(liteQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
-                <span className="text-sm font-semibold text-muted-foreground">/mo</span>
+                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent">{SHOW_PRICES ? (liteQuote ? fmtRupees(Math.round(liteQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...') : PRICE_CTA}</span>
+                {SHOW_PRICES && <span className="text-sm font-semibold text-muted-foreground">/mo</span>}
               </div>
-              <p className="text-[11px] text-muted-foreground">{liteQuote ? `≈ ${fmtRupees(Math.round(liteQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(liteQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(liteQuote.gst_rate * 100)}% GST`}` : ''}</p>
-              {pricingInterval === 'annual' && liteQuote && (
+              <p className="text-[11px] text-muted-foreground">{SHOW_PRICES ? (liteQuote ? `≈ ${fmtRupees(Math.round(liteQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(liteQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(liteQuote.gst_rate * 100)}% GST`}` : '') : PRICE_CTA_NOTE}</p>
+              {SHOW_PRICES && pricingInterval === 'annual' && liteQuote && (
                 <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
                   Save {fmtRupees((799 - 599) * 12 * pricingLocations)}/yr
                 </p>
               )}
             </div>
-            <button onClick={() => (paid ? openAudit('pricing') : handleContinueWithGoogle('pricing'))} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">{paid ? 'Request My Free Audit' : 'Start Free Trial'}</button>
+            {paid ? (
+              <button onClick={() => openAudit('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">Request My Free Audit</button>
+            ) : (
+              <a href={`${WHATSAPP_BASE}?text=${encodeURIComponent("Hi, I'd like to start a Pinzo free trial on the Lite plan.")}`} onClick={() => trackWhatsAppClick('pricing')} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50"><WhatsAppIcon className="h-4 w-4" /> Start Free Trial</a>
+            )}
             <ul className="space-y-2.5 border-t border-border pt-5 text-xs font-semibold text-muted-foreground">
               {['Unlimited locations', '10 AI credits per location / month', 'Unified review inbox with AI drafts', 'Google posts (post now)', 'AI credit top-ups'].map((t) => (
                 <PlanLine key={t} text={t} />
@@ -1360,22 +1367,26 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Basic</span>
               <p className="text-xs font-medium text-muted-foreground">Everything you need to manage Google reviews & posts.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{basicQuote ? fmtRupees(Math.round(basicQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
-                <span className="text-sm font-semibold text-muted-foreground">/mo</span>
+                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent">{SHOW_PRICES ? (basicQuote ? fmtRupees(Math.round(basicQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...') : PRICE_CTA}</span>
+                {SHOW_PRICES && <span className="text-sm font-semibold text-muted-foreground">/mo</span>}
               </div>
-              <p className="text-[11px] text-muted-foreground">{basicQuote ? `≈ ${fmtRupees(Math.round(basicQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(basicQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(basicQuote.gst_rate * 100)}% GST`}` : ''}</p>
-              {pricingInterval === 'annual' && basicQuote && (
+              <p className="text-[11px] text-muted-foreground">{SHOW_PRICES ? (basicQuote ? `≈ ${fmtRupees(Math.round(basicQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(basicQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(basicQuote.gst_rate * 100)}% GST`}` : '') : PRICE_CTA_NOTE}</p>
+              {SHOW_PRICES && pricingInterval === 'annual' && basicQuote && (
                 <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
                   Save {fmtRupees(annualSaving(basicQuote.total_paise))}/yr
                 </p>
               )}
             </div>
             <EngineChips engines={PLAN_ENGINES.basic} />
-            <button onClick={() => (paid ? openAudit('pricing') : handleContinueWithGoogle('pricing'))} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">{paid ? 'Request My Free Audit' : 'Start Free Trial'}</button>
+            {paid ? (
+              <button onClick={() => openAudit('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50">Request My Free Audit</button>
+            ) : (
+              <a href={`${WHATSAPP_BASE}?text=${encodeURIComponent("Hi, I'd like to start a Pinzo free trial on the Basic plan.")}`} onClick={() => trackWhatsAppClick('pricing')} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50"><WhatsAppIcon className="h-4 w-4" /> Start Free Trial</a>
+            )}
             <ul className="space-y-2.5 border-t border-border pt-5 text-xs font-semibold text-muted-foreground">
               {[
-                `${basicQuote ? basicQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 30} AI credits / month`,
-                '30 AI credits per location',
+                ...(SHOW_PRICES ? [`${basicQuote ? basicQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 30} AI credits / month`] : []),
+                '30 AI credits per location / month',
                 'Unified review inbox with AI drafts',
                 'Automated review SLAs & tracking',
                 'Bulk Google Posts scheduler',
@@ -1406,23 +1417,27 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Pro · Local Rank + Microsites</span>
               <p className="text-xs font-medium text-foreground/70">Rank higher on Maps & turn searches into leads.</p>
               <div className="flex items-baseline gap-1 text-foreground">
-                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">{proQuote ? fmtRupees(Math.round(proQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...'}</span>
-                <span className="text-sm font-semibold text-muted-foreground">/mo</span>
+                <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent">{SHOW_PRICES ? (proQuote ? fmtRupees(Math.round(proQuote.total_paise / 100 / (pricingInterval === 'annual' ? 12 : 1))) : '...') : PRICE_CTA}</span>
+                {SHOW_PRICES && <span className="text-sm font-semibold text-muted-foreground">/mo</span>}
               </div>
-              <p className="text-[11px] text-muted-foreground">{proQuote ? `≈ ${fmtRupees(Math.round(proQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(proQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(proQuote.gst_rate * 100)}% GST`}` : ''}</p>
-              {pricingInterval === 'annual' && proQuote && (
+              <p className="text-[11px] text-muted-foreground">{SHOW_PRICES ? (proQuote ? `≈ ${fmtRupees(Math.round(proQuote.total_paise / 100 / pricingLocations / (pricingInterval === 'annual' ? 12 : 1)))} per location / month · ${pricingInterval === 'annual' ? `billed yearly as ${fmtRupees(Math.round(proQuote.total_paise / 100))} · ` : ''}${pricingUsd ? 'billed in INR' : `incl. ${Math.round(proQuote.gst_rate * 100)}% GST`}` : '') : PRICE_CTA_NOTE}</p>
+              {SHOW_PRICES && pricingInterval === 'annual' && proQuote && (
                 <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
                   Save {fmtRupees(annualSaving(proQuote.total_paise))}/yr
                 </p>
               )}
             </div>
             <EngineChips engines={PLAN_ENGINES.pro} />
-            <button onClick={() => (paid ? openAudit('pricing') : handleContinueWithGoogle('pricing'))} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50">{paid ? 'Request My Free Audit' : 'Start Free Trial'}</button>
+            {paid ? (
+              <button onClick={() => openAudit('pricing')} disabled={loading} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50">Request My Free Audit</button>
+            ) : (
+              <a href={`${WHATSAPP_BASE}?text=${encodeURIComponent("Hi, I'd like to start a Pinzo free trial on the Pro plan.")}`} onClick={() => trackWhatsAppClick('pricing')} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-xs font-bold uppercase tracking-widest text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50"><WhatsAppIcon className="h-4 w-4" /> Start Free Trial</a>
+            )}
             <ul className="space-y-2.5 border-t border-primary/20 pt-5 text-xs font-semibold text-foreground">
               {[
                 'Everything in Basic, plus:',
-                `${proQuote ? proQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 45} AI credits / month`,
-                '45 AI credits per location',
+                ...(SHOW_PRICES ? [`${proQuote ? proQuote.monthly_ai_credits.toLocaleString('en-IN') : pricingLocations * 45} AI credits / month`] : []),
+                '45 AI credits per location / month',
                 'Full AI Search Visibility — ChatGPT, Gemini & Perplexity + share of voice',
                 paid ? 'Google Maps rank across every area you serve' : 'Local rank heatmaps (7x7 geo-grid)',
                 'Lead-capture microsite per location',
@@ -1453,7 +1468,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
                 ))}
               </ul>
             </div>
-            <a href="https://wa.me/917715845972?text=Hi%2C%20I%27m%20interested%20in%20the%20Enterprise%20plan%20for%2050%2B%20locations." onClick={() => trackWhatsAppClick('pricing')} target="_blank" rel="noopener noreferrer" className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-3 text-xs font-bold uppercase tracking-widest text-muted-foreground transition-all hover:border-foreground hover:text-foreground">
+            <a href="https://wa.me/919869855079?text=Hi%2C%20I%27m%20interested%20in%20the%20Enterprise%20plan%20for%2050%2B%20locations." onClick={() => trackWhatsAppClick('pricing')} target="_blank" rel="noopener noreferrer" className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-3 text-xs font-bold uppercase tracking-widest text-muted-foreground transition-all hover:border-foreground hover:text-foreground">
               <WhatsAppIcon className="h-4 w-4" /> Chat on WhatsApp
             </a>
           </div>
@@ -1581,7 +1596,7 @@ export default function HomeClient({ variant = 'home' }: { variant?: 'home' | 'p
       {/* Floating WhatsApp button — bottom-right on mobile and desktop.
           On the paid page it sits above the sticky mobile CTA bar until md. */}
       <a
-        href="https://wa.me/917715845972?text=Hi%2C%20I%27d%20like%20to%20know%20more%20about%20Pinzo."
+        href="https://wa.me/919869855079?text=Hi%2C%20I%27d%20like%20to%20know%20more%20about%20Pinzo."
         onClick={() => trackWhatsAppClick(paid ? 'sticky_mobile' : 'footer')}
         target="_blank"
         rel="noopener noreferrer"

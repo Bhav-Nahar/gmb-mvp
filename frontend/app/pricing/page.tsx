@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { Check, X, MessageCircle, Sparkles, ArrowRight, Store, Building2, Rocket, ChevronDown, ShieldCheck, CreditCard, Zap } from 'lucide-react';
 import { MarketingHeader } from '@/components/MarketingHeader';
 import { MarketingFooter } from '@/components/MarketingFooter';
 import { SurfaceLogo } from '@/components/aeo/brandMarks';
+import { SHOW_PRICES, PRICE_CTA, PRICE_CTA_NOTE, WHATSAPP_BASE } from '@/lib/pricingDisplay';
 
 const ENGINES = [
   { key: 'google', label: 'Google AI Overviews' },
@@ -44,11 +44,11 @@ const PLANS = [
 
 const FAQS = [
   { q: 'Is there a free trial?', a: 'Yes — a 7-day free trial covering every location you connect, with 10 AI credits included. The audit itself needs no card at all.' },
-  { q: 'How does per-location pricing work?', a: 'You pay the plan price for each Google Business Profile location you connect. Add or remove locations any time; billing adjusts from the next cycle.' },
+  { q: 'How does per-location pricing work?', a: 'You pay for each Google Business Profile location you connect. Talk to us for a quote for your locations — add or remove locations any time; billing adjusts from the next cycle.' },
   { q: 'What are AI credits?', a: 'Each AI action — a review reply draft, a post, an AI visibility scan — spends one credit. Credits reset monthly per location and you can top up any time.' },
   { q: 'Can I cancel anytime?', a: 'Yes. No lock-in on self-serve plans. Cancel from billing settings and you will not be charged again.' },
   { q: 'Which payment methods do you accept?', a: 'Cards, UPI AutoPay and netbanking via Razorpay. International cards are charged in INR at your card network rate.' },
-  { q: 'Do prices include GST?', a: 'Yes — every price you see is the final amount, inclusive of 18% GST. Your invoice shows the tax breakup.' },
+  { q: 'Do prices include GST?', a: 'Yes — every quote we share is the final amount, inclusive of 18% GST. Your invoice shows the tax breakup.' },
 ];
 
 // Display-only FX. Razorpay still charges/settles in INR (international cards convert
@@ -127,6 +127,7 @@ export default function PricingPage() {
             Per-location pricing. Free audit with no card, then a 7-day free trial — no charge today. Start small, grow to
             hundreds of locations. Enterprise? We&apos;ll tailor it.
           </p>
+          {SHOW_PRICES && (
           <div className="flex flex-wrap items-center justify-center gap-3">
             <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card p-1 text-sm">
               <button onClick={() => setAnnual(false)}
@@ -149,6 +150,7 @@ export default function PricingPage() {
               </button>
             </div>
           </div>
+          )}
         </div>
 
         {/* Engine strip — the surfaces we actually track */}
@@ -187,6 +189,8 @@ export default function PricingPage() {
                 <h2 className="mt-4 text-lg font-bold">{p.name}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">{p.tagline}</p>
                 <div className="mt-5">
+                  {SHOW_PRICES ? (
+                    <>
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     {annual && (
                       <span className="text-lg font-semibold text-muted-foreground/50 line-through decoration-2">{fmtPrice(p.monthly)}</span>
@@ -208,11 +212,21 @@ export default function PricingPage() {
                       {fmtPrice(p.annualPerMo)}/mo if billed yearly
                     </p>
                   )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent">{PRICE_CTA}</span>
+                      </div>
+                      <p className="mt-1.5 text-xs text-muted-foreground">{PRICE_CTA_NOTE}</p>
+                    </>
+                  )}
                 </div>
-                <Link href="/login"
+                <a href={`${WHATSAPP_BASE}?text=${encodeURIComponent(`Hi, I'd like to start a Pinzo free trial on the ${p.name} plan.`)}`}
+                  target="_blank" rel="noopener noreferrer"
                   className={`mt-6 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-bold transition ${p.highlight ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:opacity-90' : 'border border-border hover:border-primary/40 hover:bg-primary/5'}`}>
-                  Start free trial <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                </Link>
+                  <MessageCircle className="h-4 w-4" /> Start free trial <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                </a>
                 {p.engines.length > 0 && (
                   <div className="mt-5 rounded-xl border border-border/70 bg-muted/25 p-3">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">AI visibility tracked on</p>
@@ -315,7 +329,7 @@ export default function PricingPage() {
             <h3 className="text-lg font-bold">Managing a large chain?</h3>
             <p className="text-sm text-muted-foreground">We offer custom per-location pricing and onboarding for enterprise brands.</p>
           </div>
-          <a href="https://wa.me/917715845972?text=Hi%2C%20I%27m%20interested%20in%20enterprise%20pricing."
+          <a href="https://wa.me/919869855079?text=Hi%2C%20I%27m%20interested%20in%20enterprise%20pricing."
             target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground hover:opacity-90">
             <MessageCircle className="h-4 w-4" /> Talk to sales <ArrowRight className="h-4 w-4" />
@@ -329,14 +343,15 @@ export default function PricingPage() {
           <p className="relative mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
             Run the free audit without a card. Start the trial when you like — nothing is charged today.
           </p>
-          <Link href="/login"
+          <a href={`${WHATSAPP_BASE}?text=${encodeURIComponent("Hi, I'd like to start a Pinzo free trial.")}`}
+            target="_blank" rel="noopener noreferrer"
             className="relative mt-7 inline-flex items-center gap-2 rounded-lg bg-primary px-7 py-3.5 text-sm font-bold text-primary-foreground shadow-lg shadow-primary/25 transition hover:opacity-90">
-            Start free trial <ArrowRight className="h-4 w-4" />
-          </Link>
+            <MessageCircle className="h-4 w-4" /> Start free trial <ArrowRight className="h-4 w-4" />
+          </a>
         </div>
 
         <p className="mt-8 text-center text-xs text-muted-foreground">
-          All plans include a 7-day free trial for all your locations, with 10 AI credits included. All prices are inclusive of 18% GST.
+          All plans include a 7-day free trial for all your locations, with 10 AI credits included. All quotes are inclusive of 18% GST.
         </p>
       </main>
 

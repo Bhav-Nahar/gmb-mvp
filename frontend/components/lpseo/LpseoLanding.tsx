@@ -44,7 +44,7 @@ export default function LpseoLanding({ page, siblings = [], livePaths = new Set<
   const jsonLd = buildLpseoJsonLd(page)
   const primaryCta = c.primary_cta || 'Get a Free Local SEO Audit'
   const secondaryCta = c.secondary_cta || 'View the 90-Day Plan'
-  const whatsapp = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo local SEO audit for my ${industryLc} business in ${city}.`)
+  const whatsapp = 'https://wa.me/919869855079?text=' + encodeURIComponent(`Hi, I'd like a Pinzo local SEO audit for my ${industryLc} business in ${city}.`)
 
   // ── Internal linking ────────────────────────────────────────────────────────
   // Site-wide defaults (currently the cannibalisation cross-link to the sibling

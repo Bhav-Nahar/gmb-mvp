@@ -37,7 +37,7 @@ export default function CseoPillar({ page, livePaths = new Set<string>() }: { pa
   const jsonLd = buildCseoJsonLd(page)
   const primaryCta = c.primary_cta || 'Get a Free Local SEO Audit'
   const secondaryCta = c.secondary_cta || 'Start Free Trial'
-  const whatsapp = 'https://wa.me/917715845972?text=' + encodeURIComponent(`Hi, I'd like a Pinzo local SEO audit for my business in ${country}.`)
+  const whatsapp = 'https://wa.me/919869855079?text=' + encodeURIComponent(`Hi, I'd like a Pinzo local SEO audit for my business in ${country}.`)
 
 
   const Cards = ({ rows, cols = 'sm:grid-cols-2 lg:grid-cols-4' }: { rows: { title: string; detail: string }[]; cols?: string }) => (

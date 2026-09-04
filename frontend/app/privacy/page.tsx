@@ -120,7 +120,7 @@ export default function PrivacyPage() {
               </a>{' '}
               or on{' '}
               <a
-                href="https://wa.me/917715845972"
+                href="https://wa.me/919869855079"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary"

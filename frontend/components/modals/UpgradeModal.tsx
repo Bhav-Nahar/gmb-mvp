@@ -306,7 +306,7 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
             </DialogDescription>
           </DialogHeader>
           <a
-            href={`https://wa.me/917715845972?text=${encodeURIComponent(
+            href={`https://wa.me/919869855079?text=${encodeURIComponent(
               `Hi, I want to change my Pinzo plan. Account: ${user?.email || ''}`
             )}`}
             target="_blank"
