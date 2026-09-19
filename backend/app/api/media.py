@@ -12,6 +12,7 @@ from app.models.post_media import PostMedia
 from app.schemas.posts import PostMediaResponse
 from app.services.media_validation_service import media_validation_service
 from app.storage.factory import StorageProviderFactory
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,7 +46,10 @@ async def upload_media(
         PostMedia.organization_id == current_user.organization_id,
         PostMedia.sha256_hash == sha256_hash,
         PostMedia.is_deleted == False,
-        PostMedia.upload_status == "Uploaded"
+        PostMedia.upload_status == "Uploaded",
+        # Rows from a previous storage provider hold dead URLs (e.g. local disk
+        # wiped by a redeploy), so re-upload instead of handing one back.
+        PostMedia.storage_provider == settings.STORAGE_PROVIDER
     ).first()
     
     if existing_media:

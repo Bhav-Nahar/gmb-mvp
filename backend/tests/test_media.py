@@ -25,6 +25,8 @@ from app.models.post_media import PostMedia
 from app.services.media_validation_service import media_validation_service
 from app.storage.factory import StorageProviderFactory
 from app.storage.providers.local import LocalStorageProvider
+from app.storage.providers.r2 import R2StorageProvider
+from app.core.config import settings
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -162,11 +164,26 @@ class MediaPipelineTests(unittest.TestCase):
 
         # Simulate upload endpoint call for User A (Org A)
         import asyncio
-        result_a = asyncio.run(upload_media(file=mock_file, db=self.db, current_user=self.user_a))
+        with patch.object(settings, "STORAGE_PROVIDER", "local"):
+            result_a = asyncio.run(upload_media(file=mock_file, db=self.db, current_user=self.user_a))
         self.assertEqual(result_a.id, media_a.id)
 
+        # Same bytes, but the app now stores on r2 -> the stale "local" row must NOT
+        # be handed back; its URL points at a disk that no longer holds the file.
+        with patch.object(settings, "STORAGE_PROVIDER", "r2"), \
+             patch.object(R2StorageProvider, "__init__", lambda self: None), \
+             patch.object(R2StorageProvider, "upload_file") as mock_r2_upload, \
+             patch("app.tasks.optimize_media_task.delay"), \
+             patch("app.tasks.generate_thumbnail_task.delay"):
+            mock_r2_upload.return_value = "https://cdn.example.com/org_a/valid.jpg"
+            result_r2 = asyncio.run(upload_media(file=mock_file, db=self.db, current_user=self.user_a))
+        self.assertNotEqual(result_r2.id, media_a.id)
+        self.assertEqual(result_r2.storage_provider, "r2")
+        self.assertEqual(result_r2.cdn_url, "https://cdn.example.com/org_a/valid.jpg")
+
         # Org B uploads the same file -> must NOT deduplicate across tenant boundaries!
-        with patch.object(LocalStorageProvider, "upload_file") as mock_upload, \
+        with patch.object(settings, "STORAGE_PROVIDER", "local"), \
+             patch.object(LocalStorageProvider, "upload_file") as mock_upload, \
              patch("app.tasks.optimize_media_task.delay") as mock_opt, \
              patch("app.tasks.generate_thumbnail_task.delay") as mock_thumb:
              
