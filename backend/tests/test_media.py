@@ -226,6 +226,84 @@ class MediaPipelineTests(unittest.TestCase):
         res = get_media_details(id=media.id, db=self.db, current_user=self.user_a)
         self.assertEqual(res.id, media.id)
 
+    def test_attach_media_reuses_optimized_upload(self):
+        """Attaching must not orphan the optimization: the campaign orchestrator
+        blocks on optimized_url, so a fresh clone would never launch."""
+        from app.services.post_service import PostService
+        from app.schemas.posts import PostMediaCreateRequest
+
+        uploaded = PostMedia(
+            organization_id=self.org_a.id,
+            post_id=None,
+            storage_provider="r2",
+            storage_key="uploads/org_1/media/abc.jpg",
+            media_type="PHOTO",
+            mime_type="image/jpeg",
+            sha256_hash="a" * 64,
+            cdn_url="https://cdn.example.com/abc.jpg",
+            optimized_url="https://cdn.example.com/abc_optimized.webp",
+            thumbnail_url="https://cdn.example.com/abc_thumb.webp",
+            upload_status="Uploaded",
+            validation_status="Valid",
+        )
+        post = Post(organization_id=self.org_a.id, title="t", summary="s",
+                    post_type="standard", status="Draft",
+                    created_by_user_id=self.user_a.id)
+        post_2 = Post(organization_id=self.org_a.id, title="t2", summary="s",
+                      post_type="standard", status="Draft",
+                      created_by_user_id=self.user_a.id)
+        self.db.add_all([uploaded, post, post_2])
+        self.db.commit()
+
+        payload = PostMediaCreateRequest(
+            storage_provider="r2",
+            storage_key=uploaded.storage_key,
+            mime_type="image/jpeg",
+            sha256_hash=uploaded.sha256_hash,
+            cdn_url=uploaded.cdn_url,
+        )
+
+        # First attach adopts the uploaded row, optimization intact.
+        attached = PostService.attach_media(self.db, post.id, payload, self.org_a.id)
+        self.assertEqual(attached.id, uploaded.id)
+        self.assertEqual(attached.post_id, post.id)
+        self.assertEqual(attached.optimized_url, "https://cdn.example.com/abc_optimized.webp")
+
+        # Second post reusing the same image gets its own row, URLs copied over,
+        # so it is launch-ready without waiting on another optimize run.
+        with patch("app.worker.celery.send_task") as mock_send:
+            second = PostService.attach_media(self.db, post_2.id, payload, self.org_a.id)
+        self.assertNotEqual(second.id, uploaded.id)
+        self.assertEqual(second.post_id, post_2.id)
+        self.assertEqual(second.optimized_url, "https://cdn.example.com/abc_optimized.webp")
+        self.assertEqual(second.thumbnail_url, "https://cdn.example.com/abc_thumb.webp")
+        mock_send.assert_not_called()
+
+    def test_attach_media_without_prior_upload_queues_optimization(self):
+        from app.services.post_service import PostService
+        from app.schemas.posts import PostMediaCreateRequest
+
+        post = Post(organization_id=self.org_a.id, title="t", summary="s",
+                    post_type="standard", status="Draft",
+                    created_by_user_id=self.user_a.id)
+        self.db.add(post)
+        self.db.commit()
+
+        payload = PostMediaCreateRequest(
+            storage_provider="r2",
+            storage_key="uploads/org_1/media/zzz.jpg",
+            mime_type="image/jpeg",
+            sha256_hash="b" * 64,
+            cdn_url="https://cdn.example.com/zzz.jpg",
+        )
+        with patch("app.worker.celery.send_task") as mock_send:
+            media = PostService.attach_media(self.db, post.id, payload, self.org_a.id)
+        self.assertIsNone(media.optimized_url)
+        self.assertEqual(
+            [c.args[0] for c in mock_send.call_args_list],
+            ["app.tasks.optimize_media_task", "app.tasks.generate_thumbnail_task"],
+        )
+
     @patch("app.storage.providers.local.LocalStorageProvider.read_file")
     @patch("app.storage.providers.local.LocalStorageProvider.upload_file")
     def test_celery_optimization_capping_longest_edge(self, mock_upload, mock_read):

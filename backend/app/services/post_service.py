@@ -212,9 +212,27 @@ class PostService:
                         ext = "jpg"
             storage_key = f"uploads/org_{organization_id}/media/{media_data.sha256_hash}.{ext}"
 
+        # POST /media/upload already stored this file and ran optimization on its own
+        # row. Cloning it here left the clone with optimized_url NULL forever, and the
+        # campaign orchestrator waits on exactly that field — every campaign with an
+        # image timed out. Adopt the uploaded row when nothing else claims it.
+        source = db.query(PostMedia).filter(
+            PostMedia.organization_id == organization_id,
+            PostMedia.sha256_hash == media_data.sha256_hash,
+            PostMedia.is_deleted == False,
+        ).order_by(PostMedia.optimized_url.is_(None), PostMedia.id.desc()).first()
+
+        if source is not None and source.post_id is None:
+            source.post_id = post.id
+            db.commit()
+            db.refresh(source)
+            return source
+
         media = PostMedia(
             organization_id=organization_id,
             post_id=post.id,
+            optimized_url=source.optimized_url if source else None,
+            thumbnail_url=source.thumbnail_url if source else None,
             storage_provider=media_data.storage_provider,
             storage_key=storage_key,
             media_type=media_data.media_type.value,
@@ -232,6 +250,12 @@ class PostService:
         db.add(media)
         db.commit()
         db.refresh(media)
+
+        if not media.optimized_url:
+            from app.worker import celery as celery_app
+            celery_app.send_task("app.tasks.optimize_media_task", args=(media.id, organization_id))
+            celery_app.send_task("app.tasks.generate_thumbnail_task", args=(media.id, organization_id))
+
         return media
 
     @staticmethod
