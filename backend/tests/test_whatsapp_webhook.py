@@ -259,3 +259,34 @@ def test_red_quality_pauses_sending_immediately(db, account):
     # until Meta bans the number, which nobody can undo.
     assert account.status == WhatsAppAccount.STATUS_DISABLED
     assert account.can_send is False
+
+
+def _reaction(account, emoji: str, wamid: str = "wamid.react1"):
+    return _messages(account, messages=[
+        {"from": "919999900001", "id": wamid, "type": "reaction",
+         "reaction": {"message_id": "wamid.original", "emoji": emoji}}])
+
+
+def test_a_reaction_is_stored_as_the_emoji_not_a_placeholder(db, account):
+    """Before this, every reaction landed in the thread as the literal text
+    "[reaction]" — the tenant could see that something happened but not what."""
+    from app.models.whatsapp_message import WhatsAppMessage
+
+    _post(db, _reaction(account, "\U0001F44D"))
+
+    row = db.query(WhatsAppMessage).filter(
+        WhatsAppMessage.wamid == "wamid.react1").one()
+    assert row.body == "\U0001F44D"
+    assert row.message_type == "reaction"
+    assert row.direction == WhatsAppMessage.DIRECTION_IN
+
+
+def test_removing_a_reaction_stores_nothing(db, account):
+    """Meta reports a removal as the same shape with an empty emoji. There is
+    nothing to render for it, and an empty bubble reads as a bug."""
+    from app.models.whatsapp_message import WhatsAppMessage
+
+    _post(db, _reaction(account, "", wamid="wamid.react2"))
+
+    assert db.query(WhatsAppMessage).filter(
+        WhatsAppMessage.wamid == "wamid.react2").first() is None

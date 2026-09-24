@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
@@ -84,7 +84,9 @@ class Conversation(BaseModel):
 
 
 class ReplyIn(BaseModel):
-    body: str
+    # Meta rejects a blank message with an opaque 400, so it is caught here and
+    # the composer gets a sentence it can show. 4096 is Meta's own text ceiling.
+    body: str = Field(min_length=1, max_length=4096)
 
 
 def _account(db: Session, org_id: int) -> WhatsAppAccount:
@@ -373,8 +375,13 @@ def reply(
             status_code=status.HTTP_409_CONFLICT,
             detail="The 24-hour reply window has closed. Send an approved template instead.")
 
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Type a message before sending.")
+
     try:
-        wamid = whatsapp_service.send_text(account, phone, payload.body)
+        wamid = whatsapp_service.send_text(account, phone, body)
     except WhatsAppError as err:
         logger.warning("[wa-inbox] reply failed for org %s: %s", org_id, err)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
@@ -383,7 +390,7 @@ def reply(
         organization_id=org_id,
         phone=phone,
         direction=WhatsAppMessage.DIRECTION_OUT,
-        body=payload.body.strip(),
+        body=body,
         message_type="text",
         wamid=wamid,
         status=WhatsAppMessage.STATUS_SENT,

@@ -245,9 +245,16 @@ def _inbound(db: Session, account: WhatsAppAccount, msg: dict[str, Any]) -> None
     wamid = msg.get("id")
     text = ((msg.get("text") or {}).get("body") or "").strip()
     button = ((msg.get("button") or {}).get("text") or "").strip()
+    # A reaction is its own message whose only content is the emoji. It also
+    # carries `message_id`, the wamid it points at — not stored, because
+    # anchoring a reaction to its target needs a column and a UI that draws it
+    # there, and a thread is chronological enough that a 👍 right under the ask
+    # reads correctly. Meta sends this same shape with an EMPTY emoji when
+    # someone removes a reaction; that is dropped in _store_inbound.
+    reaction = ((msg.get("reaction") or {}).get("emoji") or "").strip()
 
     if phone:
-        _store_inbound(db, account, msg, phone, wamid, text or button)
+        _store_inbound(db, account, msg, phone, wamid, text or button or reaction)
 
     # Opt-out matching is on the whole trimmed message, lowercased.
     said = (text or button).lower()
@@ -271,6 +278,10 @@ def _store_inbound(db: Session, account: WhatsAppAccount, msg: dict[str, Any],
         return
 
     kind = str(msg.get("type") or "text")
+    if kind == "reaction" and not body:
+        # A removed reaction. There is nothing left to show, and we never stored
+        # the one being removed as anything but a bubble of its own.
+        return
     if not body and kind != "text":
         # Media, location, contacts, stickers — we don't render them yet, but an
         # empty bubble reads as a bug, so the thread says what arrived.
@@ -300,7 +311,12 @@ def _preferences(db: Session, value: dict[str, Any]) -> None:
     for pref in value.get("user_preferences") or []:
         if (pref.get("category") == "marketing_messages"
                 and (pref.get("value") or "").lower() == "stop"):
-            phone = str(pref.get("wa_id") or "")
+            # Normalised the same way inbound messages are. Meta's wa_id is not
+            # guaranteed to match the string the tenant uploaded, and a
+            # suppression row stored in the other spelling is one more thing
+            # is_suppressed has to guess at.
+            raw = str(pref.get("wa_id") or "")
+            phone = normalize_phone(raw) or raw
             account = _account_for(db, (value.get("metadata") or {}).get("phone_number_id"))
             if phone and account:
                 suppress(db, account.organization_id, phone,
