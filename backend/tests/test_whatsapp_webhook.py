@@ -290,3 +290,31 @@ def test_removing_a_reaction_stores_nothing(db, account):
 
     assert db.query(WhatsAppMessage).filter(
         WhatsAppMessage.wamid == "wamid.react2").first() is None
+
+
+# ── Username-only senders (no phone, business-scoped user id) ─────────────────
+
+def test_a_phone_less_reply_is_stored_under_its_bsuid_not_dropped(db, account):
+    from app.models.whatsapp_message import WhatsAppMessage
+    _post(db, _messages(account, messages=[
+        {"from_user_id": "IN.1234567890123", "id": "wamid.bsuid1",
+         "type": "text", "text": {"body": "thanks!"}}]))
+    row = db.query(WhatsAppMessage).filter_by(wamid="wamid.bsuid1").one()
+    assert (row.phone, row.body) == ("IN.1234567890123", "thanks!")
+
+
+def test_a_phone_less_stop_is_still_recorded(db, account):
+    _post(db, _messages(account, messages=[
+        {"from_user_id": "IN.1234567890123", "text": {"body": "STOP"}}]))
+    assert rr.is_suppressed(db, account.organization_id, "IN.1234567890123")
+
+
+def test_a_phone_less_marketing_opt_out_is_recorded(db, account):
+    payload = {"entry": [{"id": account.waba_id, "changes": [{
+        "field": "user_preferences",
+        "value": {"metadata": {"phone_number_id": account.phone_number_id},
+                  "user_preferences": [{"user_id": "IN.1234567890123",
+                                        "category": "marketing_messages",
+                                        "value": "stop"}]}}]}]}
+    _post(db, payload)
+    assert rr.is_suppressed(db, account.organization_id, "IN.1234567890123")

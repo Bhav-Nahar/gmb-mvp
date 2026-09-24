@@ -242,6 +242,17 @@ def _inbound(db: Session, account: WhatsAppAccount, msg: dict[str, Any]) -> None
     # is an equality test on this string. Falls back to the raw value rather
     # than dropping a message we cannot parse.
     phone = normalize_phone(str(msg.get("from") or "")) or str(msg.get("from") or "")
+    if not phone:
+        # A customer who adopted a WhatsApp username, and has no recent history
+        # with the business, arrives with NO phone — only a business-scoped user
+        # id (e.g. "IN.1234…"). Keyed on that instead of being dropped, so the
+        # tenant still sees the message and a STOP is still recorded.
+        # ponytail: a BSUID-keyed thread/suppression never matches the phone we
+        # send to; add a phone<->BSUID map if username-only replies show up.
+        phone = str(msg.get("from_user_id") or "")
+        if phone:
+            logger.warning("[wa-webhook] phone-less sender %s (org %s) — keyed by BSUID",
+                           phone, account.organization_id)
     wamid = msg.get("id")
     text = ((msg.get("text") or {}).get("body") or "").strip()
     button = ((msg.get("button") or {}).get("text") or "").strip()
@@ -316,7 +327,8 @@ def _preferences(db: Session, value: dict[str, Any]) -> None:
             # suppression row stored in the other spelling is one more thing
             # is_suppressed has to guess at.
             raw = str(pref.get("wa_id") or "")
-            phone = normalize_phone(raw) or raw
+            # Username-only users carry a business-scoped user_id, not wa_id.
+            phone = normalize_phone(raw) or raw or str(pref.get("user_id") or "")
             account = _account_for(db, (value.get("metadata") or {}).get("phone_number_id"))
             if phone and account:
                 suppress(db, account.organization_id, phone,
