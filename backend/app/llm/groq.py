@@ -12,6 +12,9 @@ class GroqLLMProvider(BaseLLMProvider):
         )
 
     async def complete(self, system_prompt: str, user_message: str, max_tokens: int = 200, temperature: float = 0.7) -> str:
+        # gpt-oss reasons by default and the reasoning eats max_tokens, returning
+        # empty content (finish=length). "low" keeps it within callers' budgets.
+        extra = {"reasoning_effort": "low"} if self.model.startswith("openai/gpt-oss") else {}
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
@@ -21,7 +24,8 @@ class GroqLLMProvider(BaseLLMProvider):
                 ],
                 max_tokens=max_tokens,
                 temperature=temperature,
-                timeout=15.0
+                timeout=15.0,
+                **extra,
             )
             
             if not response.choices or not response.choices[0].message.content:
