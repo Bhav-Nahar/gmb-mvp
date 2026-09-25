@@ -5,7 +5,7 @@ were standing there, then read the business's Maps rank. One vendor (DataForSEO)
 one endpoint family (serp/google/maps).
 
 Cost lever: we use the *queued task* endpoints (task_post up to 100 points per POST,
-then tasks_ready + task_get), which are markedly cheaper per point than the live
+then task_get per task id), which are markedly cheaper per point than the live
 endpoint. The trade is latency — results aren't instant, so we poll until ready.
 """
 from __future__ import annotations
@@ -22,7 +22,9 @@ LOCAL_GRID_SCAN_ACTION = "run_local_grid_scan"  # must be in plan_config.USER_AI
 _ZOOM = 13      # Maps zoom for each point's search
 _DEPTH = 20     # how many results to pull per point (rank window: top 20)
 _MILES_PER_DEG_LAT = 69.0
-_TASK_POLL_INTERVAL = 5.0   # seconds between tasks_ready polls
+_TASK_POLL_INTERVAL = 10.0  # seconds between task_get rounds
+_TASK_GET_CONCURRENCY = 10  # parallel task_get calls per round (limit is 2000/min)
+_PENDING_CODES = {40601, 40602}  # "Task Handed." / "Task In Queue." — not done yet
 _TASK_MAX_WAIT = 540.0      # give up waiting on queued tasks (under the 600s scan lock)
 _RETRY_STATUS = {403, 429, 500, 502, 503, 504}  # DataForSEO edge throttles bursts with 403
 
@@ -153,11 +155,16 @@ async def _post_tasks(client, base: str, keyword: str, points: list[dict],
     return id_to_point
 
 
-async def _get_task_items(client, base: str, task_id: str) -> list[dict]:
-    """Fetch one completed task's result rows."""
+async def _get_task_items(client, base: str, task_id: str) -> list[dict] | None:
+    """Fetch one task's result rows, or None while DataForSEO is still working on it.
+
+    task_get is free (billing happens at task_post), so polling it directly is the
+    cost-neutral way to wait."""
     resp = await _request(client, "GET", f"{base}/v3/serp/google/maps/task_get/advanced/{task_id}")
     tasks = resp.json().get("tasks") or []
     task = tasks[0] if tasks else {}
+    if task.get("status_code") in _PENDING_CODES:
+        return None
     if task.get("status_code") != 20000:
         return []
     result = task.get("result") or []
@@ -165,26 +172,30 @@ async def _get_task_items(client, base: str, task_id: str) -> list[dict]:
 
 
 async def _collect_tasks(client, base: str, id_to_point: dict[str, dict]) -> list[tuple[dict, list[dict]]]:
-    """Poll tasks_ready until all our queued tasks complete, pulling each result as
-    it becomes ready. If any task is still pending at the deadline we raise, so the
-    scan fails cleanly (and is not charged) rather than silently returning a grid
-    full of false 'not found' cells."""
+    """Poll task_get for each of OUR task ids until all complete. If any task is
+    still pending at the deadline we raise, so the scan fails cleanly (and is not
+    charged) rather than silently returning a grid full of false 'not found' cells.
+
+    Deliberately not tasks_ready: that list is account-wide, capped at 1000 tasks,
+    keeps every uncollected task (e.g. from a timed-out scan) for 3 days, and allows
+    only 20 calls/min — two concurrent scans polling it exceed that. Any of those
+    made a scan's own finished tasks never show up, failing all N² cells at once.
+    """
     pending = dict(id_to_point)
     out: list[tuple[dict, list[dict]]] = []
+    sem = asyncio.Semaphore(_TASK_GET_CONCURRENCY)
+
+    async def check(tid: str):
+        async with sem:
+            return tid, await _get_task_items(client, base, tid)
+
     waited = 0.0
     while pending and waited < _TASK_MAX_WAIT:
         await asyncio.sleep(_TASK_POLL_INTERVAL)
         waited += _TASK_POLL_INTERVAL
-        resp = await _request(client, "GET", f"{base}/v3/serp/google/maps/tasks_ready")
-        ready_ids = {
-            r.get("id")
-            for t in (resp.json().get("tasks") or [])
-            for r in (t.get("result") or [])
-            if r.get("id")
-        }
-        for tid in [t for t in pending if t in ready_ids]:
-            items = await _get_task_items(client, base, tid)
-            out.append((pending.pop(tid), items))
+        for tid, items in await asyncio.gather(*(check(t) for t in list(pending))):
+            if items is not None:
+                out.append((pending.pop(tid), items))
     if pending:
         raise RuntimeError(f"DataForSEO: {len(pending)}/{len(id_to_point)} grid tasks "
                            f"did not complete within {_TASK_MAX_WAIT:.0f}s")
@@ -346,7 +357,8 @@ if __name__ == "__main__":
     assert rank == 4 and top == "Other Jeweller", (rank, top)
     assert coords == {"latitude": 19.1, "longitude": 72.8}, coords
     assert [r["rank"] for r in results] == [1, 2, 4], results
-    assert "_place_id" not in results[0] and "place_id" not in results[0], results[0]
+    # place_id is kept on purpose: competitor tracking matches rows by it.
+    assert "_place_id" not in results[0] and results[0]["place_id"] == "OTHER", results[0]
     assert results[0]["name"] == "Other Jeweller" and results[0]["rating"] == 4.6, results
     # name fallback when no place_id is supplied
     r2, t2, _, _ = parse_cell(items, "My Diamond Shop")
@@ -365,5 +377,37 @@ if __name__ == "__main__":
                               "administrativeArea": "Maharashtra", "postalCode": "400062", "regionCode": "IN"})
     assert _c[0] == "400062, Mumbai, Maharashtra, IN", _c
     assert any("SV Road" in c for c in _c) and _address_candidates(None) == []
+
+    # Polling: a fake DataForSEO (no network, no spend). Tasks sit "In Queue" for a
+    # few rounds, then finish; tasks_ready must never be consulted.
+    class _Resp:
+        def __init__(self, body): self.status_code, self._b = 200, body
+        def json(self): return self._b
+        def raise_for_status(self): pass
+
+    class _FakeDFS:
+        def __init__(self, rounds_pending):
+            self.left, self.urls = dict(rounds_pending), []
+        async def request(self, method, url, **kw):
+            self.urls.append(url)
+            tid = url.rsplit("/", 1)[-1]
+            if self.left.get(tid, 0) > 0:
+                self.left[tid] -= 1
+                return _Resp({"tasks": [{"status_code": 40602}]})
+            return _Resp({"tasks": [{"status_code": 20000, "result": [{"items": [{"rank_absolute": 1, "title": tid}]}]}]})
+
+    _TASK_POLL_INTERVAL = 0.0
+    fake = _FakeDFS({"t1": 0, "t2": 2, "t3": 5})
+    pts = {t: {"row": 0, "col": i} for i, t in enumerate(["t1", "t2", "t3"])}
+    got = asyncio.run(_collect_tasks(fake, "https://x", pts))
+    assert sorted(items[0]["title"] for _, items in got) == ["t1", "t2", "t3"], got
+    assert not any("tasks_ready" in u for u in fake.urls), fake.urls
+    # still queued at the deadline -> clean failure, not a grid of false "not found"
+    _TASK_MAX_WAIT, _TASK_POLL_INTERVAL = 0.003, 0.001  # interval > 0 or the clock never advances
+    try:
+        asyncio.run(_collect_tasks(_FakeDFS({"t9": 10**6}), "https://x", {"t9": {"row": 0, "col": 0}}))
+        raise AssertionError("expected timeout")
+    except RuntimeError as e:
+        assert "1/1 grid tasks did not complete" in str(e), e
 
     print("local_rank_service self-check passed")
