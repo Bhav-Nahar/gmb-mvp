@@ -11,8 +11,11 @@ endpoint. The trade is latency — results aren't instant, so we poll until read
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import math
+
+logger = logging.getLogger(__name__)
 
 # Pricing for the feature, in AI credits, keyed by grid size. Tunable — COGS is
 # tiny (~$0.005–0.05/scan), so this is a packaging knob, not a cost pass-through.
@@ -23,8 +26,10 @@ _ZOOM = 13      # Maps zoom for each point's search
 _DEPTH = 20     # how many results to pull per point (rank window: top 20)
 _MILES_PER_DEG_LAT = 69.0
 _TASK_POLL_INTERVAL = 10.0  # seconds between task_get rounds
-_TASK_GET_CONCURRENCY = 10  # parallel task_get calls per round (limit is 2000/min)
-_PENDING_CODES = {40601, 40602}  # "Task Handed." / "Task In Queue." — not done yet
+_TASK_GET_CONCURRENCY = 5   # parallel task_get calls per round; small — the CDN 403s bursts
+# "Task Handed." / "Task In Queue." — still working. "Task Not Found." too: just after
+# task_post it can lag, and treating it as done would draw a false "not ranked" cell.
+_PENDING_CODES = {40601, 40602, 40401}
 _TASK_MAX_WAIT = 540.0      # give up waiting on queued tasks (under the 600s scan lock)
 _RETRY_STATUS = {403, 429, 500, 502, 503, 504}  # DataForSEO edge throttles bursts with 403
 
@@ -187,7 +192,11 @@ async def _collect_tasks(client, base: str, id_to_point: dict[str, dict]) -> lis
 
     async def check(tid: str):
         async with sem:
-            return tid, await _get_task_items(client, base, tid)
+            try:
+                return tid, await _get_task_items(client, base, tid)
+            except Exception as e:  # noqa: BLE001 — throttled/transient: ask again next round
+                logger.warning("[local-rank] task_get %s failed, retrying next round: %s", tid, e)
+                return tid, None
 
     waited = 0.0
     while pending and waited < _TASK_MAX_WAIT:
