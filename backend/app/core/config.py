@@ -136,7 +136,9 @@ class Settings(BaseSettings):
     # above (Gemini in prod); sentiment tagging runs on Groq to keep its high-volume
     # batch classification off the Gemini quota. Provider + model must be set together.
     LLM_PROVIDER_SENTIMENT: str = "groq"
-    LLM_MODEL_SENTIMENT: str = "llama-3.3-70b-versatile"
+    # llama-3.3-70b-versatile was shut down on Groq free tier (Aug 2026). gpt-oss-20b
+    # benchmarked most consistent + fewest tokens on the free tier's 200K TPD.
+    LLM_MODEL_SENTIMENT: str = "openai/gpt-oss-20b"
 
     # Frontend
     FRONTEND_URL: str = "http://localhost:3000"

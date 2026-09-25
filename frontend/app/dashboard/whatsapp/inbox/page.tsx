@@ -386,6 +386,20 @@ export default function WhatsAppInboxPage() {
 
                   {group.items.map((m) => {
                     const out = m.direction === 'out';
+
+                    // A reaction gets no bubble. It is a mark on the thread, not
+                    // a message in it, and a 👍 in a full-size chat bubble reads
+                    // as the customer having said something they did not.
+                    if (m.message_type === 'reaction') {
+                      return (
+                        <div key={m.id} className={`flex ${out ? 'justify-end' : 'justify-start'}`}>
+                          <span className="px-2 text-xl leading-none" title={clockTime(m.created_at)}>
+                            {m.body}
+                          </span>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div key={m.id} className={`flex ${out ? 'justify-end' : 'justify-start'}`}>
                         <div

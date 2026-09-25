@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from celery import shared_task
 from sqlalchemy import func
 
-from app.core.redis_client import get_redis as _get_redis
 from app.db.session import SessionLocal
 from app.models.location import Location
 from app.models.review_request import ReviewRequest
@@ -333,11 +332,18 @@ REMINDER_CHUNK_INTERVAL_SECONDS = 40
 
 
 @shared_task(name="app.tasks_whatsapp.send_review_reminders_task")
-def send_review_reminders_task() -> dict:
+def send_review_reminders_task(after_id: int = 0) -> dict:
     """Nudge customers who were messaged but haven't opened the review link.
 
     Reuses the original row and its token, so the link already sitting in the
     customer's chat stays valid and a click is still attributed to the first ask.
+
+    `after_id` is the cursor a chunk hands to the next one. Without it the chunk
+    is the first REMINDER_CHUNK rows by id every time, and a row this run cannot
+    send (its account is off, its org is capped, its location is gone) is left
+    untouched and so is picked first again next run — holding the head of the
+    queue and starving every row behind it until the 7-day window expires. The
+    cursor moves past what was looked at, not past what was sent.
     """
     db = SessionLocal()
     summary = {"reminded": 0, "failed": 0, "suppressed": 0, "capped": 0}
@@ -368,6 +374,7 @@ def send_review_reminders_task() -> dict:
             # Nothing older than a week: a review ask that stale reads as a
             # random message from a business the customer has forgotten.
             ReviewRequest.sent_at >= now - timedelta(days=7),
+            ReviewRequest.id > after_id,
         ).order_by(ReviewRequest.id).limit(REMINDER_CHUNK).all()
 
         # Hoisted out of the loop: a chunk is nearly always one or two orgs, and
@@ -454,8 +461,14 @@ def send_review_reminders_task() -> dict:
         # A full chunk means there is probably more waiting. Re-enqueue rather
         # than waiting for the next hourly tick, so a large backlog still drains
         # today — the rows stay eligible either way, this only sets the pace.
-        if len(rows) >= REMINDER_CHUNK and summary["reminded"]:
+        #
+        # Re-enqueued even when nothing was sent: a chunk of rows that all
+        # skipped is exactly the case the cursor exists for, and stopping there
+        # would leave everything behind them unreminded. Termination is the
+        # cursor — it only ever moves forward, over a finite set.
+        if len(rows) >= REMINDER_CHUNK:
             celery.send_task("app.tasks_whatsapp.send_review_reminders_task",
+                             kwargs={"after_id": rows[-1].id},
                              countdown=REMINDER_CHUNK_INTERVAL_SECONDS)
             summary["requeued"] = True
 
@@ -544,6 +557,11 @@ def purge_old_messages_task() -> str:
     Deleted in batches: one unbounded DELETE over a year of a large tenant's
     messages would hold row locks long enough to make inbound webhooks time
     out, and a webhook Meta cannot deliver fast is a webhook it retries.
+
+    No overlap lock. Two runs would both delete rows older than the same cutoff,
+    which is idempotent — the second finds fewer rows and stops. A Redis lock
+    bought nothing for that, cost a command on every run, and made the task fail
+    outright wherever Redis is not reachable.
     """
     from app.core.config import settings
     from app.models.whatsapp_message import WhatsAppMessage
@@ -551,11 +569,6 @@ def purge_old_messages_task() -> str:
     days = settings.WHATSAPP_MESSAGE_RETENTION_DAYS
     if not days or days <= 0:
         return "skipped: retention disabled"
-
-    r = _get_redis()
-    lock = r.lock("lock:purge_whatsapp_messages", timeout=1800)
-    if not lock.acquire(blocking=False):
-        return "skipped: another purge in progress"
 
     db = SessionLocal()
     deleted = 0
@@ -584,7 +597,3 @@ def purge_old_messages_task() -> str:
         return f"failed: {err}"
     finally:
         db.close()
-        try:
-            lock.release()
-        except Exception:
-            pass

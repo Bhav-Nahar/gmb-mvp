@@ -118,3 +118,34 @@ def test_a_stale_request_is_dropped_rather_than_reminded(wired, db):
     db.commit()
 
     assert send_review_reminders_task()["reminded"] == 0
+
+
+def test_unsendable_rows_do_not_block_the_ones_behind_them(wired, db, monkeypatch):
+    """The chunk is capped at REMINDER_CHUNK rows ordered by id. Without a cursor
+    a row this run cannot send is left untouched and picked first again next run,
+    so a handful of dead rows starve every reminder behind them for a week."""
+    import app.tasks_whatsapp as tasks
+    org, loc, sent = wired
+    monkeypatch.setattr(tasks, "REMINDER_CHUNK", 2)
+
+    # Two rows whose location is gone — skipped, and never mutated.
+    dead = _request(db, org, loc, n=1), _request(db, org, loc, n=2)
+    for row in dead:
+        row.location_id = 999999
+    live = _request(db, org, loc, n=3)
+    db.commit()
+
+    enqueued: list[dict] = []
+    monkeypatch.setattr(tasks.celery, "send_task",
+                        lambda name, **kw: enqueued.append(kw))
+
+    # First chunk sends nothing but must still hand the cursor forward.
+    first = tasks.send_review_reminders_task()
+    assert first["reminded"] == 0
+    assert enqueued and enqueued[0]["kwargs"]["after_id"] == dead[1].id
+
+    # The chunk it enqueued reaches the row the dead ones were sitting in front of.
+    assert tasks.send_review_reminders_task(after_id=dead[1].id)["reminded"] == 1
+    assert sent == ["919999900001"]
+    db.refresh(live)
+    assert live.reminder_count == 1
